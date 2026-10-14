@@ -141,6 +141,7 @@ namespace BloodborneLauncher.Core
                 if (at > 0)
                     env[item[..at]] = item[(at + 1)..];
             }
+            WindowsMonitors.ApplyEnvironment(s.Str("display_device"), WindowsMonitors.All(), env);
             return env;
         }
 

@@ -58,6 +58,7 @@ at tag `v0.4.0-darkizuku-preview.1`.
 | Quit game button in the in-game menu (Insert or L3+R3), pressed twice: the same clean exit as closing the window | |
 | Online co-op: shadNet server framing for signaling, UPnP port mapping (Supermedo 004d2c37), P2P port 3658 by default, play logs to the game server | `SHADPS4_P2P_PORT` |
 | In-game PC Colour page (brightness, contrast, saturation, hue from the game's own tone map) and a fog slider on PC Graphics, live; the same in the launcher's Picture tuning | `graphics_brightness`, `graphics_contrast`, `graphics_hue`, `graphics_fog` |
+| Selected monitor before window and swapchain creation; primary display fallback if disconnected | `BB_MONITOR_BOUNDS`, `BB_MONITOR_LABEL` |
 | HDR output: HDR10 or scRGB swapchain with paper white, peak and highlight boost; native mode takes highlight brightness from the game's scene (a gain map), expand mode from the SDR picture | `hdr`, `hdr_mode`, `hdr_paper_white`, `hdr_peak`, `hdr_boost` |
 | DLSS texture LOD bias | `BB_DLSS_MIP_BIAS=0` off |
 | Optional FSR 4 balanced model | `BB_FSR4_BALANCED=1` |

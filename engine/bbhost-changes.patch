@@ -137,8 +137,8 @@ index 0000000..8db00a1
 +`hdr=1` in `bbport.ini` (`BB_HDR=1`, the menu's "HDR output", applied on restart) presents the
 +game in an HDR swapchain when the display offers one (Windows HDR on): HDR10 (BT.2020, PQ,
 +`A2B10G10R10`) or scRGB (linear BT.709 in FP16). The game itself only makes an 8-bit SDR frame;
-+`hdr_output.frag` encodes it. SDR white is shown at `hdr_paper_white` nits (80-500, default 200),
-+nothing goes above `hdr_peak` (400-10000, default 1000). The settings menu is drawn into its own
++`hdr_output.frag` encodes it. SDR white is shown at `hdr_paper_white` nits (10-500, default 200),
++nothing goes above `hdr_peak` (10-4000, default 1000). The settings menu is drawn into its own
 +layer and composed at paper white. SDR is decoded with a 2.2 power curve (the piecewise sRGB curve
 +lifts Bloodborne's shadows into grey).
 +
@@ -18044,8 +18044,8 @@ index c0e8a94..6faf11c 100644
 +/// cheat_echo_multiplier: Blood Echoes from kills times this (1: the game's own).
 +inline constexpr int CheatEchoMultipliers[] = {1, 2, 5, 10};
 +/// HDR output (hdr_paper_white / hdr_peak in nits, hdr_boost 0..1): defaults and ranges.
-+inline constexpr float HdrPaperWhiteDefault = 200.0f, HdrPaperWhiteMin = 80.0f, HdrPaperWhiteMax = 500.0f;
-+inline constexpr float HdrPeakDefault = 1000.0f, HdrPeakMin = 400.0f, HdrPeakMax = 10000.0f;
++inline constexpr float HdrPaperWhiteDefault = 200.0f, HdrPaperWhiteMin = 10.0f, HdrPaperWhiteMax = 500.0f;
++inline constexpr float HdrPeakDefault = 1000.0f, HdrPeakMin = 10.0f, HdrPeakMax = 4000.0f;
 +inline constexpr float HdrBoostDefault = 0.25f;
 +/// Native mode: the game's UI at hdr_ui_brightness times paper white, and hdr_ui_color of the way
 +/// from sRGB's colours (0) to a wide-gamut SDR monitor's (1, DCI-P3).
@@ -21578,10 +21578,42 @@ index 93a179a..a5116da 100644
 +    return menu_open() || now_ms() - g_focus_ms.load(std::memory_order_relaxed) < 70;
 +}
 diff --git a/gpu/shim/window.cpp b/gpu/shim/window.cpp
-index f475c39..aa552ab 100644
+index f475c39..39bd24f 100644
 --- a/gpu/shim/window.cpp
 +++ b/gpu/shim/window.cpp
-@@ -169,6 +169,18 @@ bool WindowSDL::PollEvents() {
+@@ -62,6 +62,31 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
+     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title);
+     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
+     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
++    // The launcher resolves the saved Windows monitor on every launch. Select it before
++    // creating the HWND and Vulkan surface, so fullscreen and HDR start on that display.
++    if (const char* selection = std::getenv("BB_MONITOR_BOUNDS"); selection && *selection) {
++        int x, y, w, h;
++        char trailing;
++        if (SDL_sscanf(selection, "%d,%d,%d,%d%c", &x, &y, &w, &h, &trailing) == 4 &&
++            x >= -100000 && x <= 100000 && y >= -100000 && y <= 100000 &&
++            w > 0 && w <= 100000 && h > 0 && h <= 100000) {
++            SDL_Point point{x + w / 2, y + h / 2};
++            const SDL_DisplayID selected = SDL_GetDisplayForPoint(&point);
++            SDL_Rect bounds{};
++            if (selected && SDL_GetDisplayBounds(selected, &bounds) &&
++                bounds.x == x && bounds.y == y && bounds.w == w && bounds.h == h) {
++                SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(selected));
++                SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(selected));
++                const char* label = std::getenv("BB_MONITOR_LABEL");
++                SDL_Log("Monitor selection: %s; SDL display %u (%d,%d %dx%d)",
++                        label ? label : "selected monitor", static_cast<unsigned>(selected), x, y, w, h);
++            } else {
++                SDL_Log("Monitor selection: display disconnected; using primary monitor");
++            }
++        } else {
++            SDL_Log("Monitor selection: invalid bounds; using primary monitor");
++        }
++    }
+     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_);
+     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
+     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
+@@ -169,6 +194,18 @@ bool WindowSDL::PollEvents() {
              UpdateTextTitle();
              continue;
          }
@@ -21600,7 +21632,7 @@ index f475c39..aa552ab 100644
          if (BbOverlay::HandleEvent(event)) {
              continue;
          }
-@@ -196,26 +208,25 @@ bool WindowSDL::PollEvents() {
+@@ -196,26 +233,25 @@ bool WindowSDL::PollEvents() {
          }
      }
      BbInput::Pump(window,text_active);
@@ -29518,7 +29550,7 @@ index 593fed4..2087d68 100644
 +    BbSettings::Save();
 +    assert(Read(path).find("cheat_gun_range=off\n") != std::string::npos);
 +    assert(Read(path).find("cheat_echo_multiplier=1\n") != std::string::npos);
-+    // HDR output: hdr 0/1 (applied at start), paper white 80-500 and peak 400-10000 nits, boost
++    // HDR output: hdr 0/1 (applied at start), paper white 10-500 and peak 10-4000 nits, boost
 +    // 0-1; written back as read; anything else clamped or the default.
 +    assert(Read(path).find("hdr=0\n") != std::string::npos);
 +    assert(Read(path).find("hdr_paper_white=200\n") != std::string::npos);
@@ -29531,10 +29563,10 @@ index 593fed4..2087d68 100644
 +    { std::ofstream file(path); file << "hdr=1\nhdr_paper_white=250\nhdr_peak=20000\nhdr_boost=0.75\n"
 +                                        "hdr_mode=expand\n"; }
 +    BbSettings::Load();
-+    assert(s.hdr && s.startup_hdr && s.hdr_paper_white == 250.0f && s.hdr_peak == 10000.0f &&
++    assert(s.hdr && s.startup_hdr && s.hdr_paper_white == 250.0f && s.hdr_peak == 4000.0f &&
 +           s.hdr_boost == 0.75f && s.hdr_mode == BbSettings::HdrModeExpand);
 +    BbSettings::Save();
-+    for (const char* line : {"hdr=1\n", "hdr_paper_white=250\n", "hdr_peak=10000\n", "hdr_boost=0.75\n",
++    for (const char* line : {"hdr=1\n", "hdr_paper_white=250\n", "hdr_peak=4000\n", "hdr_boost=0.75\n",
 +                             "hdr_mode=expand\n"}) {
 +        assert(Read(path).find(line) != std::string::npos);
 +    }
@@ -29542,7 +29574,7 @@ index 593fed4..2087d68 100644
 +    { std::ofstream file(path); file << "hdr=0\nhdr_paper_white=10\nhdr_peak=nan\nhdr_boost=-1\n"
 +                                        "hdr_mode=bright\n"; }
 +    BbSettings::Load();
-+    assert(!s.hdr && !s.startup_hdr && s.hdr_paper_white == 80.0f && s.hdr_peak == 1000.0f &&
++    assert(!s.hdr && !s.startup_hdr && s.hdr_paper_white == 10.0f && s.hdr_peak == 1000.0f &&
 +           s.hdr_boost == 0.0f && s.hdr_mode == BbSettings::HdrModeNative);
 +    { std::ofstream file(path); file << "hdr_mode=expand\n"; }
 +    BbSettings::Load();
@@ -29561,7 +29593,7 @@ index 593fed4..2087d68 100644
 +    setenv("BB_HDR_MODE", "expand", 1);
 +#endif
 +    BbSettings::Load();
-+    assert(s.hdr && s.startup_hdr && s.hdr_peak == 600.0f && s.hdr_paper_white == 80.0f &&
++    assert(s.hdr && s.startup_hdr && s.hdr_peak == 600.0f && s.hdr_paper_white == 10.0f &&
 +           s.hdr_mode == BbSettings::HdrModeExpand);
 +#ifdef _WIN32
 +    _putenv_s("BB_HDR", "");

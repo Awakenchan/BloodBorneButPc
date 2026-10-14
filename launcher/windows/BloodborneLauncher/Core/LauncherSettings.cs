@@ -29,6 +29,7 @@ namespace BloodborneLauncher.Core
             ["patches_dir"] = "",
             ["language"] = "1",
             ["fullscreen"] = false,
+            ["display_device"] = "",
             ["present_mode"] = "Mailbox",
             ["fps_mode"] = "60",
             ["draw_pipe"] = "",

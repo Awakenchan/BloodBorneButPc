@@ -422,7 +422,7 @@ namespace BloodborneLauncher.Views
 
         /// <summary>A slider with its value printed beside it.</summary>
         protected Slider SliderRow(SymbolRegular icon, string title, string? hint, double min, double max, double step,
-            Func<double> get, Action<double> set, string format = "0.00", Panel? into = null)
+            Func<double> get, Action<double> set, string format = "0.00", Panel? into = null, double valueWidth = 44)
         {
             var slider = new Slider
             {
@@ -438,7 +438,7 @@ namespace BloodborneLauncher.Views
             };
             var value = new TextBlock
             {
-                Width = 44,
+                Width = valueWidth,
                 TextAlignment = TextAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 10, 0),
