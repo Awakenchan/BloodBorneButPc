@@ -26,7 +26,7 @@ namespace BloodborneLauncher.Core
         public static string ReleasesPage => $"https://github.com/{Repository}/releases";
 
         /// <summary>The engine build this launcher is made for (package.json "engine").</summary>
-        public const string EngineId = "bbhost-0.4.0-fps38";
+        public const string EngineId = "bbhost-0.4.0-fps49";
 
         private const string ExeName = "Bloodborne Launcher.exe";
         private const string PackageFile = "package.json";
@@ -233,14 +233,26 @@ namespace BloodborneLauncher.Core
             return remote != null ? remote != LocalEngine() : LocalEngine() == null && release.ExeUrl == null;
         }
 
-        /// <summary>Downloads the update, puts it in place and starts the new launcher; the caller then exits.</summary>
-        public static async Task InstallAsync(Release release, bool package, IProgress<double>? progress = null)
+        /// <summary>Downloads the update, puts it in place and starts the new launcher; the caller then exits.
+        /// Returns the package files that could not be put in place and were left as they were (only
+        /// optional ones: see <see cref="Optional"/>).</summary>
+        public static async Task<IReadOnlyList<string>> InstallAsync(Release release, bool package, IProgress<double>? progress = null)
         {
             var self = Environment.ProcessPath ?? throw new InvalidOperationException("Cannot tell where this launcher is.");
             var folder = Path.GetDirectoryName(self)!;
-            var work = Path.Combine(Path.GetTempPath(), "bbport-launcher-update");
-            if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+            // A folder of its own each time: one an antivirus still holds a file in (from an earlier
+            // attempt) cannot be deleted, and must not stop this one.
+            var parent = Path.Combine(Path.GetTempPath(), "bbport-launcher-update");
+            if (Directory.Exists(parent))
+            {
+                foreach (var old in Directory.GetDirectories(parent).Append(parent))
+                    try { if (old != parent) Directory.Delete(old, recursive: true); } catch (Exception) { }
+                foreach (var old in Directory.GetFiles(parent))
+                    try { File.Delete(old); } catch (Exception) { }
+            }
+            var work = Path.Combine(parent, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
             Directory.CreateDirectory(work);
+            var skipped = new List<string>();
 
             if (package)
             {
@@ -249,10 +261,10 @@ namespace BloodborneLauncher.Core
                 var zip = Path.Combine(work, "package.zip");
                 await DownloadAsync(release.ZipUrl!, zip, release.ZipSize, progress);
                 var unpacked = Path.Combine(work, "unpacked");
-                ZipFile.ExtractToDirectory(zip, unpacked);
+                Extract(zip, unpacked, skipped);
                 var root = Directory.GetFiles(unpacked, ExeName, SearchOption.AllDirectories).Select(Path.GetDirectoryName).FirstOrDefault()
                            ?? throw new InvalidOperationException($"The package has no {ExeName}.");
-                CopyPackage(root!, folder, self);
+                CopyPackage(root!, folder, self, skipped);
             }
             else
             {
@@ -264,10 +276,61 @@ namespace BloodborneLauncher.Core
                 ReplaceSelf(self, exe);
             }
             Process.Start(new ProcessStartInfo(self) { UseShellExecute = true, WorkingDirectory = folder });
+            return skipped;
+        }
+
+        /// <summary>Package folders the game runs without: a file there an antivirus will not let
+        /// through (bbbridge, a new unsigned program that goes online, is the one seen) is left as it
+        /// was and reported, instead of stopping the whole update.</summary>
+        private static readonly string[] Optional = { "bbbridge" };
+
+        private static bool IsOptional(string relative) =>
+            Optional.Any(o => relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Contains(o, StringComparer.OrdinalIgnoreCase));
+
+        /// <summary>An antivirus scanning a new file holds it for a moment: tried again for a few
+        /// seconds before giving up.</summary>
+        private static void Retry(Action action)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try { action(); return; }
+                catch (Exception e) when (attempt < 6 && e is IOException or UnauthorizedAccessException)
+                {
+                    Thread.Sleep(500 * attempt);
+                }
+            }
+        }
+
+        private static Exception Blocked(string file, Exception e) => new InvalidOperationException(
+            $"{e.Message}\n\nAn antivirus is most likely holding or removing {Path.GetFileName(file)}. Allow it (or the " +
+            "Bloodborne PC folder) in the antivirus and update again.", e);
+
+        private static void Extract(string zip, string to, List<string> skipped)
+        {
+            using var archive = ZipFile.OpenRead(zip);
+            var root = Path.GetFullPath(to) + Path.DirectorySeparatorChar;
+            foreach (var entry in archive.Entries)
+            {
+                var target = Path.GetFullPath(Path.Combine(to, entry.FullName));
+                if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue; // outside the folder
+                if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
+                {
+                    Directory.CreateDirectory(target);
+                    continue;
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                try { Retry(() => entry.ExtractToFile(target, overwrite: true)); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    if (!IsOptional(entry.FullName)) throw Blocked(target, e);
+                    skipped.Add(entry.FullName.Replace('\\', '/'));
+                }
+            }
         }
 
         /// <summary>Copies a new package over this one, leaving the player's own files alone.</summary>
-        private static void CopyPackage(string from, string to, string self)
+        private static void CopyPackage(string from, string to, string self, List<string> skipped)
         {
             foreach (var file in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
             {
@@ -282,7 +345,12 @@ namespace BloodborneLauncher.Core
                     continue;
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.Copy(file, target, overwrite: true);
+                try { Retry(() => File.Copy(file, target, overwrite: true)); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    if (!IsOptional(relative)) throw Blocked(file, e);
+                    skipped.Add(relative.Replace('\\', '/'));
+                }
             }
         }
 

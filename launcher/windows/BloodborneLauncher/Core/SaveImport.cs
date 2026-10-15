@@ -36,6 +36,32 @@ namespace BloodborneLauncher.Core
         public static bool HasSaves(string dir) =>
             Directory.Exists(dir) && Directory.EnumerateFiles(dir, "userdata*").Any();
 
+        /// <summary>The game's slot file: without it the game crashes loading the saves.</summary>
+        public const string SlotFile = "userdata0010";
+
+        public static bool IsComplete(string dir) => File.Exists(Path.Combine(dir, SlotFile));
+
+        /// <summary>The files a Bloodborne save folder holds: userdata0000-0010, their backup copies,
+        /// and the save's icon and parameters.</summary>
+        public static bool IsSaveFile(string path)
+        {
+            var name = Path.GetFileName(path);
+            return System.Text.RegularExpressions.Regex.IsMatch(name, "^(userdata|backup)\\d{4}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+                   name.Equals("icon0.png", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("param.bin", StringComparison.OrdinalIgnoreCase) ||
+                   name.Equals("sce_param.bin", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>A save picked as a file: a .zip is unpacked into a temporary folder; any other
+        /// file (userdata0000, ...) stands for the folder it is in. Returns the folder to search.</summary>
+        public static string FolderOfFile(string file)
+        {
+            if (!file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) return Path.GetDirectoryName(file)!;
+            var temp = Path.Combine(Path.GetTempPath(), "bbport-save-import-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+            System.IO.Compression.ZipFile.ExtractToDirectory(file, temp);
+            return temp;
+        }
+
         /// <summary>Saves in the places other builds keep them (shadPS4's user folder), newest first.</summary>
         public static List<Source> Known(LauncherSettings s)
         {
@@ -112,6 +138,9 @@ namespace BloodborneLauncher.Core
         public static void Import(LauncherSettings s, string from)
         {
             if (!HasSaves(from)) throw new IOException("That folder has no Bloodborne save files (userdata).");
+            if (!IsComplete(from))
+                throw new IOException($"That save is incomplete: it has no {SlotFile}, the file the game needs to find the " +
+                                      "save slots (importing it would make the game crash). Import the whole SPRJ0005 folder.");
             SaveBackups.Create(s, beforeRestore: true);
             var target = Target(s);
             // Copied next to it first, so a failed copy leaves the current saves in place. Only the
@@ -119,7 +148,8 @@ namespace BloodborneLauncher.Core
             var staging = target + ".importing";
             if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
             Directory.CreateDirectory(staging);
-            foreach (var file in Directory.GetFiles(from))
+            // Only the save's own files: the folder may be Downloads with the save files loose in it.
+            foreach (var file in Directory.GetFiles(from).Where(IsSaveFile))
                 File.Copy(file, Path.Combine(staging, Path.GetFileName(file)));
             if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
             Directory.Move(staging, target);

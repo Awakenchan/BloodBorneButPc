@@ -153,6 +153,14 @@ namespace BloodborneLauncher.Views
                 var handle = new WindowInteropHelper(this).Handle;
                 SetWindowLong(handle, GWL_EXSTYLE, GetWindowLong(handle, GWL_EXSTYLE) |
                     WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED);
+                // SDL makes a focused fullscreen game window topmost too, and raises it again on its
+                // own: the toast went under it (its sound played, nothing showed). Back on top while
+                // it shows, without taking focus.
+                var raise = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+                raise.Tick += (_, _) => SetWindowPos(handle, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                raise.Start();
+                Closed += (_, _) => raise.Stop();
             };
             Loaded += (_, _) =>
             {
@@ -235,6 +243,12 @@ namespace BloodborneLauncher.Views
             public Rect32 Monitor, Work;
             public uint Flags;
         }
+
+        private static readonly IntPtr HWND_TOPMOST = new(-1);
+        private const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040;
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
         [DllImport("user32.dll")]
         private static extern int GetWindowLong(IntPtr window, int index);

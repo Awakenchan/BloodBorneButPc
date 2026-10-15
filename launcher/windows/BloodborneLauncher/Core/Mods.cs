@@ -203,7 +203,7 @@ namespace BloodborneLauncher.Core
 
         private static readonly HashSet<string> ManagedNames = new(StringComparer.Ordinal)
         {
-            "Sprint Fix (High FPS)", "60FPS (no deltatime)", "Intel Black Tonemap Fix", "Increased Graphics Heap Sizes",
+            "Sprint Fix (High FPS)", "60FPS (no deltatime)", "Intel Black Tonemap Fix",
             "Intel 12th Gen+ SFX workaround", "Disable Chromatic Aberration", "Disable DoF", "Disable Motion Blur (perf increase)",
             "Disable SSAO", "Disable AA", "Disable Dynamic Light Shadows (perf increase)", "Enable Screen Space Reflections (READ NOTE)",
             "Skip Intro", "Restore Debug Camera", "Restore Debug Menu (READ NOTES)",

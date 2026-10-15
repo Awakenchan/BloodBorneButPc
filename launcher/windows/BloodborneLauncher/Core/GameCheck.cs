@@ -32,17 +32,43 @@ namespace BloodborneLauncher.Core
             var sfo = ReadSfo(Path.Combine(gameDir, "sce_sys", "param.sfo"));
             var title = sfo.GetValueOrDefault("TITLE_ID", "?");
             var version = sfo.GetValueOrDefault("APP_VER", "?");
+            // The update dumped beside the game (CUSA03173-UPDATE, as shadPS4 keeps it): the port
+            // layers it over the game at start (scripts/mods.py update_folder).
+            var update = UpdateFolder(gameDir);
+            if (update != null && ReadSfo(Path.Combine(update, "sce_sys", "param.sfo")).GetValueOrDefault("APP_VER", "?") is var updated && updated != "?")
+                version = updated;
 
             if (title != "?" && !SupportedTitles.Contains(title))
                 return new GameStatus(Health.Bad,
                     $"This is not a retail Bloodborne (found {title}): any region with update 1.09 is needed", title, version);
             if (version != "?" && version != SupportedVersion)
                 return new GameStatus(Health.Warning,
-                    $"Update 1.09 is needed: copy the dumped 1.09 update into the game folder, replacing files (found {version})", title, version);
+                    $"Update 1.09 is needed: put the dumped 1.09 update beside the game as {Path.GetFileName(Path.TrimEndingDirectorySeparator(gameDir))}-UPDATE, or copy it into the game folder (found {version})", title, version);
             if (title == "?")
                 return new GameStatus(Health.Warning, "sce_sys/param.sfo is missing or unreadable; the game may not start", title, version);
 
-            return new GameStatus(Health.Good, $"Bloodborne {title}, version {version}", title, version);
+            return new GameStatus(Health.Good, update != null
+                ? $"Bloodborne {title}, version {version} (update from {Path.GetFileName(update)})"
+                : $"Bloodborne {title}, version {version}", title, version);
+        }
+
+        /// <summary>The game update beside the game folder (&lt;game&gt;-UPDATE or &lt;game&gt;-patch, any case)
+        /// with an eboot.bin, or null.</summary>
+        public static string? UpdateFolder(string gameDir)
+        {
+            try
+            {
+                var game = new DirectoryInfo(Path.TrimEndingDirectorySeparator(gameDir));
+                if (game.Parent is not { } parent) return null;
+                return parent.EnumerateDirectories()
+                    .Where(d => d.Name.Equals(game.Name + "-UPDATE", StringComparison.OrdinalIgnoreCase) ||
+                                d.Name.Equals(game.Name + "-patch", StringComparison.OrdinalIgnoreCase))
+                    .FirstOrDefault(d => File.Exists(Path.Combine(d.FullName, "eboot.bin")))?.FullName;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>param.sfo: the PS4's key/value table (prepare.py sfo()).</summary>

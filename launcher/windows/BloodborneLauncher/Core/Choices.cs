@@ -181,11 +181,9 @@
             new("Exact (sRGB)", "0"), new("In between", "0.5"), new("Vivid (default)", "1"),
         };
 
-        public static readonly Choice[] CoopPools =
+        public static readonly Choice[] OnlineServers =
         {
-            new("The Hunter's Dream (with bbhost players)", "huntersdream",
-                "Sign in with Discord below; the game speaks The Hunter's Dream's own protocol, as bbhost does"),
-            new("shadNet server", "shadnet", "A shadNet account on the server below"),
+            new("The Hunter's Dream", "huntersdream"),
         };
 
         public static readonly Choice[] SignTimeout =

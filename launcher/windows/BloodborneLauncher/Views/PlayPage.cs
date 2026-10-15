@@ -114,10 +114,23 @@ namespace BloodborneLauncher.Views
                 Ws.SaveSoon();
                 Refresh();
             });
-            Add(Card(SymbolRegular.PuzzlePiece24, "DLC folder", "", Row(
+            ToggleRow(SymbolRegular.PuzzlePiece24, "The Old Hunters (DLC)",
+                "Off: the game starts without its DLC. The Game of the Year edition (CUSA03173) always has it",
+                () => S.Bool("dlc_enabled"), v =>
+                {
+                    S.Set("dlc_enabled", v);
+                    Ws.SaveSoon();
+                    Refresh();
+                });
+            Add(Card(SymbolRegular.FolderOpen24, "DLC folder", "", Row(
                 SmallButton("Browse", SymbolRegular.FolderOpen24, (_, _) => ChooseDlc()),
                 IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(GameEnvironment.DlcDir(S))),
                 _resetDlc), out _dlcHint));
+
+            // Steam: Bloodborne.exe as a non-Steam game (Core/SteamShortcut.cs).
+            Add(Card(SymbolRegular.Games24, "Add to Steam",
+                "Bloodborne as a non-Steam game in your Steam library: Steam Input, the overlay and Big Picture work with it",
+                SmallButton("Add to Steam", SymbolRegular.Add24, (_, _) => AddToSteam()), out _));
 
             // Player profiles: each its own saves and trophies (a button with a menu, not a drop-down,
             // so a click can't pick an entry by itself).
@@ -206,10 +219,12 @@ namespace BloodborneLauncher.Views
             _problem.Message = status.Summary;
 
             var dlc = GameEnvironment.DlcDir(S);
+            var chosen = S.Str("dlc_dir").Length > 0;
             SetHint(_dlcHint, dlc.Length > 0
-                ? dlc
-                : "Only with a base-game dump: the folder of your dumped add-ons, one folder each (The Old Hunters: SPEXPANSIONDLC03). The Game of the Year edition (CUSA03173) has it already");
-            _resetDlc.IsEnabled = dlc.Length > 0;
+                ? chosen ? dlc : $"Found next to the game: {dlc}"
+                : "Only with a base-game dump: the folder of your dumped add-ons, one folder each (The Old Hunters: SPEXPANSIONDLC03). " +
+                  "Found on its own when it is beside the game folder. The Game of the Year edition (CUSA03173) has it already");
+            _resetDlc.IsEnabled = chosen;
 
             var custom = S.Str("user_dir").Length > 0;
             var root = GameEnvironment.SavesRoot(S);
@@ -276,6 +291,41 @@ namespace BloodborneLauncher.Views
             Ws.SaveSoon();
             Ws.Log("Game folder: " + path, LogLevel.Step);
             Refresh();
+        }
+
+        private void AddToSteam()
+        {
+            var exe = Path.Combine(Paths.PortDir, "Bloodborne.exe");
+            if (!File.Exists(exe))
+            {
+                Prompt.Tell("Add to Steam", "Bloodborne.exe is missing from the Bloodborne PC folder: reinstall the package.");
+                return;
+            }
+            if (SteamShortcut.SteamDir() is null)
+            {
+                Prompt.Tell("Add to Steam", "Steam is not installed for this Windows user.");
+                return;
+            }
+            while (SteamShortcut.SteamRunning())
+            {
+                if (Prompt.Choose("Close Steam first",
+                        "Steam rewrites its list of non-Steam games when it closes, so it has to be closed while Bloodborne is added. " +
+                        "Exit Steam (Steam › Exit, or right-click its tray icon › Exit), then press Try again.",
+                        "Cancel", "Try again") <= 0)
+                    return;
+            }
+            try
+            {
+                SteamShortcut.Add(exe);
+                Ws.Log("Added Bloodborne to Steam as a non-Steam game", LogLevel.Good);
+                Prompt.Tell("Added to Steam",
+                    "Bloodborne is in your Steam library after Steam starts again. It starts the game with this launcher's settings; " +
+                    "Steam shows it as running until the game ends.");
+            }
+            catch (Exception e)
+            {
+                Prompt.Tell("Add to Steam", e.Message);
+            }
         }
 
         private void ChooseDlc()
@@ -345,13 +395,36 @@ namespace BloodborneLauncher.Views
             {
                 var choice = Prompt.Choose("Import saves",
                     $"Bloodborne saves found ({found.From}), last saved {found.Saved:d MMM yyyy, HH:mm}:\n{found.Dir}",
-                    "Cancel", "Another folder…", "Import these");
+                    "Cancel", "Choose others…", "Import these");
                 if (choice <= 0) return;
                 if (choice == 2) from = found.Dir;
             }
             if (from == null)
             {
-                var folder = PickFolder("The folder with your saves (another port's whole folder is fine)", "");
+                var how = Prompt.Choose("Import saves",
+                    "Choose the folder with your saves (another port's whole folder is fine), or a save file: " +
+                    "a .zip of the save, or one of its files (userdata0000).",
+                    "Cancel", "A folder…", "A file or .zip…");
+                if (how <= 0) return;
+                string? folder;
+                if (how == 1)
+                {
+                    folder = PickFolder("The folder with your saves (another port's whole folder is fine)", "");
+                }
+                else
+                {
+                    var dialog = new Microsoft.Win32.OpenFileDialog
+                    {
+                        Title = "A save file: a .zip of the save, or one of its files (userdata0000)",
+                        Filter = "Bloodborne saves (*.zip;userdata*)|*.zip;userdata*|All files|*.*",
+                    };
+                    try { folder = dialog.ShowDialog() == true ? SaveImport.FolderOfFile(dialog.FileName) : null; }
+                    catch (Exception e)
+                    {
+                        Prompt.Tell("Import saves", "Could not open that file: " + e.Message);
+                        return;
+                    }
+                }
                 if (folder == null) return;
                 if (SaveImport.Find(folder, "chosen folder").FirstOrDefault() is not { } inside)
                 {

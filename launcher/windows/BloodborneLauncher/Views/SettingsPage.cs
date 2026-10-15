@@ -92,6 +92,10 @@ namespace BloodborneLauncher.Views
                 IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(Paths.ConfigDir)), out _));
             Add(Card(SymbolRegular.DocumentSettings20, "Port settings (bbport.ini)", Paths.IniPath,
                 IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(Path.GetDirectoryName(Paths.IniPath)!)), out _));
+            Add(Card(SymbolRegular.Broom24, "Shader cache",
+                "The game's compiled shaders, kept between starts (a new engine version clears them itself). Clear them if " +
+                "something draws wrong in every save, such as missing skin or hair; the next start compiles them again and stutters for a while",
+                SmallButton("Clear", SymbolRegular.Broom24, (_, _) => ClearShaderCache()), out _));
 
             Group("Share settings");
             Add(Card(SymbolRegular.Share24, "Share your settings",
@@ -246,6 +250,35 @@ namespace BloodborneLauncher.Views
             if (Environment.ProcessPath is { } self)
                 Process.Start(new ProcessStartInfo(self) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(self)! });
             Application.Current.Shutdown();
+        }
+
+        /// <summary>Deletes the engine's shader and pipeline caches (user\cache beside the engine;
+        /// scripts\run_windows.py also clears them when the engine changes).</summary>
+        private static void ClearShaderCache()
+        {
+            if (Process.GetProcessesByName("bb-probe").Length > 0)
+            {
+                Prompt.Tell("Shader cache", "Close the game first: it is using the cache.");
+                return;
+            }
+            var cache = Path.Combine(Paths.PortDir, "user", "cache");
+            var failed = 0;
+            if (Directory.Exists(cache))
+            {
+                foreach (var entry in new DirectoryInfo(cache).EnumerateFileSystemInfos())
+                {
+                    if (entry.Name == "engine.txt") continue;
+                    try
+                    {
+                        if (entry is DirectoryInfo directory) directory.Delete(recursive: true);
+                        else entry.Delete();
+                    }
+                    catch (Exception) { failed++; }
+                }
+            }
+            Ws.Log(failed == 0 ? "Shader cache cleared: the next start compiles the shaders again."
+                               : $"Shader cache: {failed} entries could not be removed ({cache}).",
+                   failed == 0 ? LogLevel.Good : LogLevel.Warn);
         }
 
         // ---------------------------------------------------------------- shared settings

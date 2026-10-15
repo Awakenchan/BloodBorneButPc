@@ -19,7 +19,13 @@ namespace BloodborneLauncher.Views
                 SmallButton("Recommend…", SymbolRegular.Sparkle24, (_, _) => MainWindow.Instance!.OfferBestSettings(firstRun: false)), out _));
 
             Group("Upscaler");
-            IniCombo(SymbolRegular.Sparkle24, "Upscaler", null, Choices.Upscalers, "upscaler", changed: UpdateUpscaler);
+            // FSR 4.1.1 runs through fsr4vk (in the package) or an fsr4_411 set built from the player's
+            // own AMD DLL: offered when either is there. Without both the setting becomes FSR 4, the
+            // model it would fall back to (#22).
+            var fsr411 = Fsr4VkFound() || Directory.Exists(Fsr411Dir());
+            if (!fsr411 && Ini.Get("upscaler") == "fsr411") Ini.Set("upscaler", "fsr4");
+            IniCombo(SymbolRegular.Sparkle24, "Upscaler", null,
+                fsr411 ? Choices.Upscalers : Choices.Upscalers.Where(c => c.Value != "fsr411").ToArray(), "upscaler", changed: UpdateUpscaler);
             _upscalerHint = (TextBlock)((SettingRow)Body.Children[^1]).Tag;
 
             IniCombo(SymbolRegular.ZoomIn24, "Quality preset", "How far below the output resolution the game renders",
@@ -40,9 +46,13 @@ namespace BloodborneLauncher.Views
                          (SymbolRegular.TopSpeed24, "show_fps_rate", "Frame rate"),
                          (SymbolRegular.Timer24, "show_fps_frame_time", "Frame time"),
                          (SymbolRegular.ResizeLarge24, "show_fps_upscaler", "Upscaler"),
+                         (SymbolRegular.DeveloperBoard24, "show_fps_cpu", "CPU usage"),
+                         (SymbolRegular.Gauge24, "show_fps_gpu", "GPU usage"),
                      })
             {
-                ToggleRow(icon, title, "Shown in the FPS counter", () => Ini.Get(key, "1") == "1", v => Ini.Set(key, v ? "1" : "0"));
+                // CPU and GPU use are off unless chosen (the engine's defaults, bbport_settings.h).
+                var fallback = key is "show_fps_cpu" or "show_fps_gpu" ? "0" : "1";
+                ToggleRow(icon, title, "Shown in the FPS counter", () => Ini.Get(key, fallback) == "1", v => Ini.Set(key, v ? "1" : "0"));
                 ((System.Windows.FrameworkElement)Body.Children[^1]).Margin = new System.Windows.Thickness(24, 0, 0, 4);
             }
 
@@ -136,8 +146,10 @@ namespace BloodborneLauncher.Views
                 "fsr4" => Directory.Exists(Path.Combine(Paths.PortDir, "fsr4_shaders"))
                     ? "Assets found. GPUs without the needed shader features fall back to FSR 3.1"
                     : "fsr4_shaders is missing from the port folder: the game falls back to FSR 3.1",
+                "fsr411" when Fsr4VkFound() =>
+                    "Through fsr4vk (included, experimental): runs on any GPU with the needed Vulkan features. Prefer FSR 4 if it looks wrong",
                 "fsr411" => Fsr411Problem() is { } problem
-                    ? $"{problem}: the game falls back to FSR 3.1"
+                    ? $"{problem}: the game falls back to FSR 4"
                     : "Assets for the chosen resolution and preset found",
                 "dlss" => DlssFound()
                     ? "Needs an NVIDIA GeForce RTX GPU; others fall back to FSR 3.1" +
@@ -156,6 +168,10 @@ namespace BloodborneLauncher.Views
                 ? $"NVIDIA DLSS {System.Diagnostics.FileVersionInfo.GetVersionInfo(ngx).FileVersion} is included (out\\nvngx_dlss.dll). Choose it as the upscaler above"
                 : "out\\nvngx_dlss.dll is missing from the engine folder");
         }
+
+        /// <summary>The fsr4vk provider the package ships (FSR 4.1.1 on any GPU, vk_fsr4vk.cpp).</summary>
+        private static bool Fsr4VkFound() =>
+            File.Exists(Path.Combine(Paths.PortDir, "fsr4vk", "amd_fidelityfx_upscaler_vk.dll"));
 
         private static string Fsr411Dir()
         {

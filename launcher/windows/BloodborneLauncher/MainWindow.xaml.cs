@@ -394,7 +394,13 @@ namespace BloodborneLauncher
             try
             {
                 ws.SaveNow();
-                await Updater.InstallAsync(release, package, progress);
+                var skipped = await Updater.InstallAsync(release, package, progress);
+                if (skipped.Count > 0)
+                    Prompt.Tell("Updated, with files left out",
+                        "Windows or an antivirus would not let these through, so the old ones were kept:\n" +
+                        string.Join("\n", skipped.Take(5)) +
+                        "\n\nThe game runs without them; only online play with The Hunter's Dream (bbbridge) needs " +
+                        $"them. Allow the Bloodborne PC folder in the antivirus and update again, or take them from {Updater.ReleasesPage}");
                 Application.Current.Shutdown();
             }
             catch (Exception ex)
@@ -418,17 +424,15 @@ namespace BloodborneLauncher
 
             var s = ws.Settings;
             var ini = ws.Ini;
-            if (ini.Get("online_enabled") == "1")
+            // A connected Hunter's Dream account plays in its own co-op pool (the engine's thd backend);
+            // decided here, not only when the Online page is opened.
+            ini.Set("online_pool", s.HuntersDreamToken.Length > 0 && s.Str("hd_name").Length > 0 ? "huntersdream" : "");
+            if (!HuntersDream.OnlinePaused && ini.Get("online_enabled") == "1" && ini.Get("online_pool") != "huntersdream")
             {
                 // The engine refuses these at start; say so here instead.
-                var problem = ini.Get("online_pool", "shadnet") == "huntersdream"
-                    ? (s.OnlineThdToken.Length == 0 || s.Str("online_thd_name").Length == 0
-                        ? "Sign in to The Hunter's Dream with Discord on the Online page before playing online."
-                        : null)
-                    : ini.Get("online_host").Trim().Length == 0 ? "Enter the server before playing online."
-                    : ini.Get("online_username").Contains('@') ? "The account name is the name registered on the server, not an email address."
+                var problem = ini.Get("online_username").Contains('@') ? "The account name is the name registered on the server, not an email address."
                     : ini.Get("online_username").Trim().Length == 0 ? "Enter the account name before playing online."
-                    : s.OnlinePassword.Length == 0 ? "Enter the shadNet account password before playing online."
+                    : s.OnlinePassword.Length == 0 ? "Enter the account password before playing online."
                     : null;
                 if (problem != null)
                 {
@@ -464,7 +468,7 @@ namespace BloodborneLauncher
             // A patch that changes the game's region (Unlock Game Region) leaves the game without a
             // Bloodborne server: online, ask whether to leave it out for this session.
             GameEnvironment.RegionPatchOnline = null;
-            if (ini.Get("online_enabled") == "1" && ini.Get("online_connected", "1") == "1" &&
+            if (!HuntersDream.OnlinePaused && ini.Get("online_enabled") == "1" && ini.Get("online_connected", "1") == "1" &&
                 Patches.RegionChanging(GameEnvironment.PatchesDir(s)) is { Count: > 0 } region)
             {
                 var names = string.Join(", ", region.Select(p => $"\"{p.Name}\""));
@@ -483,16 +487,60 @@ namespace BloodborneLauncher
             // and UI itself: it would keep its own shape (black bars) and stop the widescreen hooks.
             GameEnvironment.ResolutionPatchChoice = null;
             var (outW, outH) = Choices.OutputSize(ini.Get("output_res", "1920x1080"));
-            if ((outW, outH) != (1920, 1080) &&
+            // With a 1920 × 1080 output, such a patch makes the game draw at its size itself: the
+            // upscaler then runs at 1:1 (DLAA whatever the preset) and in-game preset changes crashed
+            // (Discord, 3440 × 1440). Its size as the output resolution keeps the shape and lets the
+            // presets work: offered once per set of patches.
+            if ((outW, outH) == (1920, 1080) &&
+                Patches.ResolutionSetting(GameEnvironment.PatchesDir(s)) is { Count: > 0 } native &&
+                native.Select(p => System.Text.RegularExpressions.Regex.Match(p.Name, @"(\d{3,5})x(\d{3,5})"))
+                    .FirstOrDefault(m => m.Success) is { } size &&
+                (int.Parse(size.Groups[1].Value), int.Parse(size.Groups[2].Value)) is var (patchW, patchH) &&
+                (patchW, patchH) != (1920, 1080))
+            {
+                var names = string.Join(", ", native.Select(p => $"\"{p.Name}\""));
+                if (s.Str("resolution_patch_native") != names)
+                {
+                    var choice = Prompt.Choose($"Use {patchW} × {patchH} as the output resolution?",
+                        names + $" makes the game draw at {patchW} × {patchH} by itself, so the upscaler preset can't lower " +
+                        "the render resolution (the upscaler runs as DLAA / native AA).\n\n" +
+                        $"Setting the output resolution to {patchW} × {patchH} instead gives the same picture and shape, " +
+                        "and the presets (Quality, Balanced, Performance) work. The patch is then left out while that output is set.",
+                        "Cancel", $"Use {patchW} × {patchH}", "Keep the patch");
+                    if (choice <= 0) return;
+                    if (choice == 1)
+                    {
+                        ini.Set("output_res", $"{patchW}x{patchH}");
+                        ini.Save();
+                        (outW, outH) = (patchW, patchH);
+                        GameEnvironment.ResolutionPatchChoice = "skip";
+                        ws.Log($"Output resolution {patchW} × {patchH}; {names} left out (presets work).", LogLevel.Step);
+                    }
+                    else
+                    {
+                        s.Set("resolution_patch_native", names);
+                        ws.SaveNow();
+                    }
+                }
+            }
+            if ((outW, outH) != (1920, 1080) && GameEnvironment.ResolutionPatchChoice is null &&
                 Patches.ResolutionSetting(GameEnvironment.PatchesDir(s)) is { Count: > 0 } sizing)
             {
                 var names = string.Join(", ", sizing.Select(p => $"\"{p.Name}\""));
-                var choice = Prompt.Choose("Play with " + names + "?",
+                // "Always on" is remembered for this set of patches (#18); another set asks again.
+                var choice = s.Str("resolution_patch_always") == names ? 1 : Prompt.Choose("Play with " + names + "?",
                     $"The output resolution ({outW} × {outH}) already sets the game's resolution and widens the picture and UI to fill the screen. " +
                     names + " sets its own on top: the picture keeps the patch's shape, with black bars.\n\n" +
-                    "Leave it out? It still applies with a 1920 × 1080 output.",
-                    "Cancel", "Keep it on", "Leave it out");
+                    "Leave it out? It still applies with a 1920 × 1080 output. \"Always on\" keeps it and does not ask again " +
+                    "until the resolution patches switched on in Mods change.",
+                    "Cancel", "Keep on", "Leave out", "Always on");
                 if (choice <= 0) return;
+                if (choice == 3)
+                {
+                    s.Set("resolution_patch_always", names);
+                    ws.SaveNow();
+                    choice = 1;
+                }
                 GameEnvironment.ResolutionPatchChoice = choice == 1 ? "keep" : "skip";
                 ws.Log(choice == 1 ? $"{names}: kept on with the {outW} × {outH} output."
                     : $"{names}: left out; the output resolution sets the picture.", LogLevel.Step);

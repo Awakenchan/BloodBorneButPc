@@ -19,12 +19,12 @@ The launcher updates itself from the Releases page.
 ## Features
 
 - **Play**: game folder check, player profiles (each with its own saves and trophies), automatic save backups with restore, save import from shadPS4 or another port, DLC folder (The Old Hunters on base-game dumps), session summary. `Bloodborne.exe` starts the game straight away with your settings (for a shortcut or Steam).
-- **Display**: resolution (or your display's own, any shape), fullscreen, widescreen (21:9, 32:9), native HDR, 30 to 144 FPS or uncapped, in-game menu in 9 languages.
+- **Display**: resolution (or your display's own, any shape), monitor selection, fullscreen, widescreen (21:9, 32:9), native HDR, 30 to 144 FPS or uncapped, in-game menu in 9 languages.
 - **Graphics**: FSR 4, FSR 3, DLSS and DLAA, TAA, sharpening, occlusion culling, picture and camera tuning, FPS counter (frame rate, frame time, upscaler), best settings for your PC.
 - **Controls**: keyboard and mouse for every action, the game's button prompts shown as your keys or as Xbox buttons, controller remapping, stick options, live controller detection, shareable profiles.
 - **Cheats**: Blood Vials and Quicksilver Bullets (infinite or a set amount), infinite consumables and stamina, stealth, no weapon wear, firearm range, keep echoes on death, echo multiplier. Each can be turned off.
 - **Trophies**: all 40, completion rate, in-game notification, reset.
-- **More**: mods and patches, online (The Hunter's Dream for messages and bloodstains; co-op with bbhost players on The Hunter's Dream through [bbbridge](https://github.com/MaskZeus/bbbridge-bbport-online-tool) by MaskZeus, signed in with Discord, or on a shadNet server), game log, crash helper with safe mode, memory check before starting, stable or beta updates with a version selector.
+- **More**: mods and patches, online on The Hunter's Dream (messages, bloodstains, co-op and invasions with bbhost players, through bbhost's own network code; an account with Discord or without it, with a recovery code), game log, crash helper with safe mode, memory check before starting, stable or beta updates with a version selector.
 
 ### Control profile format
 

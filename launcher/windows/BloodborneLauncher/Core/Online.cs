@@ -112,32 +112,6 @@ namespace BloodborneLauncher.Core
             }
         }
 
-        /// <summary>The Hunter's Dream pool: the game server, its session service (port 18671) and its
-        /// account service. Any HTTP answer from the services means they are reachable.</summary>
-        public static async Task<List<Result>> CheckHuntersDreamAsync(string gameServer)
-        {
-            var results = new List<Result> { await CheckGameServerAsync(gameServer) };
-            var origin = new Uri(gameServer);
-            foreach (var (name, url) in new[]
-                     {
-                         ("Co-op service", $"{origin.Scheme}://{origin.Host}:18671/"),
-                         ("Account service", $"{origin.Scheme}://{origin.Host}/"),
-                     })
-            {
-                try
-                {
-                    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(7) };
-                    using var response = await http.GetAsync(url);
-                    results.Add(new Result(name, url, true, ""));
-                }
-                catch (Exception e)
-                {
-                    results.Add(new Result(name, url, false, e.GetBaseException().Message));
-                }
-            }
-            return results;
-        }
-
         /// <summary>The game's first request: its server information (ss.info, base64 XML that
         /// lists the game APIs). Without a port, the game's own (20443) is used.</summary>
         private static async Task<Result> CheckGameServerAsync(string gameServer)

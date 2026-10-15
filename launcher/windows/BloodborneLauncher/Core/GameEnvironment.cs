@@ -18,9 +18,75 @@ namespace BloodborneLauncher.Core
         public static string UserDir(LauncherSettings s) =>
             PlayerProfiles.Folder(s, PlayerProfiles.Current(s));
 
-        /// <summary>The dumped add-ons' folder (The Old Hunters on base-game dumps), or "".</summary>
+        /// <summary>The dumped add-ons' folder (The Old Hunters on base-game dumps): the one chosen on
+        /// the Play page, else one found next to the game folder (<see cref="FoundDlc"/>), or "".</summary>
         public static string DlcDir(LauncherSettings s) =>
-            s.Str("dlc_dir") is { Length: > 0 } dir ? Paths.Expand(dir) : "";
+            s.Str("dlc_dir") is { Length: > 0 } dir ? Paths.Expand(dir) : FoundDlc(GameDir(s)) ?? "";
+
+        private static (string Game, string? Found) _foundDlc = ("", null);
+
+        /// <summary>An add-on dump near the game folder, as other launchers find it: a folder with an
+        /// add-on's sce_sys\param.sfo (category "ac") inside the game folder, beside it or one level
+        /// below a folder beside it (CUSA00207-DLC\SPEXPANSIONDLC03, addcont\CUSA00207\...). Returns
+        /// the folder holding the add-ons (the engine reports each one in it), or null.</summary>
+        public static string? FoundDlc(string game)
+        {
+            if (game.Length == 0 || !Directory.Exists(game)) return null;
+            if (_foundDlc.Game == game) return _foundDlc.Found;
+            string? found = null;
+            try
+            {
+                var parent = Directory.GetParent(Path.GetFullPath(game).TrimEnd('\\', '/'))?.FullName;
+                IEnumerable<string> Children(string dir)
+                {
+                    try { return Directory.EnumerateDirectories(dir); } catch (Exception) { return Array.Empty<string>(); }
+                }
+                var near = Children(game).ToList();
+                if (parent != null)
+                    foreach (var sibling in Children(parent).Take(200))
+                    {
+                        near.Add(sibling);
+                        near.AddRange(Children(sibling).Take(50));
+                        // shadPS4's addcont\<title id>\<add-on>
+                        if (string.Equals(Path.GetFileName(sibling), "addcont", StringComparison.OrdinalIgnoreCase))
+                            foreach (var title in Children(sibling)) near.AddRange(Children(title));
+                    }
+                var addon = near.FirstOrDefault(IsAddon);
+                if (addon != null)
+                {
+                    var holder = Path.GetDirectoryName(addon)!;
+                    found = parent != null && string.Equals(holder, parent, StringComparison.OrdinalIgnoreCase) ? addon : holder;
+                }
+            }
+            catch (Exception) { }
+            _foundDlc = (game, found);
+            return found;
+        }
+
+        /// <summary>Whether <paramref name="dir"/> is a dumped add-on: its param.sfo's CATEGORY is "ac".</summary>
+        private static bool IsAddon(string dir)
+        {
+            try
+            {
+                var path = Path.Combine(dir, "sce_sys", "param.sfo");
+                if (!File.Exists(path) || new FileInfo(path).Length > 65536) return false;
+                var sfo = File.ReadAllBytes(path);
+                if (sfo.Length < 20 || sfo[0] != 0 || sfo[1] != (byte)'P' || sfo[2] != (byte)'S' || sfo[3] != (byte)'F') return false;
+                int U32(int at) => BitConverter.ToInt32(sfo, at);
+                int keys = U32(8), data = U32(12), count = U32(16);
+                for (var i = 0; i < count && 20 + 16 * (i + 1) <= sfo.Length; i++)
+                {
+                    var e = 20 + 16 * i;
+                    var k = keys + (sfo[e] | sfo[e + 1] << 8);
+                    var v = data + U32(e + 12);
+                    if (k + 9 > sfo.Length || v + 2 > sfo.Length) continue;
+                    if (System.Text.Encoding.ASCII.GetString(sfo, k, 9) == "CATEGORY\0")
+                        return sfo[v] == (byte)'a' && sfo[v + 1] == (byte)'c';
+                }
+            }
+            catch (Exception) { }
+            return false;
+        }
 
         public static string ModsDir(LauncherSettings s) =>
             s.Str("mods_dir") is { Length: > 0 } dir ? Paths.Expand(dir) : Path.Combine(Paths.DataDir, "mods");
@@ -63,7 +129,9 @@ namespace BloodborneLauncher.Core
                 ["BB_VBLANK_HZ"] = fps switch { "90" => "90", "30" or "60" => "60", _ => "0" },
                 ["PYTHONUNBUFFERED"] = "1",
             };
-            if (DlcDir(s) is { Length: > 0 } dlc) env["BB_DLC_DIR"] = dlc;
+            // The Play page's DLC switch: off, the game is told no add-ons are installed.
+            if (!s.Bool("dlc_enabled")) env["BB_DLC"] = "0";
+            else if (DlcDir(s) is { Length: > 0 } dlc) env["BB_DLC_DIR"] = dlc;
             if (RegionPatchOnline is { } region) env["BB_REGION_PATCH_ONLINE"] = region;
             if (ResolutionPatchChoice is { } resolution) env["BB_RESOLUTION_PATCH"] = resolution;
             if (s.Str("present_mode").Length > 0) env["BB_PRESENT_MODE"] = s.Str("present_mode");
@@ -133,13 +201,13 @@ namespace BloodborneLauncher.Core
             // The account password never goes to bbport.ini; the engine takes it from here.
             if (s.OnlinePassword is { Length: > 0 } password) env["BB_SHADNET_PASSWORD"] = password;
             // The Hunter's Dream account (scripts/online.py uses it in that pool only).
-            if (s.OnlineThdToken is { Length: > 0 } token && s.Str("online_thd_name") is { Length: > 0 } name)
+            if (s.HuntersDreamToken is { Length: > 0 } token && s.Str("hd_name") is { Length: > 0 } name)
             {
                 env["BB_THD_TOKEN"] = token;
                 env["BB_THD_ONLINE_ID"] = name;
             }
             // What this client reports to the shadNet server after signing in (it signs out clients that report none).
-            env["BB_CLIENT_VERSION"] = $"BloodBorneButPc {Updater.CurrentLabel}";
+            env["BB_CLIENT_VERSION"] = "shadPS4 Awakenchan/v0.20.0";
 
             foreach (var item in s.Str("extra_env").Split(' ', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -147,6 +215,7 @@ namespace BloodborneLauncher.Core
                 if (at > 0)
                     env[item[..at]] = item[(at + 1)..];
             }
+            WindowsMonitors.ApplyEnvironment(s.Str("display_device"), WindowsMonitors.All(), env);
             return env;
         }
 

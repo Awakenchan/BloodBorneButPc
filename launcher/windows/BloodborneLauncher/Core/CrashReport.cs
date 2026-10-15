@@ -34,6 +34,15 @@ namespace BloodborneLauncher.Core
                        "(Details) or restart the PC. Otherwise set the page file to System managed size (Windows Settings › System › About › " +
                        "Advanced system settings › Performance Settings › Advanced › Virtual memory › Change), close other " +
                        "programs, or turn Live resolution On (Display) or choose a lower upscaler preset: a scene up to 1080p needs about 4 GB less.";
+            // The game's first files missing from /app0: an incomplete game folder or a mod's.
+            if (Has("gxshader.shaderbnd.dcx) -> not found") || Has("systex.tpf.dcx) -> not found"))
+                return "The game's own files are missing (dvdroot_ps4\\shader, dvdroot_ps4\\other): the game folder is incomplete. " +
+                       "Turn Mods off and start again; if it still crashes, dump or extract the game again (base game plus the 1.09 update).";
+            // The game's own panic on a file it could not load (#19): it then crashes on purpose.
+            if (Has("FileTransferTask.cpp"))
+                return "The game could not load one of its files and stopped itself (FileTransferTask). A damaged or incomplete game " +
+                       "folder does this: dump or extract the game again (base game plus the 1.09 update), keep it out of OneDrive, and " +
+                       "turn Mods off to rule them out. A \"Runtime: reading ... failed\" line in the log names the file.";
             if (Has("Out of order flip IRQ"))
                 return "A frame reached the screen out of order (a timing race in the engine; Precise frame pacing makes it likelier).";
             // The game's memory pool full: the game doesn't check the failed allocation and crashes on
