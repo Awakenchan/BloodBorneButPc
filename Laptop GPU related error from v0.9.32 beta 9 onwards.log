@@ -1,0 +1,39 @@
+[Startup Crash (Windows Error 1450) on Laptop GPU since v0.9.32-beta.9]
+
+### GPU: NVIDIA GeForce RTX 4050 Laptop GPU
+
+### The Issue:
+The game crashes instantly on startup with a Dantelion2 engine panic during Direct Memory allocation (`Ps4RuntimeHeapImpl.cpp(324)`). 
+
+* **v0.9.32-beta.8** runs perfectly fine for me.
+* **v0.9.32-beta.9** (and all newer builds up to v0.9.34-beta.3) crashes immediately on launch.
+
+### Cause?:
+Looking at the minidump and engine logs, the crash traces back to **Windows Error 1450 (`ERROR_NO_SYSTEM_RESOURCES`)**. 
+
+Ever since **beta 9** introduced the built-in scaling of graphics heaps to "PC sizes", the engine's startup virtual memory address space requirement jumped from **~6.3 GB (`0x17c000000`)** to **~10.3 GB (`0x27c000000`)**. On laptop architectures where system RAM and mobile VRAM allocation boundaries are tightly managed by the Windows kernel, Windows completely rejects this massive contiguous allocation block on boot. 
+
+As seen in error log:
+
+Runtime: creating the memory pool section [0, 0x27c000000) failed: Windows error 1450
+---------------------------------
+[Dantelion2 Panic] 
+N:\SPRJ\Source\Library\Dantelion2\dist_ps4\source\ClassLibrary\Core\Kernel\Source\ps4\Ps4RuntimeHeapImpl.cpp(324)
+_AllocateDirectMemory() failed for creating runtime heap. (size=121634816 bytes)
+---------------------------------
+DL_PANIC is firing core dump...
+Guest fault 0xc0000005 at guest+0x20b56d2, writing address 0000000000000000 (thread 4176 main)
+  rax=3f2ce0756c58af00 rbx=0000000000000144 rcx=00000001406d8828 rdx=0000000000000000
+  rsi=00000000533d3b60 rdi=00000008056a5498 rbp=000000000881dbb0 rsp=000000000881da90
+  #0 guest+0x2081b06
+  #1 guest+0x207fb5f
+  #2 guest+0x84
+  #3 guest+0xd2
+  host #0 bb-probe.exe+0x366ff
+  host #1 bb-probe.exe+0x360f5
+  host #2 ntdll.dll+0x7813a
+  host #3 ntdll.dll+0x1e6a2
+  host #4 ntdll.dll+0xa4e9e
+  host #5 guest+0x20b56d2
+Crash dump: logs\crash.dmp
+bb-probe exited with code 139
