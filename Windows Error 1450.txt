@@ -1,0 +1,52 @@
+Windows error 1450 on Laptop GPU Part 2
+
+Beta 4 fix did not fully fixed the issue sadly
+
+### GPU: NVIDIA GeForce RTX 4050 Laptop GPU 6gb (driver version 591.74.0.0/Vulkan API version 1.4.325.)
+
+### What happens: Patch still enlarges heaps... Sometimes?
+
+Bloodborne Launcher v0.9.34 beta 4, engine bbhost-0.4.0-fps70, 2026-10-17 09:47:35
+Online: offline mode
+Boot image unchanged: reused (0.1 s)
+Engine: native PC menus prepared locally: D:\Bloodborne\BloodbornePC\engine-assets\pc-menus
+Patches: follow camera as the game has it, its eases converted from 30 FPS
+Patches: render pools 1024 KiB each (the game's 256)
+Patches: the game's graphics heaps 3952 and 2560 MiB (the PS4's 2287 and 886)
+Patches: FPS preset 60; 215 writes from ['60 FPS++', 'Disable AA', 'Skip Intro']
+**** Patches: the game's heaps are enlarged; direct memory 9152 MiB ****
+
+### After that log is identical to successful launches until:
+
+Runtime: application heap API registered
+Module 0 initializer returned 0
+Starting linked module 1 at image offset 0x57c0000; native bindings=238
+Module 1 initializer returned 0
+Entering original x86-64 code at guest offset 0xa0
+Runtime: _init_env returned (verified libc implementation: RET)
+Runtime: creating the memory pool section [0, 0x27c000000) failed: Windows error 1450
+---------------------------------
+[Dantelion2 Panic] 
+N:\SPRJ\Source\Library\Dantelion2\dist_ps4\source\ClassLibrary\Core\Kernel\Source\ps4\Ps4RuntimeHeapImpl.cpp(324)
+_AllocateDirectMemory() failed for creating runtime heap. (size=121634816 bytes)
+---------------------------------
+DL_PANIC is firing core dump...
+Guest fault 0xc0000005 at guest+0x20b56d2, writing address 0000000000000000 (thread 7576 main)
+  rax=56acd2d943fc8900 rbx=0000000000000144 rcx=00000001406dd8b8 rdx=0000000000000000
+  rsi=0000000013995c80 rdi=00000008056a5498 rbp=000000000880dbb0 rsp=000000000880da90
+  #0 guest+0x2081b06
+  #1 guest+0x207fb5f
+  #2 guest+0x84
+  #3 guest+0xd2
+  host #0 bb-probe.exe+0x366ff
+  host #1 bb-probe.exe+0x360f5
+  host #2 ntdll.dll+0x7813a
+  host #3 ntdll.dll+0x1e6a2
+  host #4 ntdll.dll+0xa4e9e
+  host #5 guest+0x20b56d2
+Upscaler: FSR 4 v07 INT8 native model, 1080 tier, output 1920x1080
+Upscaler: FSR 4 ready after 0.1 s
+Crash dump: logs\crash.dmp
+bb-probe exited with code 139
+
+### Cause(?): Tweaking seemingly unrelated graphics toggles (like turning off Chromatic Aberration) causes the fail-safe to trigger correctly: Patches: the game's graphics heaps at their PS4 size (Windows refused the 9152 MiB memory pool...). When it falls back to PS4 sizing, the game boots up cleanly and runs at a stable 60 FPS loop (Exit Code 0).
