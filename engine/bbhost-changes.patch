@@ -177286,404 +177286,54 @@ index deefd94..1d12ce5 100644
 +bool mouse_camera_flick(float&,float&);
 +
 diff --git a/gpu/shim/input/input.cpp b/gpu/shim/input/input.cpp
-index 30fdc4f..7630a3d 100644
+index 30fdc4f..c303984 100644
 --- a/gpu/shim/input/input.cpp
 +++ b/gpu/shim/input/input.cpp
-@@ -1,196 +1,198 @@
--// SPDX-License-Identifier: GPL-3.0-or-later
--// SDL/Pad bridge for bbhost's native engine mouse camera and menu hit testing.
--#include "input.h"
--#include "compat.h"
--#include "bindings.h"
--#include "ini_bindings.h"
--#include "mouse_camera_step.h"
--#include "../bbport_settings.h"
--#include "../bbport_overlay.h"
--#include "../engine/option_menu.h"
--#include <SDL3/SDL.h>
--#include <algorithm>
--#include <atomic>
--#include <cstdarg>
--#include <cstdio>
--#include <cstring>
--#include <mutex>
--
--namespace {
--std::atomic<bool> active{false},relative{false},wanted_relative{false},text_open{false},focused{true};
--std::atomic<InputDevice> device{InputDevice::KeyboardMouse};
--std::mutex state_lock;
--PadState snapshot;
--float mouse_x=0,mouse_y=0;
--int window_w=1920,window_h=1080;
--uint32_t mouse_buttons=0,mouse_edges=0;
--float wheel=0;
--std::atomic<bool> in_window{true};
--ElfImage image{};
--uint64_t saved_serial=0;
--}
--void host_log(const char* fmt,...) {
--    std::fputs("Input: ",stdout);va_list a;va_start(a,fmt);std::vprintf(fmt,a);va_end(a);std::putchar('\n');
--}
--bool input_prologue_hook(ElfImage* i,uint64_t at,const uint8_t* bytes,size_t n,BbEngine::Callback fn) {
--    BbEngine::Hook hook;
--    if(at<i->mem.slide || !BbEngine::Prepare(hook,reinterpret_cast<uint8_t*>(i->mem.slide),
--        i->mem.size,at-i->mem.slide,std::span<const uint8_t>(bytes,n),fn))return false;
--    BbEngine::Commit(std::span<BbEngine::Hook>(&hook,1));return true;
--}
--HostSettings host_settings() {return {BbSettings::Get().mouse_menu.load()};}
--std::uint32_t input_delivered_buttons() {return host_pad_state().buttons;}
--InputDevice host_input_device() {return device.load();}
--PadState host_pad_state() {std::lock_guard lock(state_lock);return snapshot;}
--bool host_options_open() {return BbOverlay::MenuOpen();}
--bool ingame_menu_open() {return false;} // bbhost's separate host menu is not installed here.
--bool host_text_entry_open() {return text_open.load();}
--bool debug_menu_open() {return false;}
--bool debug_menu_active() {return false;} // No dedicated native debug-menu controller in this port.
--bool host_mouse_relative() {return relative.load();}
--bool host_mouse_stage_position(float& x,float& y) {
--    std::lock_guard lock(state_lock);
--    if(!in_window || !focused || relative || window_w<=0 || window_h<=0)return false;
--    // Presenter fits the output; Scaleform fits its native 1920x1080 stage.
--    const auto& s=BbSettings::Get();
--    const int idx=std::clamp(BbSettings::ResolutionNeedsRestart()?s.startup_output_res:s.output_res.load(),0,BbSettings::OutputCount-1);
+@@ -54,7 +54,7 @@ bool host_mouse_stage_position(float& x,float& y) {
+     // Presenter fits the output; Scaleform fits its native 1920x1080 stage.
+     const auto& s=BbSettings::Get();
+     const int idx=std::clamp(BbSettings::ResolutionNeedsRestart()?s.startup_output_res:s.output_res.load(),0,BbSettings::OutputCount-1);
 -    const float ow=BbSettings::OutputWidths[idx],oh=BbSettings::OutputHeights[idx];
--    const float present=std::min(window_w/ow,window_h/oh);
--    if(!s.widescreen){
--        x=(mouse_x-(window_w-ow*present)/2)/present*1920/ow;
--        y=(mouse_y-(window_h-oh*present)/2)/present*1080/oh;return true;
--    }
--    const float ui=std::min(ow/1920,oh/1080);
--    const float sx=(window_w-ow*present)/2+(ow-1920*ui)*present/2;
--    const float sy=(window_h-oh*present)/2+(oh-1080*ui)*present/2;
--    x=(mouse_x-sx)/(present*ui);y=(mouse_y-sy)/(present*ui);return true;
--}
--void host_mouse_describe(char* out,size_t n) {
--    std::lock_guard lock(state_lock);std::snprintf(out,n,"pointer %.0f,%.0f window %dx%d",mouse_x,mouse_y,window_w,window_h);
--}
--bool option_menu_click_decides(uint8_t* c,int row) {return BbEngine::Options::ClickDecides(c,row);}
--void option_menu_list_update(uint8_t* c,bool focus) {BbEngine::Options::ListUpdate(c,focus);}
--
--namespace BbInput {
--bool Enabled(){return active && BbSettings::Get().pc_controls;}
--bool Install(uint8_t* base,size_t size) {
--    if(!BbSettings::Get().pc_controls)return false;
--    image={{reinterpret_cast<uint64_t>(base),size},kEboot109Sha256};
--    host_bindings_load_defaults();
--    if(FILE* f=std::fopen((std::getenv("BB_CONFIG")?std::getenv("BB_CONFIG"):"bbport.ini"),"r")) {
--        char line[512];
--        while(std::fgets(line,sizeof line,f)) {
--            char* eq=std::strchr(line,'=');if(!eq)continue;*eq++=0;
--            char* end=line+std::strlen(line);while(end>line && (end[-1]==' '||end[-1]=='\t'))*--end=0;
--            if(!std::strncmp(line,"bind.",5)){eq[std::strcspn(eq,"\r\n")]=0;host_bindings_parse(line+5,eq);}
--        }
--        std::fclose(f);
--    }
--    BbInputConfig::append_bindings=[](BbInputConfig::Items& items) {for(int a=0;a<kBindDebugMenu;a++)items.emplace_back(std::string("bind.")+host_binding_info(a).key,host_binding_ini_value(a));};
--    saved_serial=host_bindings_serial();
--    mouse_camera_install(&image);menu_pointer_install(&image);
--    active=true;
--    host_log("bbhost keyboard/mouse controls enabled, camera hook %s",mouse_camera_installed()?"ready":"unavailable");
--    return true;
--}
--void Tick() {
--    if(!active)return;
--    if(host_bindings_serial()!=saved_serial){BbSettings::Save();saved_serial=host_bindings_serial();}
--}
--void Event(const SDL_Event& e,bool blocked) {
--    if(!active)return;
--    if(e.type==SDL_EVENT_WINDOW_FOCUS_LOST) {focused=false;wanted_relative=false;mouse_camera::g_counts=0;
--        std::lock_guard lock(state_lock);mouse_buttons=mouse_edges=0;wheel=0;return;}
--    if(e.type==SDL_EVENT_WINDOW_FOCUS_GAINED)focused=true;
--    if(e.type==SDL_EVENT_WINDOW_MOUSE_LEAVE)in_window=false;
--    if(e.type==SDL_EVENT_WINDOW_MOUSE_ENTER)in_window=true;
--    if(e.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type==SDL_EVENT_GAMEPAD_AXIS_MOTION && std::abs(e.gaxis.value)>8000))device=InputDevice::Pad;
--    if(blocked)return;
--    if(e.type==SDL_EVENT_KEY_DOWN){device=InputDevice::KeyboardMouse;host_bind_capture_key(e.key.scancode);
--        if(e.key.scancode==SDL_SCANCODE_DELETE)host_bind_note_clear_key();}
--    if(e.type==SDL_EVENT_MOUSE_MOTION){
--        device=InputDevice::KeyboardMouse;std::lock_guard lock(state_lock);mouse_x=e.motion.x;mouse_y=e.motion.y;
--        if(relative && focused)mouse_camera::add(mouse_camera::g_counts,e.motion.xrel,e.motion.yrel);
--    }
--    if(e.type==SDL_EVENT_MOUSE_BUTTON_DOWN || e.type==SDL_EVENT_MOUSE_BUTTON_UP){
--        device=InputDevice::KeyboardMouse;
--        const int b=e.button.button;const uint32_t bit=b>0&&b<=5?1u<<(b-1):0;
--        const bool capture=e.type==SDL_EVENT_MOUSE_BUTTON_DOWN && host_bind_capture_mouse(b);
--        std::lock_guard lock(state_lock);
--        mouse_x=e.button.x;mouse_y=e.button.y;
--        if(e.type==SDL_EVENT_MOUSE_BUTTON_DOWN){mouse_buttons|=bit;if(!capture)mouse_edges|=bit;}
--        else mouse_buttons&=~bit;
--    }
--    if(e.type==SDL_EVENT_MOUSE_WHEEL){device=InputDevice::KeyboardMouse;
--        if(!host_bind_capture_mouse(e.wheel.y>0?6:7)){std::lock_guard lock(state_lock);wheel+=e.wheel.y;}}
--}
--void Pump(SDL_Window* w,bool editing) {
--    text_open=editing;if(!active)return;
--    int ww,hh;SDL_GetWindowSize(w,&ww,&hh);
--    {std::lock_guard lock(state_lock);window_w=ww;window_h=hh;}
--    const bool want=wanted_relative && BbSettings::Get().pc_controls && !editing && !BbOverlay::CapturesInput() && focused;
--    if(relative!=want){
--        if(SDL_SetWindowRelativeMouseMode(w,want)){relative=want;mouse_camera::g_counts=0;
--            mouse_camera::g_flick_counts=0;mouse_camera::g_flick_updates=0;
--            if(want)SDL_HideCursor();else SDL_ShowCursor();}
--    }
--}
--}
--
--extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_present) {
--    if(!active || !BbSettings::Get().pc_controls){wanted_relative=false;return 0;}
--    auto& s=BbSettings::Get();
--    PadState p;p.buttons=d->buttons;
--    p.lx=d->lx;p.ly=d->ly;p.rx=d->rx;p.ry=d->ry;p.l2=d->l2;p.r2=d->r2;
--    if(!gamepad_present)p.lx=p.ly=p.rx=p.ry=kStickRest;
--    p.touch_count=std::min<uint8_t>(d->touch_count,2);
--    for(int i=0;i<p.touch_count;i++)p.touch[i]={d->touch[i].x,d->touch[i].y,d->touch[i].id,true};
--    const bool menu=menu_pointer_in_menu();
--    const bool camera=s.mouse_camera && mouse_camera_installed() && !menu && !host_text_entry_open() && focused;
--    wanted_relative=camera && device==InputDevice::KeyboardMouse;
--    mouse_camera_publish(s.mouse_sensitivity,s.mouse_invert_x,s.mouse_invert_y,
--        camera && device==InputDevice::KeyboardMouse && !s.mouse_auto_rotation);
--    uint32_t buttons,edges;float scroll;
--    {std::lock_guard lock(state_lock);buttons=mouse_buttons;edges=mouse_edges;scroll=wheel;mouse_edges=0;wheel=0;}
--    bool any=buttons!=0;for(int i=0;keys&&i<nkeys;i++)any|=keys[i];
--    host_bind_capture_note_held(any);
--    if(!focused || host_text_entry_open() || host_bind_capture_blocking()){p=PadState{};wanted_relative=false;}
--    else {
--        bool held[kBindCount]={};
--        if(keys)host_bindings_keys_held(keys,nkeys,held);
--        if(device==InputDevice::KeyboardMouse) {
--            if(p.lx==128)p.lx=127;if(p.ly==128)p.ly=127;
--            if(p.rx==128)p.rx=127;if(p.ry==128)p.ry=127;
--        }
++    const float ow=float(BbSettings::OutputWidth(idx)),oh=float(BbSettings::OutputHeight(idx));
+     const float present=std::min(window_w/ow,window_h/oh);
+     if(!s.widescreen){
+         x=(mouse_x-(window_w-ow*present)/2)/present*1920/ow;
+@@ -107,6 +107,7 @@ void Event(const SDL_Event& e,bool blocked) {
+     if(e.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type==SDL_EVENT_GAMEPAD_AXIS_MOTION && std::abs(e.gaxis.value)>8000))device=InputDevice::Pad;
+     if(blocked)return;
+     if(e.type==SDL_EVENT_KEY_DOWN){device=InputDevice::KeyboardMouse;host_bind_capture_key(e.key.scancode);
++        if(!e.key.repeat)host_bindings_note_key_down(e.key.scancode);
+         if(e.key.scancode==SDL_SCANCODE_DELETE)host_bind_note_clear_key();}
+     if(e.type==SDL_EVENT_MOUSE_MOTION){
+         device=InputDevice::KeyboardMouse;std::lock_guard lock(state_lock);mouse_x=e.motion.x;mouse_y=e.motion.y;
+@@ -162,8 +163,10 @@ extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_
+             if(p.lx==128)p.lx=127;if(p.ly==128)p.ly=127;
+             if(p.rx==128)p.rx=127;if(p.ry==128)p.ry=127;
+         }
 -        // Separate immutable menu navigation from gameplay keys.
 -        if(menu && keys) {
--            for(int i=kBindLookU;i<=kBindLookR;i++)held[i]=false;
--            if(keys[SDL_SCANCODE_UP]||held[kBindMoveF])p.buttons|=0x10;
--            if(keys[SDL_SCANCODE_DOWN]||held[kBindMoveB])p.buttons|=0x40;
--            if(keys[SDL_SCANCODE_LEFT]||held[kBindMoveL])p.buttons|=0x80;
--            if(keys[SDL_SCANCODE_RIGHT]||held[kBindMoveR])p.buttons|=0x20;
--            if(keys[SDL_SCANCODE_RETURN])p.buttons|=menu_confirm_button();
--            if(keys[SDL_SCANCODE_BACKSPACE])p.buttons|=menu_back_button();
--            for(int i=kBindMoveF;i<=kBindMoveR;i++)held[i]=false;
--        }
--        host_bindings_apply(held,held[kBindStrongMod],p);
--        if(menu) {
--            if(s.mouse_menu){
--                if(edges&1)menu_pointer_click();
--                if(edges&SDL_BUTTON_RMASK)p.buttons|=menu_back_button();
--                if(scroll>0)p.buttons|=0x10;if(scroll<0)p.buttons|=0x40;
--                p.buttons|=menu_pointer_take_press();
--            }
--        }else {
--            bool mh[kBindCount]={};host_bindings_mouse_held(buttons|edges|(scroll>0?32:scroll<0?64:0),mh);
--            host_bindings_apply(mh,held[kBindStrongMod]||mh[kBindStrongMod],p);
--            float x,y;if(camera && mouse_camera_flick(x,y)){
--                p.rx=uint8_t(std::clamp(127+int(127*x),0,254));p.ry=uint8_t(std::clamp(127+int(127*y),0,254));}
--        }
--    }
--    {std::lock_guard lock(state_lock);snapshot=p;}
--    d->buttons=p.buttons;d->lx=p.lx;d->ly=p.ly;d->rx=p.rx;d->ry=p.ry;d->l2=p.l2;d->r2=p.r2;
--    d->touch_count=p.touch_count;for(int i=0;i<p.touch_count;i++)d->touch[i]={p.touch[i].x,p.touch[i].y,p.touch[i].id};
--    return 1;
--}
--
-+// SPDX-License-Identifier: GPL-3.0-or-later
-+// SDL/Pad bridge for bbhost's native engine mouse camera and menu hit testing.
-+#include "input.h"
-+#include "compat.h"
-+#include "bindings.h"
-+#include "ini_bindings.h"
-+#include "mouse_camera_step.h"
-+#include "../bbport_settings.h"
-+#include "../bbport_overlay.h"
-+#include "../engine/option_menu.h"
-+#include <SDL3/SDL.h>
-+#include <algorithm>
-+#include <atomic>
-+#include <cstdarg>
-+#include <cstdio>
-+#include <cstring>
-+#include <mutex>
-+
-+namespace {
-+std::atomic<bool> active{false},relative{false},wanted_relative{false},text_open{false},focused{true};
-+std::atomic<InputDevice> device{InputDevice::KeyboardMouse};
-+std::mutex state_lock;
-+PadState snapshot;
-+float mouse_x=0,mouse_y=0;
-+int window_w=1920,window_h=1080;
-+uint32_t mouse_buttons=0,mouse_edges=0;
-+float wheel=0;
-+std::atomic<bool> in_window{true};
-+ElfImage image{};
-+uint64_t saved_serial=0;
-+}
-+void host_log(const char* fmt,...) {
-+    std::fputs("Input: ",stdout);va_list a;va_start(a,fmt);std::vprintf(fmt,a);va_end(a);std::putchar('\n');
-+}
-+bool input_prologue_hook(ElfImage* i,uint64_t at,const uint8_t* bytes,size_t n,BbEngine::Callback fn) {
-+    BbEngine::Hook hook;
-+    if(at<i->mem.slide || !BbEngine::Prepare(hook,reinterpret_cast<uint8_t*>(i->mem.slide),
-+        i->mem.size,at-i->mem.slide,std::span<const uint8_t>(bytes,n),fn))return false;
-+    BbEngine::Commit(std::span<BbEngine::Hook>(&hook,1));return true;
-+}
-+HostSettings host_settings() {return {BbSettings::Get().mouse_menu.load()};}
-+std::uint32_t input_delivered_buttons() {return host_pad_state().buttons;}
-+InputDevice host_input_device() {return device.load();}
-+PadState host_pad_state() {std::lock_guard lock(state_lock);return snapshot;}
-+bool host_options_open() {return BbOverlay::MenuOpen();}
-+bool ingame_menu_open() {return false;} // bbhost's separate host menu is not installed here.
-+bool host_text_entry_open() {return text_open.load();}
-+bool debug_menu_open() {return false;}
-+bool debug_menu_active() {return false;} // No dedicated native debug-menu controller in this port.
-+bool host_mouse_relative() {return relative.load();}
-+bool host_mouse_stage_position(float& x,float& y) {
-+    std::lock_guard lock(state_lock);
-+    if(!in_window || !focused || relative || window_w<=0 || window_h<=0)return false;
-+    // Presenter fits the output; Scaleform fits its native 1920x1080 stage.
-+    const auto& s=BbSettings::Get();
-+    const int idx=std::clamp(BbSettings::ResolutionNeedsRestart()?s.startup_output_res:s.output_res.load(),0,BbSettings::OutputCount-1);
-+    const float ow=float(BbSettings::OutputWidth(idx)),oh=float(BbSettings::OutputHeight(idx));
-+    const float present=std::min(window_w/ow,window_h/oh);
-+    if(!s.widescreen){
-+        x=(mouse_x-(window_w-ow*present)/2)/present*1920/ow;
-+        y=(mouse_y-(window_h-oh*present)/2)/present*1080/oh;return true;
-+    }
-+    const float ui=std::min(ow/1920,oh/1080);
-+    const float sx=(window_w-ow*present)/2+(ow-1920*ui)*present/2;
-+    const float sy=(window_h-oh*present)/2+(oh-1080*ui)*present/2;
-+    x=(mouse_x-sx)/(present*ui);y=(mouse_y-sy)/(present*ui);return true;
-+}
-+void host_mouse_describe(char* out,size_t n) {
-+    std::lock_guard lock(state_lock);std::snprintf(out,n,"pointer %.0f,%.0f window %dx%d",mouse_x,mouse_y,window_w,window_h);
-+}
-+bool option_menu_click_decides(uint8_t* c,int row) {return BbEngine::Options::ClickDecides(c,row);}
-+void option_menu_list_update(uint8_t* c,bool focus) {BbEngine::Options::ListUpdate(c,focus);}
-+
-+namespace BbInput {
-+bool Enabled(){return active && BbSettings::Get().pc_controls;}
-+bool Install(uint8_t* base,size_t size) {
-+    if(!BbSettings::Get().pc_controls)return false;
-+    image={{reinterpret_cast<uint64_t>(base),size},kEboot109Sha256};
-+    host_bindings_load_defaults();
-+    if(FILE* f=std::fopen((std::getenv("BB_CONFIG")?std::getenv("BB_CONFIG"):"bbport.ini"),"r")) {
-+        char line[512];
-+        while(std::fgets(line,sizeof line,f)) {
-+            char* eq=std::strchr(line,'=');if(!eq)continue;*eq++=0;
-+            char* end=line+std::strlen(line);while(end>line && (end[-1]==' '||end[-1]=='\t'))*--end=0;
-+            if(!std::strncmp(line,"bind.",5)){eq[std::strcspn(eq,"\r\n")]=0;host_bindings_parse(line+5,eq);}
-+        }
-+        std::fclose(f);
-+    }
-+    BbInputConfig::append_bindings=[](BbInputConfig::Items& items) {for(int a=0;a<kBindDebugMenu;a++)items.emplace_back(std::string("bind.")+host_binding_info(a).key,host_binding_ini_value(a));};
-+    saved_serial=host_bindings_serial();
-+    mouse_camera_install(&image);menu_pointer_install(&image);
-+    active=true;
-+    host_log("bbhost keyboard/mouse controls enabled, camera hook %s",mouse_camera_installed()?"ready":"unavailable");
-+    return true;
-+}
-+void Tick() {
-+    if(!active)return;
-+    if(host_bindings_serial()!=saved_serial){BbSettings::Save();saved_serial=host_bindings_serial();}
-+}
-+void Event(const SDL_Event& e,bool blocked) {
-+    if(!active)return;
-+    if(e.type==SDL_EVENT_WINDOW_FOCUS_LOST) {focused=false;wanted_relative=false;mouse_camera::g_counts=0;
-+        std::lock_guard lock(state_lock);mouse_buttons=mouse_edges=0;wheel=0;return;}
-+    if(e.type==SDL_EVENT_WINDOW_FOCUS_GAINED)focused=true;
-+    if(e.type==SDL_EVENT_WINDOW_MOUSE_LEAVE)in_window=false;
-+    if(e.type==SDL_EVENT_WINDOW_MOUSE_ENTER)in_window=true;
-+    if(e.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type==SDL_EVENT_GAMEPAD_AXIS_MOTION && std::abs(e.gaxis.value)>8000))device=InputDevice::Pad;
-+    if(blocked)return;
-+    if(e.type==SDL_EVENT_KEY_DOWN){device=InputDevice::KeyboardMouse;host_bind_capture_key(e.key.scancode);
-+        if(e.key.scancode==SDL_SCANCODE_DELETE)host_bind_note_clear_key();}
-+    if(e.type==SDL_EVENT_MOUSE_MOTION){
-+        device=InputDevice::KeyboardMouse;std::lock_guard lock(state_lock);mouse_x=e.motion.x;mouse_y=e.motion.y;
-+        if(relative && focused)mouse_camera::add(mouse_camera::g_counts,e.motion.xrel,e.motion.yrel);
-+    }
-+    if(e.type==SDL_EVENT_MOUSE_BUTTON_DOWN || e.type==SDL_EVENT_MOUSE_BUTTON_UP){
-+        device=InputDevice::KeyboardMouse;
-+        const int b=e.button.button;const uint32_t bit=b>0&&b<=5?1u<<(b-1):0;
-+        const bool capture=e.type==SDL_EVENT_MOUSE_BUTTON_DOWN && host_bind_capture_mouse(b);
-+        std::lock_guard lock(state_lock);
-+        mouse_x=e.button.x;mouse_y=e.button.y;
-+        if(e.type==SDL_EVENT_MOUSE_BUTTON_DOWN){mouse_buttons|=bit;if(!capture)mouse_edges|=bit;}
-+        else mouse_buttons&=~bit;
-+    }
-+    if(e.type==SDL_EVENT_MOUSE_WHEEL){device=InputDevice::KeyboardMouse;
-+        if(!host_bind_capture_mouse(e.wheel.y>0?6:7)){std::lock_guard lock(state_lock);wheel+=e.wheel.y;}}
-+}
-+void Pump(SDL_Window* w,bool editing) {
-+    text_open=editing;if(!active)return;
-+    int ww,hh;SDL_GetWindowSize(w,&ww,&hh);
-+    {std::lock_guard lock(state_lock);window_w=ww;window_h=hh;}
-+    const bool want=wanted_relative && BbSettings::Get().pc_controls && !editing && !BbOverlay::CapturesInput() && focused;
-+    if(relative!=want){
-+        if(SDL_SetWindowRelativeMouseMode(w,want)){relative=want;mouse_camera::g_counts=0;
-+            mouse_camera::g_flick_counts=0;mouse_camera::g_flick_updates=0;
-+            if(want)SDL_HideCursor();else SDL_ShowCursor();}
-+    }
-+}
-+}
-+
-+extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_present) {
-+    if(!active || !BbSettings::Get().pc_controls){wanted_relative=false;return 0;}
-+    auto& s=BbSettings::Get();
-+    PadState p;p.buttons=d->buttons;
-+    p.lx=d->lx;p.ly=d->ly;p.rx=d->rx;p.ry=d->ry;p.l2=d->l2;p.r2=d->r2;
-+    if(!gamepad_present)p.lx=p.ly=p.rx=p.ry=kStickRest;
-+    p.touch_count=std::min<uint8_t>(d->touch_count,2);
-+    for(int i=0;i<p.touch_count;i++)p.touch[i]={d->touch[i].x,d->touch[i].y,d->touch[i].id,true};
-+    const bool menu=menu_pointer_in_menu();
-+    const bool camera=s.mouse_camera && mouse_camera_installed() && !menu && !host_text_entry_open() && focused;
-+    wanted_relative=camera && device==InputDevice::KeyboardMouse;
-+    mouse_camera_publish(s.mouse_sensitivity,s.mouse_invert_x,s.mouse_invert_y,
-+        camera && device==InputDevice::KeyboardMouse && !s.mouse_auto_rotation);
-+    uint32_t buttons,edges;float scroll;
-+    {std::lock_guard lock(state_lock);buttons=mouse_buttons;edges=mouse_edges;scroll=wheel;mouse_edges=0;wheel=0;}
-+    bool any=buttons!=0;for(int i=0;keys&&i<nkeys;i++)any|=keys[i];
-+    host_bind_capture_note_held(any);
-+    if(!focused || host_text_entry_open() || host_bind_capture_blocking()){p=PadState{};wanted_relative=false;}
-+    else {
-+        bool held[kBindCount]={};
-+        if(keys)host_bindings_keys_held(keys,nkeys,held);
-+        if(device==InputDevice::KeyboardMouse) {
-+            if(p.lx==128)p.lx=127;if(p.ly==128)p.ly=127;
-+            if(p.rx==128)p.rx=127;if(p.ry==128)p.ry=127;
-+        }
 +        // Separate immutable menu navigation from gameplay keys (only while a menu has the screen:
 +        // menu_pointer_navigating).
 +        const bool navigating=menu && menu_pointer_navigating();
 +        if(navigating && keys) {
-+            for(int i=kBindLookU;i<=kBindLookR;i++)held[i]=false;
-+            if(keys[SDL_SCANCODE_UP]||held[kBindMoveF])p.buttons|=0x10;
-+            if(keys[SDL_SCANCODE_DOWN]||held[kBindMoveB])p.buttons|=0x40;
-+            if(keys[SDL_SCANCODE_LEFT]||held[kBindMoveL])p.buttons|=0x80;
-+            if(keys[SDL_SCANCODE_RIGHT]||held[kBindMoveR])p.buttons|=0x20;
-+            if(keys[SDL_SCANCODE_RETURN])p.buttons|=menu_confirm_button();
-+            if(keys[SDL_SCANCODE_BACKSPACE])p.buttons|=menu_back_button();
-+            for(int i=kBindMoveF;i<=kBindMoveR;i++)held[i]=false;
-+        }
-+        host_bindings_apply(held,held[kBindStrongMod],p);
-+        if(menu) {
-+            if(s.mouse_menu){
-+                if(edges&1)menu_pointer_click();
-+                if(edges&SDL_BUTTON_RMASK)p.buttons|=menu_back_button();
+             for(int i=kBindLookU;i<=kBindLookR;i++)held[i]=false;
+             if(keys[SDL_SCANCODE_UP]||held[kBindMoveF])p.buttons|=0x10;
+             if(keys[SDL_SCANCODE_DOWN]||held[kBindMoveB])p.buttons|=0x40;
+@@ -173,12 +176,12 @@ extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_
+             if(keys[SDL_SCANCODE_BACKSPACE])p.buttons|=menu_back_button();
+             for(int i=kBindMoveF;i<=kBindMoveR;i++)held[i]=false;
+         }
+-        host_bindings_apply(held,held[kBindStrongMod],p);
++        host_bindings_apply(held,held[kBindStrongMod],p,!menu);
+         if(menu) {
+             if(s.mouse_menu){
+                 if(edges&1)menu_pointer_click();
+                 if(edges&SDL_BUTTON_RMASK)p.buttons|=menu_back_button();
+-                if(scroll>0)p.buttons|=0x10;if(scroll<0)p.buttons|=0x40;
 +                if(navigating && scroll>0)p.buttons|=0x10;if(navigating && scroll<0)p.buttons|=0x40;
-+                p.buttons|=menu_pointer_take_press();
-+            }
-+        }else {
-+            bool mh[kBindCount]={};host_bindings_mouse_held(buttons|edges|(scroll>0?32:scroll<0?64:0),mh);
-+            host_bindings_apply(mh,held[kBindStrongMod]||mh[kBindStrongMod],p);
-+            float x,y;if(camera && mouse_camera_flick(x,y)){
-+                p.rx=uint8_t(std::clamp(127+int(127*x),0,254));p.ry=uint8_t(std::clamp(127+int(127*y),0,254));}
-+        }
-+    }
-+    {std::lock_guard lock(state_lock);snapshot=p;}
-+    d->buttons=p.buttons;d->lx=p.lx;d->ly=p.ly;d->rx=p.rx;d->ry=p.ry;d->l2=p.l2;d->r2=p.r2;
-+    d->touch_count=p.touch_count;for(int i=0;i<p.touch_count;i++)d->touch[i]={p.touch[i].x,p.touch[i].y,p.touch[i].id};
-+    return 1;
-+}
-+
+                 p.buttons|=menu_pointer_take_press();
+             }
+         }else {
 diff --git a/gpu/shim/input/input.h b/gpu/shim/input/input.h
 index d4f3a31..5716e3f 100644
 --- a/gpu/shim/input/input.h
@@ -202044,3 +201694,171 @@ index 0000000..a3e6357
 +
 +if __name__ == '__main__':
 +    main()
+diff --git a/gpu/shim/input/bindings.cpp b/gpu/shim/input/bindings.cpp
+index 670e0b0..bb12095 100644
+--- a/gpu/shim/input/bindings.cpp
++++ b/gpu/shim/input/bindings.cpp
+@@ -91,6 +91,8 @@ const struct {
+ 
+ std::atomic<int> g_key[kBindCount];
+ std::atomic<int> g_mouse[kBindCount];
++std::atomic<std::uint64_t> g_key_press_serial{0};
++std::atomic<std::uint64_t> g_key_press_order[kBindCount]{};
+ 
+ std::atomic<int> g_capture{-1};
+ // The Debug Menu key: held per device (keyboard, mouse), since each device's
+@@ -266,12 +268,8 @@ void host_binding_prompt(int action, char* out, std::size_t n) {
+ 
+ namespace {
+ 
+-// Two opposite directions held at once cancel, as Dark Souls III's keyboard
+-// does (its digital-to-analog converter sums each axis's keys). Pressing A
+-// while sprinting on W+D so runs straight on until D is let go - two turns of
+-// 45 degrees. Letting the newer key win instead (#51's first cut) turned the
+-// stick 90 degrees in one frame, past the character script's 90-degree
+-// sprint-turn threshold, and the character spun as if told to turn round.
++// Opposite directions use last-pressed-wins. Keyboard stick shaping below
++// limits rapid turns so overlapping keys cannot cause a sudden stick reversal.
+ constexpr int kOpposites[4][2] = {
+     {kBindMoveF, kBindMoveB}, {kBindMoveL, kBindMoveR}, {kBindLookU, kBindLookD}, {kBindLookL, kBindLookR}};
+ 
+@@ -287,13 +285,27 @@ constexpr float kWalkPush = 0.6f;
+ 
+ }  // namespace
+ 
++void host_bindings_note_key_down(int scancode) {
++    if (scancode <= 0) return;
++    const auto order = g_key_press_serial.fetch_add(1, std::memory_order_relaxed) + 1;
++    for (int a = 0; a < kBindCount; ++a) {
++        if (g_key[a].load(std::memory_order_relaxed) == scancode)
++            g_key_press_order[a].store(order, std::memory_order_relaxed);
++    }
++}
++
+ void host_bindings_keys_held(const bool* keys, int nkeys, bool held[kBindCount]) {
+     for (int a = 0; a < kBindCount; ++a) {
+         const int sc = g_key[a].load(std::memory_order_relaxed);
+         held[a] = sc > 0 && sc < nkeys && keys[sc];
+     }
+     for (const auto& pair : kOpposites) {
+-        if (held[pair[0]] && held[pair[1]]) held[pair[0]] = held[pair[1]] = false;
++        if (!held[pair[0]] || !held[pair[1]]) continue;
++        const auto first = g_key_press_order[pair[0]].load(std::memory_order_relaxed);
++        const auto second = g_key_press_order[pair[1]].load(std::memory_order_relaxed);
++        if (first > second) held[pair[1]] = false;
++        else if (second > first) held[pair[0]] = false;
++        else held[pair[0]] = held[pair[1]] = false;
+     }
+     held[kBindWalk] = held[kBindWalk] || g_walk_on_mouse.load(std::memory_order_relaxed);
+     note_debug_key(0, held[kBindDebugMenu]);
+@@ -308,7 +320,7 @@ void host_bindings_mouse_held(std::uint32_t buttons, bool held[kBindCount]) {
+     note_debug_key(1, held[kBindDebugMenu]);
+ }
+ 
+-void host_bindings_apply(const bool held[kBindCount], bool strong, PadState& p) {
++void host_bindings_apply(const bool held[kBindCount], bool strong, PadState& p, bool shape_keyboard_movement) {
+     bool any = false;
+     for (int a = 0; a < kBindCount; ++a) {
+         // The Debug Menu key sets no pad bit: its press was queued when it was
+@@ -361,6 +373,85 @@ void host_bindings_apply(const bool held[kBindCount], bool strong, PadState& p)
+         if (x != 0) p.lx = static_cast<std::uint8_t>(kStickRest + x * reach);
+         if (y != 0) p.ly = static_cast<std::uint8_t>(kStickRest + y * reach);
+     }
++
++    if (shape_keyboard_movement) {
++        static int last_x = 0, last_y = 0, last_reach = 0;
++        static std::int64_t last_active_ms = 0, last_shape_ms = 0;
++        static double angle = 0.0;
++        static bool shape_active = false;
++
++        constexpr double pi = 3.14159265358979323846;
++        constexpr double max_step = 30.0 * pi / 180.0;
++        constexpr double half_turn = 170.0 * pi / 180.0;
++        constexpr double turn_rate = 900.0;
++        const std::int64_t now = now_ms();
++
++        int sx = x * 127;
++        int sy = y * 127;
++        int reach = 127;
++
++        if (sx || sy) {
++            if (held[kBindWalk]) {
++                reach = static_cast<int>(std::lround(
++                    127.0 * kWalkPush / (x != 0 && y != 0 ? std::sqrt(2.0) : 1.0)));
++            }
++            last_x = sx;
++            last_y = sy;
++            last_reach = reach;
++            last_active_ms = now;
++        } else if ((last_x || last_y) && now - last_active_ms < 60) {
++            sx = last_x;
++            sy = last_y;
++            reach = last_reach;
++        } else {
++            last_x = last_y = last_reach = 0;
++            shape_active = false;
++        }
++
++        if (sx || sy) {
++            const double target = std::atan2(static_cast<double>(sy), static_cast<double>(sx));
++            if (shape_active) {
++                const double diff = std::fmod(target - angle + 3.0 * pi, 2.0 * pi) - pi;
++                const double elapsed = static_cast<double>(now - last_shape_ms) / 1000.0;
++                const double step = std::fmin(turn_rate * pi / 180.0 * elapsed, max_step);
++                double direction = diff > 0.0 ? 1.0 : -1.0;
++
++                if (std::fabs(diff) > half_turn) {
++                    const double half_y = std::sin(angle + pi / 2.0);
++                    const double half_x = std::cos(angle + pi / 2.0);
++                    direction = half_y < -1e-9 ? 1.0
++                              : half_y > 1e-9 ? -1.0
++                              : half_x > 0.0 ? 1.0 : -1.0;
++                }
++
++                if (std::fabs(diff) <= step) {
++                    angle = target;
++                } else {
++                    angle = std::atan2(std::sin(angle + direction * step),
++                                       std::cos(angle + direction * step));
++                }
++            } else {
++                angle = target;
++            }
++
++            shape_active = true;
++            last_shape_ms = now;
++
++            const double cx = std::cos(angle);
++            const double cy = std::sin(angle);
++            const double scale = static_cast<double>(reach) /
++                                 std::fmax(std::fabs(cx), std::fabs(cy));
++            int ox = static_cast<int>(std::lround(cx * scale));
++            int oy = static_cast<int>(std::lround(cy * scale));
++            if (ox < -127) ox = -127;
++            if (ox > 127) ox = 127;
++            if (oy < -127) oy = -127;
++            if (oy > 127) oy = 127;
++            p.lx = static_cast<std::uint8_t>(127 + ox);
++            p.ly = static_cast<std::uint8_t>(127 + oy);
++        }
++    }
++
+     if (any) p.connected = true;
+ }
+ 
+diff --git a/gpu/shim/input/bindings.h b/gpu/shim/input/bindings.h
+index 4c925df..e520cca 100644
+--- a/gpu/shim/input/bindings.h
++++ b/gpu/shim/input/bindings.h
+@@ -78,8 +78,10 @@ void host_binding_prompt(int action, char* out, std::size_t n);
+ // Applies a set of held actions to the pad the game reads. `strong` is the
+ // modifier's state, which turns Attack into the strong attack whichever device
+ // is holding it.
+-void host_bindings_apply(const bool held[kBindCount], bool strong, PadState& p);
++void host_bindings_apply(const bool held[kBindCount], bool strong, PadState& p, bool shape_keyboard_movement = false);
+ // Actions held on the keyboard, from SDL's key state.
++// Record key-down order for resolving overlapping opposite directions.
++void host_bindings_note_key_down(int scancode);
+ void host_bindings_keys_held(const bool* keys, int nkeys, bool held[kBindCount]);
+ // Actions held on the mouse, from MouseState::buttons (bit n-1 is button n;
+ // bits 5 and 6 the wheel's notches, as the pad read holds them).
