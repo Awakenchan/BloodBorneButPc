@@ -14,6 +14,7 @@ namespace BloodborneLauncher.Views
     public sealed class PlayPage : LauncherPage
     {
         private readonly InfoBar _problem;
+        private readonly TextBlock _selectedGpu;
         private readonly SettingRow _engineCard;
         private readonly Button _profileButton;
         private readonly TextBlock _profileHint, _backupHint;
@@ -100,6 +101,7 @@ namespace BloodborneLauncher.Views
 
             // ==================== Game ====================
             Group("Game");
+            Add(Card(SymbolRegular.DeveloperBoard24,PcText.Get("Rendering GPU"),"",null,out _selectedGpu));
             var gameCard = Card(SymbolRegular.Folder24, "Game folder", "", Row(
                 SmallButton("Browse", SymbolRegular.FolderOpen24, (_, _) => ChooseGame()),
                 IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(GameEnvironment.GameDir(S)))), out _gameHint);
@@ -176,8 +178,6 @@ namespace BloodborneLauncher.Views
                 "From shadPS4, another Bloodborne port, or a PS4 save exported decrypted (Apollo Save Tool, Save Wizard). This profile's saves are backed up first",
                 SmallButton("Import…", SymbolRegular.FolderArrowRight24, (_, _) => ImportSaves()), out _));
 
-            ComboRow(SymbolRegular.LocalLanguage24, "In-game menu language", "The port's settings menu (Insert or L3 + R3)",
-                Choices.MenuLanguages, () => Ini.Get("menu_language", "en"), v => Ini.Set("menu_language", v));
 
             _clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _clock.Tick += (_, _) => UpdateRunning();
@@ -241,6 +241,7 @@ namespace BloodborneLauncher.Views
 
         private void RefreshSummary()
         {
+            SetHint(_selectedGpu,GpuAdapters.Summary(Ini));
             _statUpscaler.Text = Label(Choices.Upscalers, Ini.Get("upscaler"));
             var (outW, outH) = Choices.OutputSize(Ini.Get("output_res", "1920x1080"));
             _statResolution.Text = $"{outW} × {outH}";

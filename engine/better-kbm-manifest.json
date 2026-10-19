@@ -1,0 +1,192 @@
+{
+  "integration": "better-kbm-expanded",
+  "version": 14,
+  "launcher_source_revision": "2d2664961f565f496a7cf9c5b3d1176e10fb0755",
+  "engine_base_tag": "v0.4.0-darkizuku-preview.1",
+  "files": {
+    "gpu/shim/bbport_settings.cpp": {
+      "before": "285387eee0b9ed220f2fd427489c7d037729abc55e0954df7c8daaa0a78520e5",
+      "after": "c3392fa04dc91801f14d62d046ed4e94d4a7f2a6659e3c31a40b9108319f06eb"
+    },
+    "gpu/shim/bbport_settings.h": {
+      "before": "1b135c412fb15c7707d3de21fab0a2ddd4e00c0a212100f6d9543011c047ea7a",
+      "after": "a710cb65282aeae5133f02acba6677c1548998cfe5d84b608dba7dbf097c1362"
+    },
+    "gpu/shim/engine/binding_pages.h": {
+      "before": null,
+      "after": "08b998895a6d87b5eec684a35c479b39e286f5135fb1eec17c15bc0ad90d449c"
+    },
+    "gpu/shim/engine/camera.cpp": {
+      "before": "39234513abaf95e7d348fba55f6bf9ba54ba99db161734209e1a6d93567ca20b",
+      "after": "cc4e1e8dc08fb5d44af0899c35daf58224873d637b9c19408ac4292627c70fe8"
+    },
+    "gpu/shim/engine/change_appearance.cpp": {
+      "before": "cf427108cf88b46cbc42c9365378e7c7d6fd72587b1632ec175c2e8e22d2ebcb",
+      "after": "50b22155040e34b0324d7c7b66e7f759d6f7e4d1f69311c3b7dbaf42c1e88962"
+    },
+    "gpu/shim/engine/game_language.h": {
+      "before": null,
+      "after": "9f125ebfe6ddd6094b7f2f4d2b50c270a7cee21d523a9cf30e24055d56db1bf1"
+    },
+    "gpu/shim/engine/item_cycle.cpp": {
+      "before": null,
+      "after": "800ba1a14a7dfba4d186452bf191f1e7deec717cb09c1f11605634fe389e0e03"
+    },
+    "gpu/shim/engine/item_cycle.h": {
+      "before": null,
+      "after": "d7e1dd98145b56713b15671e0afc2f0a708ddfc32edc409f814bb261176b0519"
+    },
+    "gpu/shim/engine/language_text.h": {
+      "before": null,
+      "after": "29c83e3fc0e915d2c5eb4299839da670406945da50e112af9c03d4de6208dca6"
+    },
+    "gpu/shim/engine/menu_navigation.h": {
+      "before": null,
+      "after": "f4aca5d91ef885fa520d6b519422f3a9476e6021ae15c2afdaf4350dc2f086f2"
+    },
+    "gpu/shim/engine/option_menu.cpp": {
+      "before": "331e333bc438b171be2e8e4797d70923bbef6e28410ab7da6b483519b52c23fd",
+      "after": "230afbff745a1a6d7acf07627adb987858c1af10b83bb135e6ac4e2cc7511c1c"
+    },
+    "gpu/shim/engine/option_menu.h": {
+      "before": "198da25181a1cdf8635a8894d987671f0c2bf194c4107acbb5cad36756ea76e3",
+      "after": "989f30f179be01c9c8bd3752510283f0db9522cddd81c9eea7ac1962abb7563d"
+    },
+    "gpu/shim/engine/prompt_text.h": {
+      "before": null,
+      "after": "704a5a6fdc2a76139f8bd9f0b5c9a07e1968f595b9365c23fb0ae131f5807bf0"
+    },
+    "gpu/shim/engine/shared_camera_settings.h": {
+      "before": null,
+      "after": "b835458d82b6492de622499e5175258d88f7263f35717474c2b1fc055cd1fdb7"
+    },
+    "gpu/shim/input/bindings.cpp": {
+      "before": "23cc6c0d6d60cd2ce1585c977dc7c66ca80599b086bdf6b7e3a91b7dd0b5e96f",
+      "after": "bb83d3033b6317b4870f6afdd6290f2c1a6cfc00319858860d30853011f8da4c"
+    },
+    "gpu/shim/input/bindings.h": {
+      "before": "15a0df63b8f494f35b5f446ac25f876ae23aedc6f58466683261513420ea714b",
+      "after": "b217939c348cfbfc3233e3b13b5cf770b1e01d634a5e480ca275f000da9b5bf4"
+    },
+    "gpu/shim/input/chords.h": {
+      "before": null,
+      "after": "ef2064089f184e468979910f1f0803f9c83f12856df81194b698b6354da745cd"
+    },
+    "gpu/shim/input/compat.h": {
+      "before": "8466f69ae26433f9fa9051a297e9c56230a064fd5f8c321adc6ad8b2af5e8e2b",
+      "after": "7d27aa117339287d878457aa8bd047f3d08887d8eabbc8addf168acbd7524f1d"
+    },
+    "gpu/shim/input/input.cpp": {
+      "before": "6cc6a51c256a8950f25210cb33d62365fe3145f9ec09b4eb4c5775eb6908fe64",
+      "after": "1ccf5175024c516c7571f8a5fc7c1550bf78644f5258bc41205058c040875ac6"
+    },
+    "gpu/shim/input/menu_keyboard_policy.h": {
+      "before": null,
+      "after": "52a417828c80f2e3bccb16f92dcfa8546facd7a3e7edbf513424477efceb20c0"
+    },
+    "gpu/shim/input/menu_pointer.cpp": {
+      "before": "76b287ab0562bf159bb3792360ced697aed06369c78bc216162d21ed02eba65c",
+      "after": "16d709f06a5b785dae01b2d4221309d369f6285a4fa5476ae17f258008ef82d3"
+    },
+    "gpu/shim/input/mouse_camera.cpp": {
+      "before": "ee120d83dd00a922c8dc5236c03e6375f923bcda1c0476576e14dc6295c1379f",
+      "after": "392e7b9775c28407755c649429179fb2dc54e7d86eb74c56e61f5383fa304419"
+    },
+    "gpu/shim/input/mouse_camera_step.h": {
+      "before": "0ed8ba1ac185d84912ad914ba2f0cc1a1a988f8c149666e4bd885b0ba17d0a3e",
+      "after": "d4e95c189cb18d269f94068c74b0ef1212f25d197c1f58c7bb27832ea0952402"
+    },
+    "gpu/shim/input/mouse_camera_stubs.cpp": {
+      "before": "a57301d8e2e0e31a7e17fda583ee48762e4b250ca208a80288510f26cfc11571",
+      "after": "c6b9dac14fdb52e5443b9e2abcdad0d356373c5d8fd49742a55a39f4eb8602f8"
+    },
+    "gpu/shim/input/pc_controls.cpp": {
+      "before": null,
+      "after": "2ac7961329e89b77e0340942e56ac132dec3f2b0aa06f00fb4ee297f25f5aac5"
+    },
+    "gpu/shim/input/pc_controls.h": {
+      "before": null,
+      "after": "7f13eca4667f3319b0801f1e16c038e8d0eeae6d7f378c46af9728689b2578c6"
+    },
+    "gpu/shim/input/sprint_turn.h": {
+      "before": null,
+      "after": "816c49de9b8cd97b8a84793f754e25a441ba75a38524295c471ee0b8b222d309"
+    },
+    "gpu/shim/input/wheel_buttons.h": {
+      "before": null,
+      "after": "36559ce1d1b698e3a1b82a280fc9e219d7627a227ac78f6b893946abdc1d3c83"
+    },
+    "licenses/BBHOST-PORTS.md": {
+      "before": "67ac83ecb28e5688112de265f2ad4c9719e1cdce6e2af9790c5af4385f57ec37",
+      "after": "80993241eeb0b176954839ca571541a4e487d50bf8297eef11ba3dbf8f9d0ea4"
+    },
+    "scripts/engine_assets.py": {
+      "before": "d79639aa2bf26775c0afdfce6b4db5c18378ad783749f3512034478335b1ec84",
+      "after": "12ade31037665284f5b4d662de07e45b757fcfb8a05373b724a29a9f59c6c65b"
+    },
+    "scripts/hud_layout.py": {
+      "before": null,
+      "after": "6b4573a5b09acc04c3d1ccd3561e4c1af4382353d9ae8c07f1d828bcf162b183"
+    },
+    "scripts/menu_layout.py": {
+      "before": null,
+      "after": "1b17b019d2e1078cb12cf523bbb5ec5eab63404c3ef52d31ec0ad2d77e6b11f7"
+    },
+    "scripts/patches.py": {
+      "before": "c4e89a8d6ec68d36e4224184095e5a61ffd35f2971d5be78fe11be41551b2d47",
+      "after": "2ecdc4d115fa5ee63a081b23bef487dd5e8c32f6f394b8e577b19b8f07db3438"
+    },
+    "scripts/pc_localization.py": {
+      "before": null,
+      "after": "5645ea09f995d92f525f5674dae4607bd9e3c42e61634ee0d8b7cb2fb6cb01e6"
+    },
+    "scripts/quit_menu.py": {
+      "before": null,
+      "after": "242c86c556be37a74b014a118fa2e5f930b565fd8f708ff93d6304b79647336a"
+    },
+    "scripts/run_windows.py": {
+      "before": "3e6612db1502c553b80f28375d3f598a576ff3cb29ed5a43dcada81b6a620f81",
+      "after": "6a11e2e4fe03e7f744c3c1f041348cd66d4b80c61747937e3b546d8300657e97"
+    },
+    "src/probe.c": {
+      "before": "cef510dc60051fa806e812e88af708cc6e4155a0ad799da71f786b86b7197bda",
+      "after": "e1c2e6b9638af429117f3a13d0e3558fdbd84a39d4cf2ae2a06c73a04d011d8d"
+    },
+    "src/runtime.h": {
+      "before": "db88c487c2cd866f9d4101b302c119613b9b54364abec5c79f0a26fee067f4d7",
+      "after": "a837ebc541b4ada71d87c53d4eb96e29d2ea62c792bd344f35cd4618170813b5"
+    },
+    "src/runtime_file.c": {
+      "before": "e56b358d5190114f89fbc007f9dd578bb549a7918dfcf372389f5a75c5b013a4",
+      "after": "56e71dd20d73f15c2c9cb06b8320dc8027cd976b5e126d1520bc02b0c2dab25c"
+    },
+    "src/runtime_pad.c": {
+      "before": "c8019f8885e3fc8ed792e8456ce221e9cff2ebc5ecc02f33b0592b13c724f164",
+      "after": "023c9f94d2d907392723f1d5a72e3b122067fbd8d637464c0881931e75689b9e"
+    },
+    "src/runtime_savedata.c": {
+      "before": "a7ebbd6c38f996221594318b7d15bd36b778ed27006331e12f16e6517f5e08a7",
+      "after": "b86eb6d75919b8521034a7d6a4192b02d98d4b1c56ebbad1fc0282464f7821d3"
+    },
+    "src/runtime_services.c": {
+      "before": "a857bb7dedf512c9828222794689fce6e3b40c5c8bee263cbd9b2bce18fb8a4f",
+      "after": "03fd25ee1b2da473d323fbc307987b640a0cf2768af9fdb51b42e7b9d4af41a5"
+    },
+    "src/runtime_voice_banks.h": {
+      "before": null,
+      "after": "1e68b11df2d32fe1a7f93590aca3c5bb4ae2e344b3e6d4cf810cc0e79507f709"
+    },
+    "tests/test_pc_input.cpp": {
+      "before": "fe3895f7348837e281a2da35075853fd438b5917fc2818f1073d57ac8cb89111",
+      "after": "fc2be12cbf652e834c329594df133909d02b26c88548c9b7adf9111819284d88"
+    },
+    "tools/engine/menu_assets.cpp": {
+      "before": "0291880f781970fb65b9c280e7387e667549d8561eff918493c57134a7390024",
+      "after": "3675dbf41aba4472974f354fd5e9609adddcdb300b66d0d319a6668063b3c574"
+    },
+    "tools/engine/pc_option_messages.tsv": {
+      "before": "27caa101c24e45739f1dda0af0b40e16d6d2f0cdf6a79e149399f878c6e2d9d7",
+      "after": "1cc9aa77112e51ac8634802776b30177ce85fdb272f04fcbac976a8ea85c1feb"
+    }
+  }
+}

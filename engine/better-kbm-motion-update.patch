@@ -1,0 +1,252 @@
+diff --git a/gpu/shim/input/bindings.cpp b/gpu/shim/input/bindings.cpp
+--- a/gpu/shim/input/bindings.cpp
++++ b/gpu/shim/input/bindings.cpp
+@@ -284,14 +284,15 @@
+ 
+ namespace {
+ 
+-// Two opposite directions held at once cancel, as Dark Souls III's keyboard
+-// does (its digital-to-analog converter sums each axis's keys). Pressing A
+-// while sprinting on W+D so runs straight on until D is let go - two turns of
+-// 45 degrees. Letting the newer key win instead (#51's first cut) turned the
+-// stick 90 degrees in one frame, past the character script's 90-degree
+-// sprint-turn threshold, and the character spun as if told to turn round.
++// Keyboard rollover is resolved by press order, not by interpolating a stick
++// or inserting neutral input. The physical controller never enters this path.
+ constexpr int kOpposites[4][2] = {
+     {kBindMoveF, kBindMoveB}, {kBindMoveL, kBindMoveR}, {kBindLookU, kBindLookD}, {kBindLookL, kBindLookR}};
++std::atomic<std::uint64_t> key_order[512]{};
++std::atomic<bool> key_down[512]{};
++std::atomic<std::uint64_t> direction_clock{0};
++bool movement_was[4]{};
++std::uint64_t movement_order[4]{};
+ 
+ // Walk held on a mouse button, for the keyboard's movement keys (the mouse is
+ // read on the pad read, the keyboard on the window's update).
+@@ -310,11 +311,46 @@
+         const int sc = g_key[a].load(std::memory_order_relaxed);
+         held[a] = sc > 0 && sc < nkeys && keys[sc];
+     }
+-    for (const auto& pair : kOpposites) {
++    for (int i = 2; i < 4; ++i) {
++        const auto& pair = kOpposites[i];
+         if (held[pair[0]] && held[pair[1]]) held[pair[0]] = held[pair[1]] = false;
+     }
+     held[kBindWalk] = held[kBindWalk] || g_walk_on_mouse.load(std::memory_order_relaxed);
+     note_debug_key(0, held[kBindDebugMenu]);
++}
++
++void host_bindings_key_event(int sc, bool down) {
++    if (sc <= 0 || sc >= 512) return;
++    const bool was = key_down[sc].exchange(down);
++    if (down && !was) key_order[sc] = direction_clock.fetch_add(1) + 1;
++}
++
++void host_bindings_reset_key_events() {
++    for (int i=0;i<512;++i) {key_down[i]=false;key_order[i]=0;}
++}
++
++void host_bindings_resolve_movement(bool held[kBindCount]) {
++    const auto frame = direction_clock.fetch_add(1) + 1;
++    for (int action = 0; action < 4; ++action) {
++        if (held[action]) {
++            std::uint64_t order = 0;
++            const int key = host_binding_key(action);
++            if (key > 0 && key < 512) order = key_order[key].load();
++            const auto chord = Chords::Get(action);
++            for (int sc : chord.keys)
++                if (sc > 0 && sc < 512) order = std::max(order, key_order[sc].load());
++            if (!movement_was[action] || order > movement_order[action])
++                movement_order[action] = order ? order : frame;
++        }
++        movement_was[action] = held[action];
++    }
++    for (int axis = 0; axis < 2; ++axis) {
++        const auto& pair = kOpposites[axis];
++        if (!held[pair[0]] || !held[pair[1]]) continue;
++        const auto a = movement_order[pair[0]], b = movement_order[pair[1]];
++        held[pair[0]] = a > b;
++        held[pair[1]] = b > a;
++    }
+ }
+ 
+ void host_bindings_mouse_held(std::uint32_t buttons, bool held[kBindCount]) {
+diff --git a/gpu/shim/input/bindings.h b/gpu/shim/input/bindings.h
+--- a/gpu/shim/input/bindings.h
++++ b/gpu/shim/input/bindings.h
+@@ -112,3 +112,9 @@
+ bool host_bind_take_debug_toggle();
+ bool host_bind_take_clear_key();
+ void host_binding_clear(int action);
++
++// SDL key edges preserve press order across a frame; repeats never win again.
++void host_bindings_key_event(int scancode, bool down);
++// Apply after chord evaluation, before converting keyboard actions to pad axes.
++void host_bindings_resolve_movement(bool held[kBindCount]);
++void host_bindings_reset_key_events();
+diff --git a/gpu/shim/input/compat.h b/gpu/shim/input/compat.h
+--- a/gpu/shim/input/compat.h
++++ b/gpu/shim/input/compat.h
+@@ -68,7 +68,7 @@
+ void mouse_camera_install(ElfImage*);
+ bool mouse_camera_installed();
+ float mouse_camera_degrees_per_count(int);
+-void mouse_camera_publish(int,bool,bool,bool);
++void mouse_camera_publish(int,bool,bool,bool,bool);
+ bool mouse_camera_flick(float&,float&);
+ 
+ 
+diff --git a/gpu/shim/input/input.cpp b/gpu/shim/input/input.cpp
+--- a/gpu/shim/input/input.cpp
++++ b/gpu/shim/input/input.cpp
+@@ -107,7 +107,7 @@
+ }
+ void Event(const SDL_Event& e,bool blocked) {
+     if(!active)return;
+-    if(e.type==SDL_EVENT_WINDOW_FOCUS_LOST) {keyboard_moving=false;focused=false;wanted_relative=false;mouse_camera::g_counts=0;
++    if(e.type==SDL_EVENT_WINDOW_FOCUS_LOST) {host_bindings_reset_key_events();keyboard_moving=false;focused=false;wanted_relative=false;mouse_camera::g_counts=0;
+         std::lock_guard lock(state_lock);mouse_buttons=mouse_edges=0;wheel=0;return;}
+     if(e.type==SDL_EVENT_WINDOW_FOCUS_GAINED)focused=true;
+     if(e.type==SDL_EVENT_WINDOW_MOUSE_LEAVE)in_window=false;
+@@ -122,6 +122,8 @@
+         }
+         return;
+     }
++    if(e.type==SDL_EVENT_KEY_DOWN || e.type==SDL_EVENT_KEY_UP)
++        host_bindings_key_event(e.key.scancode, e.type==SDL_EVENT_KEY_DOWN);
+     if(blocked)return;
+     if(e.type==SDL_EVENT_KEY_DOWN){device=InputDevice::KeyboardMouse;host_bind_capture_key(e.key.scancode);
+         if(e.key.scancode==SDL_SCANCODE_DELETE)host_bind_note_clear_key();}
+@@ -165,9 +167,12 @@
+     bool moving=false;
+     const bool menu=menu_pointer_in_menu();
+     const bool camera=s.mouse_camera && mouse_camera_installed() && !menu && !host_text_entry_open() && focused;
+-    wanted_relative=camera && device==InputDevice::KeyboardMouse;
++    // Match the SDL device-switch threshold; resting stick noise must not disable mouse look.
++    const bool stick_camera = gamepad_present && (std::abs(int(d->rx)-128)>32 || std::abs(int(d->ry)-128)>32);
++    const bool mouse_active = camera && device==InputDevice::KeyboardMouse && !stick_camera;
++    wanted_relative=mouse_active;
+     mouse_camera_publish(s.mouse_sensitivity,s.mouse_invert_x,s.mouse_invert_y,
+-        camera && device==InputDevice::KeyboardMouse && !s.mouse_auto_rotation);
++        mouse_active && !s.mouse_auto_rotation, mouse_active);
+     uint32_t buttons,edges;float scroll;
+     {std::lock_guard lock(state_lock);buttons=mouse_buttons;edges=mouse_edges;scroll=wheel;mouse_edges=0;wheel=0;}
+     bool any=buttons!=0;for(int i=0;keys&&i<nkeys;i++)any|=keys[i];
+@@ -180,15 +185,12 @@
+         bool mh[kBindCount]={};host_bindings_mouse_held(mouse,mh);
+         if(!menu)for(int a=0;a<kBindCount;++a)held[a]=held[a]||mh[a];
+         bool suppressed[kBindCount]={};Chords::Resolve(keys,nkeys,menu?0:mouse,held,suppressed);
++        host_bindings_resolve_movement(held);
+         if(!menu){held[kBindConfirm]=false;held[kBindBack]=false;}
+         if(!menu && held[kBindPreviousItem] && !previous_item_was)native_item_cycle_request(true);
+         if(menu)native_item_cycle_cancel();else menu_pointer_scroll(0);
+         previous_item_was=!menu&&held[kBindPreviousItem];
+         if(held[kBindPreviousItem])held[kBindSwitchItem]=false;
+-        if(device==InputDevice::KeyboardMouse) {
+-            if(p.lx==128)p.lx=127;if(p.ly==128)p.ly=127;
+-            if(p.rx==128)p.rx=127;if(p.ry==128)p.ry=127;
+-        }
+         const bool navigating=menu && menu_pointer_navigating();
+         const bool world_movement=BbInputPolicy::WorldMovement(s.mouse_menu,
+             menu_pointer_front_end(),navigating);
+@@ -215,7 +217,7 @@
+             }
+         }else {
+ 
+-            float x,y;if(camera && mouse_camera_flick(x,y)){
++            float x,y;if(mouse_active && mouse_camera_flick(x,y)){
+                 p.rx=uint8_t(std::clamp(127+int(127*x),0,254));p.ry=uint8_t(std::clamp(127+int(127*y),0,254));}
+         }
+     }
+diff --git a/gpu/shim/input/mouse_camera.cpp b/gpu/shim/input/mouse_camera.cpp
+--- a/gpu/shim/input/mouse_camera.cpp
++++ b/gpu/shim/input/mouse_camera.cpp
+@@ -258,7 +258,14 @@
+              mouse_camera_degrees_per_count(5), placed == 2 ? " (beside ours, compared)" : "");
+ }
+ 
+-void mouse_camera_publish(int sensitivity, bool invert_x, bool invert_y, bool hold_auto_rotation) {
++void mouse_camera_publish(int sensitivity, bool invert_x, bool invert_y, bool hold_auto_rotation, bool enabled) {
++    __atomic_store_n(&bb_mouse_camera_enabled, enabled ? 1 : 0, __ATOMIC_RELEASE);
++    if (!enabled) {
++        mouse_camera::g_counts=0;mouse_camera::g_flick_counts=0;mouse_camera::g_flick_updates=0;
++        std::lock_guard<std::mutex> guard(g_mu);
++        g_flick_until=Clock::time_point{};g_last_read=Clock::time_point{};g_cooldown=0;
++    }
++    hold_auto_rotation = enabled && hold_auto_rotation;
+     const float per_count = mouse_camera_degrees_per_count(sensitivity);
+     std::uint32_t bits;
+     std::memcpy(&bits, &per_count, 4);
+diff --git a/gpu/shim/input/mouse_camera_step.h b/gpu/shim/input/mouse_camera_step.h
+--- a/gpu/shim/input/mouse_camera_step.h
++++ b/gpu/shim/input/mouse_camera_step.h
+@@ -18,6 +18,7 @@
+ // The free camera ran in this camera update: the stick's step or its fast
+ // turn. The hooks' asm stubs set it too (engine/mouse_camera.cpp).
+ extern "C" std::uint8_t bb_mouse_camera_free_now;
++extern "C" std::uint8_t bb_mouse_camera_enabled;
+ 
+ namespace mouse_camera {
+ 
+@@ -115,9 +116,11 @@
+     g_updates.fetch_add(1, std::memory_order_relaxed);
+     float dx, dy;
+     unpack(g_counts.exchange(0, std::memory_order_acq_rel), dx, dy);
++    const bool enabled=__atomic_load_n(&bb_mouse_camera_enabled,__ATOMIC_ACQUIRE)!=0;
++    if (!enabled) dx=dy=0;
+     g_frame.dx = dx;
+     g_frame.dy = dy;
+-    g_frame.hold = (g_flags.load(std::memory_order_relaxed) & kHoldAutoRotation) != 0;
++    g_frame.hold = enabled && (g_flags.load(std::memory_order_relaxed) & kHoldAutoRotation) != 0;
+     if (g_frame.hold) g_held.fetch_add(1, std::memory_order_relaxed);
+     g_frame.free_before = __atomic_load_n(&bb_mouse_camera_free_now, __ATOMIC_RELAXED) != 0;
+     __atomic_store_n(&bb_mouse_camera_free_now, 0, __ATOMIC_RELAXED);
+@@ -174,6 +177,7 @@
+ // set when the mouse turned it.
+ inline bool turn_camera(std::uint8_t* cam, std::uint8_t* input, float stick_pitch, float stick_yaw) {
+     free_camera_ran();
++    if (!__atomic_load_n(&bb_mouse_camera_enabled,__ATOMIC_ACQUIRE)) return false;
+     float pitch, yaw, lowest, highest;
+     std::memcpy(&pitch, cam + 0x140, 4);
+     std::memcpy(&yaw, cam + 0x144, 4);
+diff --git a/gpu/shim/input/mouse_camera_stubs.cpp b/gpu/shim/input/mouse_camera_stubs.cpp
+--- a/gpu/shim/input/mouse_camera_stubs.cpp
++++ b/gpu/shim/input/mouse_camera_stubs.cpp
+@@ -11,6 +11,7 @@
+ void* g_mouse_camera_host = nullptr;
+ std::uint64_t g_mouse_camera_resume = 0;
+ std::uint8_t bb_mouse_camera_free_now = 0;
++std::uint8_t bb_mouse_camera_enabled = 0;
+ }
+ 
+ // The two stores the hook displaced, then the host with every register the
+@@ -25,6 +26,9 @@
+ bb_mouse_camera_stub:
+     vmovss %xmm0, 0x140(%r13)
+     vextractps $1, %xmm1, 0x144(%r13)
++    movb $1, bb_mouse_camera_free_now(%rip)
++    cmpb $0, bb_mouse_camera_enabled(%rip)
++    je .Lbb_camera_original
+     push %rax
+     push %rcx
+     push %rdx
+@@ -88,6 +92,7 @@
+     pop %rcx
+     pop %rax
+     vmovss 0x140(%r13), %xmm0
++.Lbb_camera_original:
+     jmp *g_mouse_camera_resume(%rip)
+ 
+ # The stick's fast turn - a stick held over, ramping up to the high speed -
+diff --git a/tests/test_pc_input.cpp b/tests/test_pc_input.cpp
+--- a/tests/test_pc_input.cpp
++++ b/tests/test_pc_input.cpp
+@@ -8,7 +8,7 @@
+ #include <cstdarg>
+ #include <cstdio>
+ #include <cstring>
+-extern "C" {std::uint8_t bb_mouse_camera_free_now=0;}
++extern "C" {std::uint8_t bb_mouse_camera_free_now=0,bb_mouse_camera_enabled=1;}
+ void host_log(const char*,...) {}
+ bool debug_menu_active(){return false;}
+ uint32_t menu_confirm_button(){return 0x4000;}

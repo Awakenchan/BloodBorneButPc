@@ -109,6 +109,7 @@ namespace BloodborneLauncher.Core
 
         public static Dictionary<string, string> Build(LauncherSettings s)
         {
+            GameLanguages.Ensure(s);
             var fps = Fps(s);
             var env = new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -123,12 +124,16 @@ namespace BloodborneLauncher.Core
                 ["BB_MODS_ENABLED"] = s.Bool("mods_enabled") ? "1" : "0",
                 ["BB_PATCHES_DIR"] = PatchesDir(s),
                 ["BB_PATCHES_CONFIG"] = Path.Combine(Paths.DataDir, "patches.json"),
-                ["BB_LANGUAGE"] = s.Str("language"),
+                ["BB_LANGUAGE"] = GameLanguages.Text(s),
+                ["BB_VOICE_LANGUAGE"] = GameLanguages.Voice(s),
+                ["BB_TEXT_LANGUAGE"] = GameLanguages.Text(s),
+                ["BB_MENU_LANGUAGE"] = GameLanguages.MenuLocale(GameLanguages.Text(s)),
                 ["BB_FPS"] = fps,
                 ["BB_FPS_LIMIT"] = fps == "uncap" ? "0" : fps,
                 ["BB_VBLANK_HZ"] = fps switch { "90" => "90", "30" or "60" => "60", _ => "0" },
                 ["PYTHONUNBUFFERED"] = "1",
             };
+            env["BB_GPU_ID"]=GpuAdapters.SelectedIndex(Workspace.Current.Ini).ToString();
             // The Play page's DLC switch: off, the game is told no add-ons are installed.
             if (!s.Bool("dlc_enabled")) env["BB_DLC"] = "0";
             else if (DlcDir(s) is { Length: > 0 } dlc) env["BB_DLC_DIR"] = dlc;

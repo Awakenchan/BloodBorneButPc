@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using System.IO;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -12,15 +13,29 @@ using TextBox = Wpf.Ui.Controls.TextBox;
 namespace BloodborneLauncher.Views
 {
     /// <summary>
-    /// The engine's PC controls: mouse camera and menu pointer, profiles, and the 29 actions, each
-    /// bound to one key and one mouse input (bbport.ini bind.*, the same records the in-game
-    /// System › Key Bindings menu edits). Clicking an action listens for the next key, mouse button
-    /// or wheel step: a key replaces the key, a mouse input the mouse input. × removes one,
+    /// The engine's PC controls: mouse camera and menu pointer, profiles, and the 30 actions, each
+    /// stored in bbport.ini bind.*, the same records the in-game Key Bindings menu edits.
+    /// Capture accumulates keys and mouse inputs until they are released. A single key
+    /// or mouse input keeps the alternative of the other kind. × removes one,
     /// right-click unbinds the action. Inputs used twice, and the port's Insert key, are flagged.
     /// </summary>
     public sealed class ControlsPage : LauncherPage
     {
         private readonly StackPanel _table = new();
+        private readonly StackPanel _ds3Rows = new();
+        private readonly StackPanel _movementOptions = new();
+        private readonly Segmented _inputSelector;
+        private string? _tableStamp, _profileFilesStamp, _profilesViewStamp;
+        private FrameworkElement? _ds3Card;
+        private readonly DispatcherTimer _chordTimer=new(){Interval=TimeSpan.FromMilliseconds(16)};
+        private readonly BindingCapture _chordCapture = new();
+        private UIElement? _captureInputHost;
+        private Window? _captureWindow;
+        private static readonly Key[] CaptureKeys = Enum.GetValues<Key>().Distinct()
+            .Where(k => k != Key.None && InputMap.SdlKeyName(k) != null && KeyInterop.VirtualKeyFromKey(k) != 0).ToArray();
+
+        private readonly StackPanel _mouseOptions;
+        private readonly ToggleSwitch _pcToggle, _mouseCameraToggle, _mouseMenuToggle;
         private readonly InfoBar _conflicts;
         private readonly TextBox _search;
         private readonly TextBlock _padStatus;
@@ -47,14 +62,45 @@ namespace BloodborneLauncher.Views
         public ControlsPage() : base("Controls",
             "Keyboard and mouse for every action, the mouse camera, and shareable profiles. Gamepads work as on PS4.")
         {
-            // ==================== PC controls & mouse ====================
+            // Upgrade the previous stock movement preset; retain other custom combinations.
+            if(Ini.Get("movement_defaults_version","1")!="2") {
+                if(Ini.Raw("stick_turn_rate")=="900" && (Ini.Get("stick_circular","0") is "0" or "off")) {
+                    Ini.Set("stick_turn_rate","1200");Ini.Set("stick_circular","1");
+                }
+                Ini.Set("movement_defaults_version","2");Ws.SaveSoon();
+            }
+            Group(PcText.Get("Input device"));
+            if(Ini.Raw("input_mode")==null){
+                Ini.Set("input_mode","keyboard_mouse");
+                if(Ini.Raw("bind.attack")==null)ControlProfiles.Apply(S,Ini,ControlProfiles.BuiltIns.First(p=>p.Name==ControlProfiles.DarkSouls3Name));
+            }
+            var inputChoices = new[]{new Choice(PcText.Get("Keyboard and mouse"),"keyboard_mouse"),new Choice(PcText.Get("Controller"),"controller")};
+            _inputSelector = new Segmented(inputChoices);
+            _inputSelector.Select(Choices.IndexOf(inputChoices,Ini.Get("input_mode","keyboard_mouse")),notify:false);
+            _inputSelector.Changed += index => UseInputMode(inputChoices[index].Value=="keyboard_mouse");
+            System.Windows.Automation.AutomationProperties.SetName(_inputSelector,PcText.Get("Input device"));
+            var inputCard=Card(SymbolRegular.Keyboard24,"",null,null,out _);
+            inputCard.Child=_inputSelector;
+            Add(inputCard);
+            ToggleRow(SymbolRegular.KeyboardShift24,PcText.Get("Use Dark Souls 3 PC profile"),null,
+                ()=>Ini.Get("ds3_profile","1")!="0",v=>UseDs3(v));
+            _ds3Card=(FrameworkElement)Body.Children[^1];Body.Children.Add(_ds3Rows);
+            Group(PcText.Get("Sprint and direction changes"),_movementOptions);
+            SliderRow(SymbolRegular.Gauge24,PcText.Get("Turning speed"),PcText.Get("Smooths direction changes to help prevent sprint interruptions when combining movement keys. Default: 1200 degrees/s. Zero turns instantly."),
+                0,5000,50,()=>ParseDouble(Ini.Get("stick_turn_rate","1200"),1200),v=>Ini.Set("stick_turn_rate",((int)v).ToString()),"0'°/s'",_movementOptions);
+            SliderRow(SymbolRegular.Timer24,PcText.Get("Key release delay"),PcText.Get("Keep the last direction briefly while sprint is held. Default: 60 ms. Zero stops immediately."),
+                0,200,5,()=>ParseDouble(Ini.Get("stick_release_delay_ms","60"),60),v=>Ini.Set("stick_release_delay_ms",((int)v).ToString()),"0' ms'",_movementOptions);
+            ToggleRow(SymbolRegular.ArrowSync24,PcText.Get("Circular stick range"),PcText.Get("Use a circular range for keyboard sprint movement. Off keeps square diagonals."),
+                ()=>Ini.Get("stick_circular","1") is "1" or "on",v=>Ini.Set("stick_circular",v?"1":"0"),_movementOptions);
+            Body.Children.Add(_movementOptions);
             Group("Keyboard & mouse");
-            var pc = ToggleRow(SymbolRegular.Keyboard24, "PC controls", "The keyboard and mouse layout below; off keeps the gamepad-style keys",
-                () => Ini.Get("pc_controls", "1") != "0", v => Ini.Set("pc_controls", v ? "1" : "0"));
+            var pc=new ToggleSwitch{IsChecked=true};
+            _pcToggle=pc;
             var mouse = new StackPanel();
-            ToggleRow(SymbolRegular.CursorClick24, "Mouse camera", "The mouse turns the game's own camera by raw counts, at any frame rate",
+            _mouseOptions = mouse;
+            _mouseCameraToggle = ToggleRow(SymbolRegular.CursorClick24, "Mouse camera", "The mouse turns the game's own camera by raw counts, at any frame rate",
                 () => Ini.Get("mouse_camera", "1") != "0", v => Ini.Set("mouse_camera", v ? "1" : "0"), mouse);
-            ToggleRow(SymbolRegular.CursorHover24, "Mouse in menus", "The mouse becomes a pointer in the game's menus: hover and click items",
+            _mouseMenuToggle = ToggleRow(SymbolRegular.CursorHover24, "Mouse in menus", "Hover and click items; move with WASD while browsing the inventory. WASD still navigates the title menus",
                 () => Ini.Get("mouse_menu", "1") != "0", v => Ini.Set("mouse_menu", v ? "1" : "0"), mouse);
             SliderRow(SymbolRegular.Gauge24, "Mouse sensitivity", "5 is the default", 0, 10, 1,
                 () => ParseDouble(Ini.Get("mouse_sensitivity", "5"), 5), v => Ini.Set("mouse_sensitivity", ((int)v).ToString()), "0", mouse);
@@ -63,7 +109,7 @@ namespace BloodborneLauncher.Views
             IniToggle(SymbolRegular.ArrowRotateClockwise24, "Camera auto-rotation", "Let the camera turn by itself with movement, as with a gamepad",
                 "mouse_auto_rotation", mouse);
             ComboRow(SymbolRegular.KeyboardShift24, "Button prompts",
-                "The button icons in the game's menus and prompts. Automatic shows your keys while the keyboard or mouse is in use, and the controller's buttons with a controller; also in-game under System › PC Controls",
+                "The button icons in the game's menus and prompts. Automatic shows your keys while the keyboard or mouse is in use, and the controller's buttons with a controller; also in-game under System › Controls",
                 Choices.ButtonPrompts, () => Ini.Get("button_prompts", "auto"), v => Ini.Set("button_prompts", v), mouse);
             Body.Children.Add(mouse);
             ToggleRow(SymbolRegular.CursorHoverOff24, "Hide mouse cursor", "Hidden 2 seconds after the mouse stops moving; moving it brings it back",
@@ -90,10 +136,10 @@ namespace BloodborneLauncher.Views
             Body.Children.Add(share);
 
             Group("Gamepad");
-            Add(Card(SymbolRegular.XboxController24, "Controller", "", null, out _padStatus));
+            Add(Card(SymbolRegular.XboxController24, PcText.Get("Controller"), "", null, out _padStatus));
             ComboRow(SymbolRegular.Games24, "Controller icons",
                 "The controller's buttons in the game's menus and prompts. Automatic shows PlayStation buttons with a PlayStation controller " +
-                "and Xbox buttons (A, B, X, Y, LB, RT…) with any other; rebound buttons show as bound. Also in-game under System › PC Controls",
+                "and Xbox buttons (A, B, X, Y, LB, RT…) with any other; rebound buttons show as bound. Also in-game under System › Controls",
                 Choices.PadIcons, () => Ini.Get("pad_icons", "auto"), v => Ini.Set("pad_icons", v));
             IniToggle(SymbolRegular.ArrowSwap24, "Swap sticks", "Move with the right stick and look with the left", "pad_swap_sticks", changed: () => Rebuild());
             IniToggle(SymbolRegular.ArrowBidirectionalLeftRight24, "Invert camera left / right", "The camera stick's horizontal direction", "pad_invert_look_x");
@@ -124,8 +170,8 @@ namespace BloodborneLauncher.Views
             header.Children.Add(tools);
             Body.Children.Add(header);
 
-            var help = Text("Click an action and press a key, click a mouse button or turn the wheel. Each action takes one key and one " +
-                            "mouse input. × removes one, right-click unbinds the action. In the Controller column, pick the button for an " +
+            var help = Text("Click an action, hold the keys or mouse buttons together and release all to finish. × removes a binding, " +
+                            "right-click unbinds the action. In the Controller column, pick the button for an " +
                             "action: one already in use swaps over.", "Faint");
             help.Margin = new Thickness(2, 0, 0, 8);
             Body.Children.Add(help);
@@ -160,12 +206,17 @@ namespace BloodborneLauncher.Views
             capturePad.PreviewMouseDown += (_, e) =>
             {
                 e.Handled = true;
-                if (_padInput == null && InputMap.MouseToken(e.ChangedButton) is { } name) Commit(name);
+                if (_padInput == null && InputMap.MouseToken(e.ChangedButton) is { } name) CaptureToken(name);
             };
             capturePad.PreviewMouseWheel += (_, e) =>
             {
                 e.Handled = true;
-                if (_padInput == null) Commit(e.Delta > 0 ? "WheelUp" : "WheelDown");
+                if (_padInput == null)
+                {
+                    var token = e.Delta > 0 ? "WheelUp" : "WheelDown";
+                    CaptureToken(token);
+                    _chordCapture.Release(token);
+                }
             };
 
             // Controller capture: the button pressed on the pad, or one picked from this list.
@@ -213,7 +264,7 @@ namespace BloodborneLauncher.Views
             root.Children.Add(Scroller);
             root.Children.Add(_overlay);
             Content = root;
-            PreviewKeyDown += Page_PreviewKeyDown;
+            Unloaded += (_, _) => EndCapture();
 
             var status = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
             status.Tick += (_, _) => { if (IsVisible) UpdatePadStatus(); };
@@ -234,15 +285,124 @@ namespace BloodborneLauncher.Views
             };
             activity.Start();
             Ws.PortChanged += () => { Rebuild(); FillProfiles(); };
+            _chordTimer.Tick+=(_,_)=>PollChord();
             Rebuild();
             FillProfiles();
         }
 
         public override void OnShown()
         {
+            _inputSelector.Select(Ini.Get("input_mode","keyboard_mouse")=="controller"?1:0,notify:false);
             UpdatePadStatus();
             Rebuild();
             FillProfiles();
+        }
+
+        private void UseInputMode(bool keyboard){
+            Ini.Set("input_mode",keyboard?"keyboard_mouse":"controller");Ini.Set("pc_controls","1");
+            Ini.Set("mouse_camera",keyboard?"1":"0");Ini.Set("mouse_menu","1");
+            Ini.Set("button_prompts",keyboard?"keyboard":"controller");
+            if(_mouseCameraToggle!=null)_mouseCameraToggle.IsChecked=keyboard;
+            Changed();
+        }
+        private void UseDs3(bool enabled){
+            if(enabled)ControlProfiles.Apply(S,Ini,ControlProfiles.BuiltIns.First(p=>p.Name==ControlProfiles.DarkSouls3Name));
+            else foreach(var pair in new[]{("attack","Mouse1"),("strong_attack","V"),("firearm","Left Ctrl, Mouse3"),("strong_modifier","none")})Ini.Set("bind."+pair.Item1,pair.Item2);
+            Ini.Set("ds3_profile",enabled?"1":"0");Changed();
+        }
+        private void RefreshDs3Rows(){
+            if(_ds3Card==null)return;
+            bool visible=Ini.Get("input_mode","keyboard_mouse")!="controller";
+            _movementOptions.Visibility=visible?Visibility.Visible:Visibility.Collapsed;
+            _ds3Card.Visibility=visible?Visibility.Visible:Visibility.Collapsed;
+            _ds3Rows.Children.Clear();_ds3Rows.Visibility=visible&&Ini.Get("ds3_profile","1")!="0"?Visibility.Visible:Visibility.Collapsed;
+            if(_ds3Rows.Visibility!=Visibility.Visible)return;
+            var usage=Usage();
+            foreach(var c in InputMap.Controls.Where(c=>new[]{"attack","strong_attack","firearm","switch_right","switch_left","switch_item","previous_item"}.Contains(c.Name)))
+                _ds3Rows.Children.Add(TableRow(Text(PcText.Get(c.Label),"Body"),Cell(c,usage),new FrameworkElement(),new FrameworkElement()));
+        }
+        private static IEnumerable<string> HeldCaptureInputs()
+        {
+            // WPF's Key enum also includes routing/IME sentinels. Poll real,
+            // bindable keys only; lock toggles are not treated as held inputs.
+            foreach (var key in CaptureKeys)
+                if (Keyboard.IsKeyDown(key)) yield return BindingExpressions.CaptureToken(InputMap.SdlKeyName(key)!);
+            if (Mouse.LeftButton == MouseButtonState.Pressed) yield return "Mouse1";
+            if (Mouse.MiddleButton == MouseButtonState.Pressed) yield return "Mouse2";
+            if (Mouse.RightButton == MouseButtonState.Pressed) yield return "Mouse3";
+            if (Mouse.XButton1 == MouseButtonState.Pressed) yield return "Mouse4";
+            if (Mouse.XButton2 == MouseButtonState.Pressed) yield return "Mouse5";
+        }
+
+        private void CaptureToken(string name)
+        {
+            if (_target == null) return;
+            name = BindingExpressions.CaptureToken(name);
+            if (InputMap.Reserved.ContainsKey(name)) { _captureFeedback.Text = InputMap.Reserved[name]; return; }
+            _chordCapture.RefreshHeld(HeldCaptureInputs());
+            _chordCapture.Press(name);
+            _captureBoxText.Text = InputMap.Display(string.Join(" + ", _chordCapture.Tokens));
+        }
+
+        private void PollChord()
+        {
+            if (_target == null) { _chordTimer.Stop(); return; }
+            // Release events normally complete capture immediately. Polling is
+            // a fallback for a release outside the pad's hit-test rectangle.
+            _chordCapture.RefreshHeld(HeldCaptureInputs());
+            FinishChord();
+        }
+
+        private void FinishChord()
+        {
+            if (_target == null || _chordCapture.TakeCompleted() is not { } tokens) return;
+            var value = InputMap.Canonical(string.Join(" + ", tokens));
+            if (value != null) Commit(value);
+        }
+
+        private void AttachCaptureInput()
+        {
+            _captureWindow = Window.GetWindow(this);
+            _captureInputHost = (UIElement?)_captureWindow ?? this;
+            // The window sees key events even when a child retained focus or
+            // marked them handled. Handlers exist only while this dialog is open.
+            _captureInputHost.AddHandler(Keyboard.PreviewKeyDownEvent, new KeyEventHandler(Page_PreviewKeyDown), true);
+            _captureInputHost.AddHandler(Keyboard.PreviewKeyUpEvent, new KeyEventHandler(Capture_PreviewKeyUp), true);
+            _captureInputHost.AddHandler(Mouse.PreviewMouseUpEvent, new MouseButtonEventHandler(Capture_PreviewMouseUp), true);
+            if (_captureWindow != null) _captureWindow.Deactivated += Capture_Deactivated;
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+            {
+                if (_overlay.Visibility != Visibility.Visible) return;
+                _overlay.Focus();
+                Keyboard.Focus(_overlay);
+            }));
+        }
+
+        private void Capture_Deactivated(object? sender, EventArgs e) => EndCapture();
+
+        private static Key CaptureKey(KeyEventArgs e) => e.Key switch
+        {
+            Key.System => e.SystemKey,
+            Key.ImeProcessed => e.ImeProcessedKey,
+            Key.DeadCharProcessed => e.DeadCharProcessedKey,
+            _ => e.Key,
+        };
+
+        private void Capture_PreviewKeyUp(object sender, KeyEventArgs e)
+        {
+            if (_target == null) return;
+            e.Handled = true;
+            if (InputMap.SdlKeyName(CaptureKey(e)) is { } token)
+                _chordCapture.Release(BindingExpressions.CaptureToken(token));
+            FinishChord();
+        }
+
+        private void Capture_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (_target == null) return;
+            if (InputMap.MouseToken(e.ChangedButton) is { } token) _chordCapture.Release(token);
+            // Let Cancel/Unbind finish their normal Click handler first.
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(FinishChord));
         }
 
         private void UpdatePadStatus()
@@ -290,15 +450,24 @@ namespace BloodborneLauncher.Views
             return usage;
         }
 
+        private string BindingsStamp() => Paths.PortDir+"\n"+S.Str("controls_profile")+"\n"+_search.Text+"\n"+
+            string.Join("\n",Ini.Values.Where(pair=>pair.Key.StartsWith("bind.",StringComparison.Ordinal)||
+                pair.Key.StartsWith("pad",StringComparison.Ordinal)||pair.Key is "input_mode" or "ds3_profile" or "pc_controls" or "menu_language")
+                .OrderBy(pair=>pair.Key,StringComparer.Ordinal).Select(pair=>pair.Key+"="+pair.Value));
+
         private void Rebuild()
         {
+            var stamp=BindingsStamp();
+            if (_tableStamp==stamp) return;
+            _tableStamp=stamp;
+            RefreshDs3Rows();
             _table.Children.Clear();
             // Keyboard and mouse follow the PC controls switch; the controller column always works.
             var pcControls = Ini.Get("pc_controls", "1") != "0";
             var usage = Usage();
             var filter = _search.Text.Trim();
 
-            _table.Children.Add(TableRow(Header("Action"), Header("Keyboard & mouse"), Header("Controller"), new FrameworkElement(), header: true));
+            _table.Children.Add(TableRow(Header("Action"), Header("Keyboard & mouse"), Header(PcText.Get("Controller")), new FrameworkElement(), header: true));
 
             foreach (var group in InputMap.Controls.GroupBy(c => c.Group))
             {
@@ -520,15 +689,16 @@ namespace BloodborneLauncher.Views
         private void BeginCapture(ControlDef control)
         {
             _target = control;
+            _chordCapture.Begin(HeldCaptureInputs());
+            _chordTimer.Start();
             _padInput = null;
             _captureTitle.Text = $"Bind {control.Label}";
-            _captureHelp.Text = "Press a key, or click / scroll inside the box. Esc cancels.";
+            _captureHelp.Text = "Hold keys and mouse buttons, then release all to finish. Esc cancels; Delete clears.";
             _captureBoxText.Text = "Click or scroll here";
             _padChoices.Visibility = Visibility.Collapsed;
             _captureFeedback.Text = "";
             _overlay.Visibility = Visibility.Visible;
-            _overlay.Focus();
-            Keyboard.Focus(_overlay);
+            AttachCaptureInput();
         }
 
         private void EndCapture()
@@ -538,6 +708,17 @@ namespace BloodborneLauncher.Views
             _padInput = null;
             _padControl = null;
             _padTimer.Stop();
+            _chordTimer.Stop();
+            _chordCapture.Clear();
+            if (_captureInputHost != null)
+            {
+                _captureInputHost.RemoveHandler(Keyboard.PreviewKeyDownEvent, new KeyEventHandler(Page_PreviewKeyDown));
+                _captureInputHost.RemoveHandler(Keyboard.PreviewKeyUpEvent, new KeyEventHandler(Capture_PreviewKeyUp));
+                _captureInputHost.RemoveHandler(Mouse.PreviewMouseUpEvent, new MouseButtonEventHandler(Capture_PreviewMouseUp));
+                _captureInputHost = null;
+            }
+            if (_captureWindow != null) _captureWindow.Deactivated -= Capture_Deactivated;
+            _captureWindow = null;
         }
 
         private void BeginPadCapture(ControlDef control, string input)
@@ -555,8 +736,7 @@ namespace BloodborneLauncher.Views
             _padChoices.Visibility = Visibility.Visible;
             _captureFeedback.Text = "";
             _overlay.Visibility = Visibility.Visible;
-            _overlay.Focus();
-            Keyboard.Focus(_overlay);
+            AttachCaptureInput();
             if (live)
             {
                 // Buttons already held when the dialog opens don't count until released.
@@ -603,7 +783,7 @@ namespace BloodborneLauncher.Views
         {
             if (_target == null && _padInput == null) return;
             e.Handled = true;
-            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            var key = CaptureKey(e);
             if (_padInput != null)
             {
                 if (key == Key.Escape) EndCapture();
@@ -614,13 +794,14 @@ namespace BloodborneLauncher.Views
                 EndCapture();
                 return;
             }
+            if(key==Key.Delete){Commit(null);return;}
             var name = InputMap.SdlKeyName(key);
             if (name == null)
             {
                 _captureFeedback.Text = $"{key} cannot be bound; try another key.";
                 return;
             }
-            Commit(name);
+            if (!e.IsRepeat) CaptureToken(name);
         }
 
         // ---------------------------------------------------------------- profiles
@@ -643,8 +824,19 @@ namespace BloodborneLauncher.Views
 
         private void FillProfiles()
         {
+            string files;
+            try {
+                files=ControlProfiles.Folder+"\n"+string.Join("\n",Directory.Exists(ControlProfiles.Folder)
+                    ? Directory.GetFiles(ControlProfiles.Folder,"*.json").OrderBy(file=>file,StringComparer.OrdinalIgnoreCase)
+                        .Select(file=>{var info=new FileInfo(file);return file+"|"+info.Length+"|"+info.LastWriteTimeUtc.Ticks;})
+                    : Enumerable.Empty<string>());
+            } catch(IOException) { files=Guid.NewGuid().ToString(); }
+            catch(UnauthorizedAccessException) { files=Guid.NewGuid().ToString(); }
+            var view=BindingsStamp()+"\n"+files;
+            if (_profilesViewStamp==view) return;
+            _profilesViewStamp=view;
             _fillingProfiles = true;
-            _profiles = ControlProfiles.All();
+            if (_profileFilesStamp!=files) { _profiles=ControlProfiles.All();_profileFilesStamp=files; }
             _profileBox.Items.Clear();
             var match = Matching();
             if (match == null)
@@ -669,6 +861,10 @@ namespace BloodborneLauncher.Views
                 return;
             }
             ControlProfiles.Apply(S, Ini, profile);
+            _pcToggle.IsChecked = Ini.Get("pc_controls", "1") != "0";
+            _mouseOptions.IsEnabled = _pcToggle.IsChecked == true;
+            _mouseCameraToggle.IsChecked = Ini.Get("mouse_camera", "1") != "0";
+            _mouseMenuToggle.IsChecked = Ini.Get("mouse_menu", "1") != "0";
             Ws.Log($"Control profile: {profile.Name}", LogLevel.Step);
             Changed();
         }
@@ -825,6 +1021,10 @@ namespace BloodborneLauncher.Views
                 Ws.Log("Could not save the imported profile: " + e.Message, LogLevel.Bad);
             }
             ControlProfiles.Apply(S, Ini, profile);
+            _pcToggle.IsChecked = Ini.Get("pc_controls", "1") != "0";
+            _mouseOptions.IsEnabled = _pcToggle.IsChecked == true;
+            _mouseCameraToggle.IsChecked = Ini.Get("mouse_camera", "1") != "0";
+            _mouseMenuToggle.IsChecked = Ini.Get("mouse_menu", "1") != "0";
             Ws.Log($"Imported control profile \"{name}\".", LogLevel.Good);
             Changed();
         }

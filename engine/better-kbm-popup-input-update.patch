@@ -1,0 +1,202 @@
+diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
+--- a/gpu/shim/engine/option_menu.cpp
++++ b/gpu/shim/engine/option_menu.cpp
+@@ -16,6 +16,7 @@
+ extern std::uint32_t menu_confirm_button();
+ extern std::uint32_t menu_back_button();
+ extern std::uint32_t input_delivered_buttons();
++extern void menu_pointer_selection_sound();
+ #include <chrono>
+ #include "bbport_platform.h"
+ #include "bbport_settings.h"
+@@ -415,6 +416,7 @@
+         if (row == 0 && (edge & (decide | 0x20u | 0x80u))) {
+             // Pointer arrow hits use exactly the same direction bits as the pad.
+             keys_fill(g_keys.page + ((edge & 0x80u) ? -1 : 1));
++            menu_pointer_selection_sound();
+             rows_changed = values_changed = true;
+         } else if (keys_row_bound(row) && BbSettings::Get().keyboard_mouse && host_bind_take_clear_key()) {
+             host_binding_clear(keys_action(row));
+@@ -788,6 +790,7 @@
+    const auto now=input_delivered_buttons(),edge=now&~vanilla_controls.pad_was;vanilla_controls.pad_was=now;
+    if(edge&(menu_confirm_button()|0x80|0x20)){
+     BbSettings::SelectKeyboardMouse(!BbSettings::Get().keyboard_mouse);device_caption();g_keys_save=true;
++    menu_pointer_selection_sound();
+     redraw(vanilla_controls.widget+kChoiceList);
+    }
+   }
+diff --git a/gpu/shim/input/bindings.cpp b/gpu/shim/input/bindings.cpp
+--- a/gpu/shim/input/bindings.cpp
++++ b/gpu/shim/input/bindings.cpp
+@@ -58,7 +58,7 @@
+     {"switch_item", "Next Item", "Select the next equipped quick item.", kDown, "Down", 7},
+     {"switch_right", "Switch Right Weapon", "Switch between equipped right-hand weapons.", kRight, "Right", 0},
+     {"switch_left", "Switch Left Weapon", "Switch between equipped left-hand weapons.", kLeft, "Left", 0},
+-    {"dpad_up", "Blood Bullets", "Create Blood Bullets at the cost of health.", kUp, "Up", 0},
++    {"dpad_up", "Blood Bullets", "Create Blood Bullets at the cost of health.", kUp, "T", 0},
+     // The touchpad is a button with a side: the game's key guide reads
+     // "<KG_TP_L> : Gestures" and "<KG_TP_R> : Personal Effects". A press alone
+     // cannot say which, so these place a finger as well (apply below).
+diff --git a/gpu/shim/input/menu_pointer.cpp b/gpu/shim/input/menu_pointer.cpp
+--- a/gpu/shim/input/menu_pointer.cpp
++++ b/gpu/shim/input/menu_pointer.cpp
+@@ -56,6 +56,8 @@
+ // DS3's slots plus eight bytes, because a PS4 build has two destructor slots
+ // where MSVC has one.
+ // ---------------------------------------------------------------------------
++
++void menu_pointer_selection_sound();
+ 
+ namespace {
+ 
+@@ -735,12 +737,7 @@
+         std::int32_t index = now;
+         hle_call_guest(ptr(call), ptr(listener), &index);
+     }
+-    auto* se = static_cast<std::int32_t*>(guest_fn(kMenuSe));
+-    if (se[1] <= 0) {
+-        se[0] = 0;
+-        se[1] = 0;
+-        *static_cast<std::uint64_t*>(guest_fn(kMenuSeLabel)) = guest(kCursorMoveLabel);
+-    }
++    menu_pointer_selection_sound();
+ }
+ 
+ std::int64_t g_startup_list_ms=0;
+@@ -896,3 +893,14 @@
+ bool menu_pointer_front_end() { return front_end(); }
+ 
+ void menu_pointer_scroll(int direction){g_scroll.store(direction);}
++
++// Use the original priority queue, so a tick never masks a confirm/back sound.
++void menu_pointer_selection_sound() {
++    if (!g_slide) return;
++    auto* se = static_cast<std::int32_t*>(guest_fn(kMenuSe));
++    if (se[1] <= 0) {
++        se[0] = 0;
++        se[1] = 0;
++        *static_cast<std::uint64_t*>(guest_fn(kMenuSeLabel)) = guest(kCursorMoveLabel);
++    }
++}
+diff --git a/scripts/menu_layout.py b/scripts/menu_layout.py
+--- a/scripts/menu_layout.py
++++ b/scripts/menu_layout.py
+@@ -3,6 +3,7 @@
+ 
+ Uses the original bbport GFX serializer. Edited movies remain local game cache.
+ """
++import math
+ import struct
+ import hud_layout as swf
+ import quit_menu as quit
+@@ -130,4 +131,109 @@
+     for name, growth in (('ControllSetting', 2400), ('PCGraphics', 1600),
+                          ('PCKeys', 2400), ('PCEffects', -1100), ('PCColour', -2200), ('PCCamera', -3300)):
+         data = expand_panel(data, name, growth)
+-    return data
++    return resolution_popup(data)
++
++
++def black_rectangle(character, bounds):
++    """Define a solid RGBA shape; no external textures or game art required."""
++    left, right, top, bottom = bounds
++    rect = swf.Writer()
++    bits = swf.signed_bits(*bounds)
++    rect.unsigned(bits, 5)
++    for value in bounds:
++        rect.unsigned(value & ((1 << bits)-1), bits)
++    path = swf.Writer()
++    path.unsigned(1, 4)  # one fill bit
++    path.unsigned(0, 4)  # no line styles
++    path.unsigned(5, 6)  # move and select FillStyle1
++    bits = swf.signed_bits(left, top)
++    path.unsigned(bits, 5)
++    path.unsigned(left & ((1 << bits)-1), bits)
++    path.unsigned(top & ((1 << bits)-1), bits)
++    path.unsigned(1, 1)
++    for dx, dy in ((right-left, 0), (0, bottom-top), (left-right, 0), (0, top-bottom)):
++        bits = max(2, swf.signed_bits(dx, dy))
++        path.unsigned(3, 2)  # straight edge
++        path.unsigned(bits-2, 4)
++        path.unsigned(1, 1)  # general edge
++        path.unsigned(dx & ((1 << bits)-1), bits)
++        path.unsigned(dy & ((1 << bits)-1), bits)
++    path.unsigned(0, 6)  # EndShape
++    return swf.tag(32, struct.pack('<H', character) + rect.bytes() +
++                   b'\x01\x00\x00\x00\x00\xff\x00' + path.bytes())
++
++
++def resolution_popup(data):
++    """Give only Graphics' resolution popup an opaque backing and topmost row.
++
++    A black background alone cannot cover siblings at higher display depths.
++    Promote the resolution row across all animation updates/removals as well.
++    Clone its widget chain so vanilla language lists keep their original art.
++    """
++    shapes, sprites, bitmaps = swf.definitions(data)
++    root = quit.placements_in(data, swf.stage_start(data), len(data))
++    section = root['PCGraphics'][3]
++    panel = quit.placements_in(data, *sprites[section])
++    row = panel['Item_4_0']
++    path = [row[3]]
++    for name in ('Widgets', 'DropdownList', 'ItemList'):
++        path.append(quit.placements_in(data, *sprites[path[-1]])[name][3])
++    backing = quit.placements_in(data, *sprites[path[-1]])[1]
++    def bounds(character):
++        if character in shapes:
++            for code, _, at, _ in swf.tags(data, swf.stage_start(data), len(data)):
++                if code in swf.SHAPE_TAGS and struct.unpack_from('<H', data, at)[0] == character:
++                    reader = swf.Reader(data, at+2)
++                    bits = reader.unsigned(5)
++                    return tuple(reader.signed(bits) for _ in range(4))
++        points = []
++        if character not in sprites:
++            raise ValueError('Unexpected popup background character')
++        for depth, placement in quit.placements_in(data, *sprites[character]).items():
++            if not isinstance(depth, int):
++                continue
++            left, right, top, bottom = bounds(placement[3])
++            scale, rotate, (x, y) = placement[4]
++            sx, sy = scale or (65536, 65536)
++            ry, rx = rotate or (0, 0)
++            points.extend((x+(sx*xx+rx*yy)/65536, y+(ry*xx+sy*yy)/65536)
++                          for xx in (left, right) for yy in (top, bottom))
++        if not points:
++            raise ValueError('Empty popup background')
++        return (min(p[0] for p in points), max(p[0] for p in points),
++                min(p[1] for p in points), max(p[1] for p in points))
++    left, right, top, bottom = bounds(backing[3])
++    # Match the original popup's transformed artwork, including its border.
++    next_id = max(set(shapes)|set(sprites)|set(bitmaps))+1
++    shape = next_id
++    extra = black_rectangle(shape, (math.floor(left), math.ceil(right), math.floor(top), math.ceil(bottom)))
++    mapping = {old: next_id+1+i for i, old in enumerate(reversed(path))}
++    mapping[backing[3]] = shape
++    for old in reversed(path):
++        body = bytearray()
++        for code, head, at, length in swf.tags(data, *sprites[old]):
++            raw = bytearray(data[at:at+length])
++            if code in (26, 70):
++                cid, _, _ = swf.place_fields(data, at, code)
++                if cid in mapping:
++                    struct.pack_into('<H', raw, 4 if code == 70 else 3, mapping[cid])
++            body += swf.tag(code, raw)
++        frames = struct.unpack_from('<H', data, sprites[old][0]-2)[0]
++        extra += swf.tag(39, struct.pack('<HH', mapping[old], frames)+body)
++    depth = quit.depth_of(data, row[1], row[0])
++    highest = max(quit.depth_of(data, at, code)
++                  for code, _, at, _ in swf.tags(data, *sprites[section]) if code in (26, 70))
++    body = bytearray()
++    for code, _, at, length in swf.tags(data, *sprites[section]):
++        raw = bytearray(data[at:at+length])
++        if code in (26, 70) and quit.depth_of(data, at, code) == depth:
++            struct.pack_into('<H', raw, 1+(code == 70), highest+1)
++            cid, _, _ = swf.place_fields(data, at, code)
++            if cid is not None:
++                if cid != row[3]:
++                    raise ValueError('Resolution row changes character during animation')
++                struct.pack_into('<H', raw, 4 if code == 70 else 3, mapping[cid])
++        elif code == 28 and struct.unpack_from('<H', raw)[0] == depth:
++            struct.pack_into('<H', raw, 0, highest+1)
++        body += swf.tag(code, raw)
++    return replace_sprite(data, section, body, extra)

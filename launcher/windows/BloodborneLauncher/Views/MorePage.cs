@@ -11,16 +11,28 @@ namespace BloodborneLauncher.Views
         private static readonly (string Key, string Label, Type Page)[] Sections = new (string, string, Type)[]
         {
             ("mods", "Mods", typeof(ModsPage)),
-            ("cheats", "Cheats", typeof(CheatsPage)),
+            ("cheats", "Tweaks & Cheats", typeof(CheatsPage)),
             ("online", "Online", typeof(OnlinePage)),
             ("advanced", "Advanced", typeof(SettingsPage)),
             ("output", "Log", typeof(OutputPage)),
-        }.Where(s => s.Item1 != "cheats" || CheatsPage.Supported).ToArray();
+        };
 
         private readonly Dictionary<Type, LauncherPage> _pages = new();
         private readonly Frame _frame = new() { NavigationUIVisibility = System.Windows.Navigation.NavigationUIVisibility.Hidden, Focusable = false };
         private readonly Segmented _tabs;
         private int _current = -1;
+        private System.Windows.Threading.DispatcherOperation? _shownRefresh;
+
+        private void RefreshAfterNavigation(LauncherPage page)
+        {
+            _shownRefresh?.Abort();
+            if (!IsVisible) return; // The parent calls OnShown after the first navigation.
+            _shownRefresh=Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(() =>
+            {
+                _shownRefresh=null;
+                if (IsVisible && ReferenceEquals(_frame.Content,page)) page.OnShown();
+            }));
+        }
 
         public MorePage() : base("More", "")
         {
@@ -57,13 +69,13 @@ namespace BloodborneLauncher.Views
                 _pages[type] = page = (LauncherPage)Activator.CreateInstance(type)!;
             if (_current != index) _frame.Navigate(page);
             _current = index;
-            page.OnShown();
+            RefreshAfterNavigation(page);
         }
 
         public override void OnShown()
         {
             if (_current >= 0 && _pages.TryGetValue(Sections[_current].Page, out var page))
-                page.OnShown();
+                RefreshAfterNavigation(page);
         }
     }
 }

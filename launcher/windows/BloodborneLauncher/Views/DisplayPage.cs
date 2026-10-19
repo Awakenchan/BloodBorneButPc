@@ -5,7 +5,7 @@ using System.Windows.Controls;
 
 namespace BloodborneLauncher.Views
 {
-    /// <summary>Screen, frame rate and the language of the port's in-game menu.</summary>
+    /// <summary>Screen, frame rate, game text and spoken dialogue languages.</summary>
     public sealed class DisplayPage : LauncherPage
     {
         private readonly ComboBox _monitor = new() { Width = 360, VerticalAlignment = VerticalAlignment.Center };
@@ -35,13 +35,36 @@ namespace BloodborneLauncher.Views
             finally { _refreshingMonitors = false; }
         }
 
-        public DisplayPage() : base("Display", "Resolution, window mode, frame rate and menu language. Applied when the game starts.")
+        public DisplayPage() : base("Display", "Resolution, window mode, frame rate and game languages. Applied when the game starts.")
         {
+            Group("Display & FPS");
+            IniToggle(SymbolRegular.DataUsage24, PcText.Get("Show FPS"), null, "show_fps");
+            // What the counter shows (on unless turned off).
+            foreach (var (icon, key, title) in new[]
+                     {
+                         (SymbolRegular.TopSpeed24, "show_fps_rate", "Frame rate"),
+                         (SymbolRegular.Timer24, "show_fps_frame_time", "Frame time"),
+                         (SymbolRegular.ResizeLarge24, "show_fps_upscaler", "Upscaler"),
+                         (SymbolRegular.DeveloperBoard24, "show_fps_cpu", "CPU usage"),
+                         (SymbolRegular.Gauge24, "show_fps_gpu", "GPU usage"),
+                     })
+            {
+                // CPU and GPU use are off unless chosen (the engine's defaults, bbport_settings.h).
+                var fallback = key is "show_fps_cpu" or "show_fps_gpu" ? "0" : "1";
+                ToggleRow(icon, title, "Shown in the FPS counter", () => Ini.Get(key, fallback) == "1", v => Ini.Set(key, v ? "1" : "0"));
+                ((System.Windows.FrameworkElement)Body.Children[^1]).Margin = new System.Windows.Thickness(24, 0, 0, 4);
+            }
+
+
             _monitor.SetResourceReference(StyleProperty, "DefaultComboBoxStyle");
             Group("Language");
-            ComboRow(SymbolRegular.LocalLanguage24, "In-game menu language", "The port's settings menu (Insert or L3 + R3)",
-                Choices.MenuLanguages, () => Ini.Get("menu_language", "en"), v => Ini.Set("menu_language", v));
-            SettingCombo(SymbolRegular.Translate24, "Game language", "The game's own text and voices", Choices.GameLanguages, "language");
+            GameLanguages.Ensure(S);
+            ComboRow(SymbolRegular.LocalLanguage24, PcText.Get("Text language"), PcText.Get("Language for all game text, including dialogue, items and menus. Applied on the next launch."),
+                Choices.GameLanguages, () => GameLanguages.Text(S), v => {
+                    S.Set("text_language",v);Ini.Set("menu_language",GameLanguages.MenuLocale(v));
+                });
+            ComboRow(SymbolRegular.Translate24, PcText.Get("Voice language"), PcText.Get("Spoken dialogue language. Requires the selected voice files in your game copy. Applied on the next launch."),
+                Choices.VoiceLanguages, () => GameLanguages.Voice(S), v => S.Set("language",v));
 
             Group("Screen");
             Add(Card(SymbolRegular.Desktop24, "Monitor",

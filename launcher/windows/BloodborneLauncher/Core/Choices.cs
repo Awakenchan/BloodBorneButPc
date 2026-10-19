@@ -132,10 +132,15 @@
             new("Russian", "8"),
             new("Japanese", "0"),
             new("French", "2"),
-            new("Spanish", "3"),
+            new("Spanish (Spain)", "3"),
+            new("Spanish (Latin America)", "20"),
             new("German", "4"),
             new("Italian", "5"),
+            new("Português (Brasil)", "17"),
         };
+
+        // Russian text is supported, but the game has no Russian voice track.
+        public static readonly Choice[] VoiceLanguages = GameLanguages.Where(c => c.Value != "8").ToArray();
 
         public static readonly Choice[] HdrPaperWhite =
         {

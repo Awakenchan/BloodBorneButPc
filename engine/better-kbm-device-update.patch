@@ -1,0 +1,69 @@
+diff --git a/gpu/shim/input/input.cpp b/gpu/shim/input/input.cpp
+--- a/gpu/shim/input/input.cpp
++++ b/gpu/shim/input/input.cpp
+@@ -112,7 +112,8 @@
+     if(e.type==SDL_EVENT_WINDOW_FOCUS_GAINED)focused=true;
+     if(e.type==SDL_EVENT_WINDOW_MOUSE_LEAVE)in_window=false;
+     if(e.type==SDL_EVENT_WINDOW_MOUSE_ENTER)in_window=true;
+-    if(e.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type==SDL_EVENT_GAMEPAD_AXIS_MOTION && std::abs(e.gaxis.value)>8000))device=InputDevice::Pad;
++    if(!BbSettings::Get().keyboard_mouse && (e.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
++        (e.type==SDL_EVENT_GAMEPAD_AXIS_MOTION && std::abs(e.gaxis.value)>8000)))device=InputDevice::Pad;
+     if(NativePages::ControllerCapturing()){
+         if(e.type==SDL_EVENT_KEY_DOWN&&e.key.scancode==SDL_SCANCODE_ESCAPE)NativePages::CancelControllerCapture();
+         if(e.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN)NativePages::ControllerEvent(e.gbutton.button);
+@@ -159,16 +160,20 @@
+ extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_present) {
+     if(!active || !BbSettings::Get().pc_controls){keyboard_moving=false;wanted_relative=false;return 0;}
+     auto& s=BbSettings::Get();
+-    PadState p;p.buttons=d->buttons;
++    // Keyboard/mouse mode ignores physical pads; controller mode retains keyboard fallback.
++    const bool allow_pad=gamepad_present && !s.keyboard_mouse;
++    PadState p;
++    if(allow_pad){p.buttons=d->buttons;
+     p.lx=d->lx;p.ly=d->ly;p.rx=d->rx;p.ry=d->ry;p.l2=d->l2;p.r2=d->r2;
+-    if(!gamepad_present)p.lx=p.ly=p.rx=p.ry=kStickRest;
++    
+     p.touch_count=std::min<uint8_t>(d->touch_count,2);
+-    for(int i=0;i<p.touch_count;i++)p.touch[i]={d->touch[i].x,d->touch[i].y,d->touch[i].id,true};
++    for(int i=0;i<p.touch_count;i++)p.touch[i]={d->touch[i].x,d->touch[i].y,d->touch[i].id,true};}
++    else device=InputDevice::KeyboardMouse;
+     bool moving=false;
+     const bool menu=menu_pointer_in_menu();
+-    const bool camera=s.mouse_camera && mouse_camera_installed() && !menu && !host_text_entry_open() && focused;
++    const bool camera=s.keyboard_mouse && s.mouse_camera && mouse_camera_installed() && !menu && !host_text_entry_open() && focused;
+     // Match the SDL device-switch threshold; resting stick noise must not disable mouse look.
+-    const bool stick_camera = gamepad_present && (std::abs(int(d->rx)-128)>32 || std::abs(int(d->ry)-128)>32);
++    const bool stick_camera = allow_pad && (std::abs(int(d->rx)-128)>32 || std::abs(int(d->ry)-128)>32);
+     const bool mouse_active = camera && device==InputDevice::KeyboardMouse && !stick_camera;
+     wanted_relative=mouse_active;
+     mouse_camera_publish(s.mouse_sensitivity,s.mouse_invert_x,s.mouse_invert_y,
+diff --git a/gpu/shim/input/mouse_camera_step.h b/gpu/shim/input/mouse_camera_step.h
+--- a/gpu/shim/input/mouse_camera_step.h
++++ b/gpu/shim/input/mouse_camera_step.h
+@@ -44,11 +44,11 @@
+     }
+ }
+ 
+-// DS3's degrees a count at a sensitivity of 0..10: 0.2 * (s * 0.15 + 0.5),
+-// as its pad object computes it.
++// Keep the DS3 sensitivity curve with a lower raw-count gain for this port.
++// Sensitivity 5 is 0.05 degrees/count; controller camera speed is unaffected.
+ inline float degrees_per_count(int sensitivity) {
+     const float s = static_cast<float>(sensitivity < 0 ? 0 : sensitivity > 10 ? 10 : sensitivity);
+-    return ((s * 0.1f) * 1.5f + 0.5f) * 0.2f;
++    return ((s * 0.1f) * 1.5f + 0.5f) * 0.04f;
+ }
+ 
+ // The window's relative motion while the mouse turns the camera, since the
+diff --git a/gpu/shim/input/pc_controls.cpp b/gpu/shim/input/pc_controls.cpp
+--- a/gpu/shim/input/pc_controls.cpp
++++ b/gpu/shim/input/pc_controls.cpp
+@@ -13,7 +13,7 @@
+  const char* pairs[][2]={{"roll","Space"},{"attack","Mouse1"},{"strong_attack","Left Shift + Mouse1"},{"strong_modifier","none"},
+  {"firearm","Left Ctrl, Mouse3"},{"transform","F"},{"blood_vial","C"},{"use_item","R"},{"interact","E"},
+  {"lock_on","Q, Mouse2"},{"l3","Z"},{"menu","Escape"},{"confirm","Return"},{"back","Backspace"},
+- {"dpad_up","T"},{"switch_item","Down, WheelDown"},{"previous_item","WheelUp"}};
++ {"dpad_up","T"},{"switch_item","WheelDown"},{"previous_item","WheelUp"},{"switch_right","Left Shift + WheelUp"},{"switch_left","Left Shift + WheelDown"}};
+  for(auto& pair:pairs)host_bindings_parse(pair[0],pair[1]);
+  Get().ds3_profile=true;Get().pc_controls=true;Get().mouse_menu=true;
+ }

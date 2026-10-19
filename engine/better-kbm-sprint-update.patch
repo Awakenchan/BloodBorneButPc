@@ -1,0 +1,100 @@
+diff --git a/gpu/shim/input/bindings.cpp b/gpu/shim/input/bindings.cpp
+--- a/gpu/shim/input/bindings.cpp
++++ b/gpu/shim/input/bindings.cpp
+@@ -6,6 +6,7 @@
+ #include <SDL3/SDL.h>
+ static bool native_reserved_key(int sc){return sc==SDL_SCANCODE_INSERT;}
+ #include "chords.h"
++#include "sprint_turn.h"
+ 
+ 
+ #include <atomic>
+@@ -303,6 +304,7 @@
+ // 80% it walks (1.65 m/s), at a full push it runs (3.7 m/s) - so the middle of
+ // the walk, with room either side.
+ constexpr float kWalkPush = 0.6f;
++SprintTurn::State sprint_turn;
+ 
+ }  // namespace
+ 
+@@ -400,20 +402,20 @@
+             default: break;
+         }
+     }
+-    // The movement keys: a full push each way, a diagonal the square's corner
+-    // (as Dark Souls III's keys give) - or, with Walk held, a gentle push the
+-    // game reads as a walk, a diagonal's two axes shortened so that its reach,
+-    // and so the walk, is the same. Opposite keys cancel (keys_held above).
++    // Keep full directional input during ordinary sprint turns, while a
++    // W/S or A/D reversal remains an immediate native skid request.
+     const int x = (held[kBindMoveR] ? 1 : 0) - (held[kBindMoveL] ? 1 : 0);
+     const int y = (held[kBindMoveB] ? 1 : 0) - (held[kBindMoveF] ? 1 : 0);
++    const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count();
++    auto axes = SprintTurn::Apply(sprint_turn, x, y, held[kBindRoll] && !held[kBindWalk], now);
+     if (x != 0 || y != 0) {
+-        int reach = kStickHigh - kStickRest;
+         if (held[kBindWalk]) {
+-            const float r = static_cast<float>(reach) * kWalkPush / (x != 0 && y != 0 ? std::sqrt(2.0f) : 1.0f);
+-            reach = static_cast<int>(std::lround(r));
+-        }
+-        if (x != 0) p.lx = static_cast<std::uint8_t>(kStickRest + x * reach);
+-        if (y != 0) p.ly = static_cast<std::uint8_t>(kStickRest + y * reach);
++            const double scale = kWalkPush/std::hypot(double(x),double(y));
++            axes = {int(std::lround(x*127*scale)),int(std::lround(y*127*scale))};
++        }
++        p.lx = static_cast<std::uint8_t>(kStickRest + axes.x);
++        p.ly = static_cast<std::uint8_t>(kStickRest + axes.y);
+     }
+     if (any) p.connected = true;
+ }
+diff --git a/gpu/shim/input/sprint_turn.h b/gpu/shim/input/sprint_turn.h
+new file mode 100644
+--- /dev/null
++++ b/gpu/shim/input/sprint_turn.h
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++
++namespace SprintTurn {
++struct State {
++    double angle = 0;
++    std::int64_t at = 0;
++    int target_x = 0, target_y = 0;
++    bool active = false;
++};
++struct Axes { int x, y; };
++
++// Round only compatible sprint turns, never an opposing-key reversal. Retain
++// the square stick boundary (one axis fully pushed) throughout the turn.
++inline Axes Apply(State& state, int x, int y, bool sprint, std::int64_t now_us) {
++    constexpr double pi = 3.14159265358979323846;
++    constexpr double rate = 900*pi/180;
++    constexpr int reach = 127;
++    const double target = std::atan2(double(y), double(x));
++    const auto elapsed = now_us-state.at;
++    const bool reversal = state.target_x*x < 0 || state.target_y*y < 0;
++    if (!sprint || (!x && !y)) {
++        state = {};
++        return {x*reach, y*reach};
++    }
++    if (!state.active || reversal || elapsed < 0 || elapsed > 250000) {
++        state.angle = target;
++    } else {
++        const double difference = std::remainder(target-state.angle, 2*pi);
++        const double step = std::min(rate*double(elapsed)/1e6, pi/6);
++        state.angle += std::clamp(difference, -step, step);
++        state.angle = std::remainder(state.angle, 2*pi);
++    }
++    state.active = true;
++    state.at = now_us;
++    state.target_x = x;
++    state.target_y = y;
++    const double cx = std::cos(state.angle), cy = std::sin(state.angle);
++    const double scale = reach/std::max(std::abs(cx), std::abs(cy));
++    return {int(std::lround(cx*scale)), int(std::lround(cy*scale))};
++}
++}

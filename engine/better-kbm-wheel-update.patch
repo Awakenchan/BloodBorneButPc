@@ -1,0 +1,146 @@
+diff --git a/gpu/shim/input/input.cpp b/gpu/shim/input/input.cpp
+--- a/gpu/shim/input/input.cpp
++++ b/gpu/shim/input/input.cpp
+@@ -5,6 +5,10 @@
+ #include "bindings.h"
+ #include "menu_keyboard_policy.h"
+ #include "chords.h"
++#include "wheel_buttons.h"
++#include <array>
++#include <chrono>
++#include <cmath>
+ #include "pc_controls.h"
+ #include "../engine/item_cycle.h"
+ #include "ini_bindings.h"
+@@ -31,6 +35,8 @@
+ int window_w=1920,window_h=1080;
+ uint32_t mouse_buttons=0,mouse_edges=0;
+ float wheel=0;
++std::array<bool,512> event_keys{};
++WheelButtons::Queue weapon_wheel;
+ std::atomic<bool> in_window{true}, keyboard_moving{false};
+ ElfImage image{};
+ uint64_t saved_serial=0,saved_pad_serial=0;
+@@ -108,7 +114,7 @@
+ void Event(const SDL_Event& e,bool blocked) {
+     if(!active)return;
+     if(e.type==SDL_EVENT_WINDOW_FOCUS_LOST) {host_bindings_reset_key_events();keyboard_moving=false;focused=false;wanted_relative=false;mouse_camera::g_counts=0;
+-        std::lock_guard lock(state_lock);mouse_buttons=mouse_edges=0;wheel=0;return;}
++        std::lock_guard lock(state_lock);mouse_buttons=mouse_edges=0;wheel=0;event_keys.fill(false);weapon_wheel.Reset();return;}
+     if(e.type==SDL_EVENT_WINDOW_FOCUS_GAINED)focused=true;
+     if(e.type==SDL_EVENT_WINDOW_MOUSE_LEAVE)in_window=false;
+     if(e.type==SDL_EVENT_WINDOW_MOUSE_ENTER)in_window=true;
+@@ -123,8 +129,11 @@
+         }
+         return;
+     }
+-    if(e.type==SDL_EVENT_KEY_DOWN || e.type==SDL_EVENT_KEY_UP)
++    if(e.type==SDL_EVENT_KEY_DOWN || e.type==SDL_EVENT_KEY_UP) {
+         host_bindings_key_event(e.key.scancode, e.type==SDL_EVENT_KEY_DOWN);
++        const int sc=e.key.scancode;
++        if(sc>=0 && sc<int(event_keys.size()))event_keys[sc]=e.type==SDL_EVENT_KEY_DOWN;
++    }
+     if(blocked)return;
+     if(e.type==SDL_EVENT_KEY_DOWN){device=InputDevice::KeyboardMouse;host_bind_capture_key(e.key.scancode);
+         if(e.key.scancode==SDL_SCANCODE_DELETE)host_bind_note_clear_key();}
+@@ -142,7 +151,23 @@
+         else mouse_buttons&=~bit;
+     }
+     if(e.type==SDL_EVENT_MOUSE_WHEEL){device=InputDevice::KeyboardMouse;
+-        if(!host_bind_capture_mouse(e.wheel.y>0?6:7)){std::lock_guard lock(state_lock);wheel+=e.wheel.y;}}
++        if(!host_bind_capture_mouse(e.wheel.y>0?6:7)){
++            std::lock_guard lock(state_lock);
++            const unsigned direction=e.wheel.y>0?32:e.wheel.y<0?64:0;
++            std::uint32_t weapons=0;
++            if(direction && !menu_pointer_in_menu()) {
++                for(const int action:{kBindSwitchRight,kBindSwitchLeft}) {
++                    const auto chord=Chords::Get(action);
++                    const bool match=chord.active()
++                        ? (chord.mouse&direction) && Chords::Matches(chord,event_keys.data(),int(event_keys.size()),mouse_buttons|direction)
++                        : host_binding_mouse(action)==(direction==32?6:7);
++                    if(match)weapons|=host_binding_info(action).button;
++                }
++            }
++            // Resolve modifiers now, before a later key-up can change their meaning.
++            if(weapons)weapon_wheel.Push(weapons,std::max(1,int(std::abs(e.wheel.y))));
++            else wheel+=e.wheel.y;
++        }}
+ }
+ void Pump(SDL_Window* w,bool editing) {
+     text_open=editing;if(!active)return;
+@@ -182,7 +207,7 @@
+     {std::lock_guard lock(state_lock);buttons=mouse_buttons;edges=mouse_edges;scroll=wheel;mouse_edges=0;wheel=0;}
+     bool any=buttons!=0;for(int i=0;keys&&i<nkeys;i++)any|=keys[i];
+     host_bind_capture_note_held(any);
+-    if(!focused || BbOverlay::CapturesInput() || host_text_entry_open() || host_bind_capture_blocking() || NativePages::ControllerCapturing()){p=PadState{};wanted_relative=false;}
++    if(!focused || BbOverlay::CapturesInput() || host_text_entry_open() || host_bind_capture_blocking() || NativePages::ControllerCapturing()){p=PadState{};wanted_relative=false;std::lock_guard lock(state_lock);weapon_wheel.Reset();}
+     else {
+         bool held[kBindCount]={};
+         if(keys)host_bindings_keys_held(keys,nkeys,held);
+@@ -213,6 +238,12 @@
+         moving=world_movement &&
+             (held[kBindMoveF]||held[kBindMoveB]||held[kBindMoveL]||held[kBindMoveR]);
+         host_bindings_apply(held,held[kBindStrongMod],p);
++        {
++            std::lock_guard lock(state_lock);
++            if(menu)weapon_wheel.Reset();
++            else p.buttons|=weapon_wheel.Poll(std::chrono::duration_cast<std::chrono::milliseconds>(
++                std::chrono::steady_clock::now().time_since_epoch()).count());
++        }
+         if(menu) {
+             if(s.mouse_menu){
+                 if(edges&1)menu_pointer_click();
+diff --git a/gpu/shim/input/mouse_camera_step.h b/gpu/shim/input/mouse_camera_step.h
+--- a/gpu/shim/input/mouse_camera_step.h
++++ b/gpu/shim/input/mouse_camera_step.h
+@@ -45,10 +45,10 @@
+ }
+ 
+ // Keep the DS3 sensitivity curve with a lower raw-count gain for this port.
+-// Sensitivity 5 is 0.05 degrees/count; controller camera speed is unaffected.
++// Sensitivity 5 is 0.15 degrees/count; controller camera speed is unaffected.
+ inline float degrees_per_count(int sensitivity) {
+     const float s = static_cast<float>(sensitivity < 0 ? 0 : sensitivity > 10 ? 10 : sensitivity);
+-    return ((s * 0.1f) * 1.5f + 0.5f) * 0.04f;
++    return ((s * 0.1f) * 1.5f + 0.5f) * 0.12f;
+ }
+ 
+ // The window's relative motion while the mouse turns the camera, since the
+diff --git a/gpu/shim/input/wheel_buttons.h b/gpu/shim/input/wheel_buttons.h
+new file mode 100644
+--- /dev/null
++++ b/gpu/shim/input/wheel_buttons.h
+@@ -0,0 +1,33 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <algorithm>
++#include <cstdint>
++#include <deque>
++
++namespace WheelButtons {
++// A wheel event must survive intervening pad reads and have a release between notches.
++// The owner serializes this queue with the input-state lock.
++struct Queue {
++    std::deque<std::uint32_t> pending;
++    std::uint32_t held = 0;
++    std::int64_t until = 0, ready = 0;
++    void Reset() { pending.clear(); held = 0; until = ready = 0; }
++    void Push(std::uint32_t buttons, int notches) {
++        if (!buttons) return;
++        const int count = std::clamp(notches, 1, 32);
++        for (int i = 0; i < count && pending.size() < 32; ++i) pending.push_back(buttons);
++    }
++    std::uint32_t Poll(std::int64_t now_ms) {
++        if (held) {
++            if (now_ms < until) return held;
++            held = 0;
++            ready = now_ms + 50;
++            return 0;
++        }
++        if (pending.empty() || now_ms < ready) return 0;
++        held = pending.front(); pending.pop_front();
++        until = now_ms + 80;
++        return held;
++    }
++};
++}

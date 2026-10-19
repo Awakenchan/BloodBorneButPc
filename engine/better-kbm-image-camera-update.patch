@@ -1,0 +1,370 @@
+diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
+--- a/gpu/shim/engine/option_menu.cpp
++++ b/gpu/shim/engine/option_menu.cpp
+@@ -523,7 +523,6 @@
+ Slider color_sliders[]={{nullptr,125000,0.5f,0.1f,5},{nullptr,125001,0.95f,0.01f,5},{nullptr,125002,0,0.2f,5},
+                         {nullptr,125003,-20.0f,4.0f,5}};
+ struct StartupToggle { std::atomic<bool>* setting=nullptr; std::uint32_t id; std::uint8_t value=0,last=0; };
+-StartupToggle color_toggle[]={{nullptr,125004}};  // Picture tuning, live
+ bool color_seeded=false;
+ StartupToggle graphics_toggles[]={{nullptr,117001},{nullptr,117000}};
+ StartupToggle effect_toggles[]={{nullptr,117005},{nullptr,117002},{nullptr,117003},{nullptr,120001}};
+@@ -594,10 +593,9 @@
+     host_log("pc-options: PCColour opened, dialog=%p params=%p",dialog,params);
+     alignas(16) std::uint8_t scratch[0x100]{};
+     hle_call_guest<std::int64_t>(guest_fn(kScratchInit),&scratch);
+-    for (auto& t:color_toggle) { t.value=t.last=t.setting->load()?1:0;add_toggle_row(dialog,&t.value,t.id,0); }
+     SeedSliders(color_sliders);
+     for (auto& s:color_sliders) add_slider_row(dialog,&s.value,s.id,s.def);
+-    color_seeded=true;log_rows("PCColour",dialog,5,5);
++    color_seeded=true;log_rows("PCColour",dialog,4,4);
+ }
+ GUEST_ABI std::int64_t OpenGraphics(void* root,void* params) {
+     return open_named(root,params,"PCGraphics",reinterpret_cast<void*>(&GraphicsHandler),4);
+@@ -626,7 +624,7 @@
+  std::uint8_t value=0;std::uint32_t pad_was=0;int anchor_row=0;
+  std::uint64_t child=0,root_data=0,hidden_rows[16]{};int hidden_count=0;bool visibility_logged=false;
+ };
+-VanillaScreen vanilla_controls,vanilla_environment,vanilla_graphics;
++VanillaScreen vanilla_controls,vanilla_graphics;
+ void graphics_screen(void* dialog){
+  vanilla_graphics=VanillaScreen{};vanilla_graphics.dialog=static_cast<std::uint8_t*>(dialog);
+  vanilla_graphics.anchor_row=6;vanilla_graphics.widget=dialog_widget(dialog,6);
+@@ -718,10 +716,10 @@
+  if(!active)screen.child=screen.root_data=0;
+ }
+ std::int64_t GUEST_ABI VisibilityHook(std::uint64_t,const std::uint64_t* saved) noexcept {
+- if(!saved[4]||(!vanilla_controls.child&&!vanilla_environment.child&&!vanilla_graphics.child))return 0;
++ if(!saved[4]||(!vanilla_controls.child&&!vanilla_graphics.child))return 0;
+  std::uint64_t data=0;
+  if(!BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(saved[5]+0x50),&data,8))return 0;
+- for(const auto* screen:{&vanilla_controls,&vanilla_environment,&vanilla_graphics}){
++ for(const auto* screen:{&vanilla_controls,&vanilla_graphics}){
+   bool target=data&&data==screen->root_data;
+   for(int i=0;i<screen->hidden_count&&!target;++i)target=data&&data==screen->hidden_rows[i];
+   if(target&&nested_active(*screen)){const_cast<std::uint64_t*>(saved)[4]=0;break;}
+@@ -746,7 +744,6 @@
+  }
+ }
+ GUEST_ABI std::int64_t KeysButton(std::uint64_t,std::uint64_t){open_nested(vanilla_controls,reinterpret_cast<void*>(&OpenKeys));return 0;}
+-GUEST_ABI std::int64_t CameraButton(std::uint64_t,std::uint64_t){open_nested(vanilla_environment,reinterpret_cast<void*>(&OpenCamera));return 0;}
+ GUEST_ABI std::int64_t EffectsButton(std::uint64_t,std::uint64_t){open_nested(vanilla_graphics,reinterpret_cast<void*>(&OpenEffects));return 0;}
+ GUEST_ABI std::int64_t ImageButton(std::uint64_t,std::uint64_t){open_nested(vanilla_graphics,reinterpret_cast<void*>(&OpenColor));return 0;}
+ void add_button_row(void* dialog,std::uint32_t id,void* action){
+@@ -763,17 +760,9 @@
+  vanilla_controls.widget=dialog_widget(dialog,0);vanilla_controls.pad_was=input_delivered_buttons();
+  sync_controls();log_rows("ControllSetting",dialog,dialog_row_count(dialog),8);
+ }
+-GUEST_ABI void VanillaEnvironmentHandler(void* dialog,void* params){
+- hle_call_guest<std::int64_t>(reinterpret_cast<void*>(g_slide+0x1b21840),dialog,params);
+- vanilla_environment=VanillaScreen{};vanilla_environment.dialog=static_cast<std::uint8_t*>(dialog);
+- add_button_row(dialog,126004,reinterpret_cast<void*>(&CameraButton));
+- vanilla_environment.anchor_row=dialog_row_count(dialog)-1;vanilla_environment.widget=dialog_widget(dialog,vanilla_environment.anchor_row);vanilla_environment.pad_was=input_delivered_buttons();
+- log_rows("EnvironmentSetting",dialog,dialog_row_count(dialog),6);
+-}
+ std::int64_t GUEST_ABI OpenSectionHook(std::uint64_t,const std::uint64_t* saved) noexcept {
+  auto* args=const_cast<std::uint64_t*>(saved);
+  if(saved[2]==g_slide+0x1b211a0)args[2]=reinterpret_cast<std::uint64_t>(&VanillaControlsHandler);
+- else if(saved[2]==g_slide+0x1b21840)args[2]=reinterpret_cast<std::uint64_t>(&VanillaEnvironmentHandler);
+  return 0;
+ }
+ std::int64_t GUEST_ABI ConfirmedKeysResetHook(std::uint64_t,const std::uint64_t* saved) noexcept {
+@@ -805,20 +794,26 @@
+  }
+ }
+ std::int64_t GUEST_ABI SystemRowHook(std::uint64_t,const std::uint64_t* saved) noexcept {
+-    if(!graphics_page||!g_installed)return 0;
++    if(!g_installed)return 0;
+     std::uint64_t text=0;
+     if(!BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(saved[4]),&text,8)||
+        text!=reinterpret_cast<std::uint64_t>(message_text(110003)))return 0;
+     // Add using the guest's own copy constructor: command rows own wstrings and
+     // inline function objects, so bytewise vector rotation would be unsafe.
+-    Captions c(110007);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenGraphicsRow));
+     std::int64_t flag=0;
+-    hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),reinterpret_cast<void*>(saved[5]),c.buf,f.buf,&flag);
++    if(camera_page){
++        Captions c(110011);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenCameraRow));
++        hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),reinterpret_cast<void*>(saved[5]),c.buf,f.buf,&flag);
++    }
++    if(graphics_page){
++        Captions c(110007);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenGraphicsRow));
++        hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),reinterpret_cast<void*>(saved[5]),c.buf,f.buf,&flag);
++    }
+     return 0;
+ }
+ GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
+     hle_call_guest<std::int64_t>(guest_fn(kSystemFinalize),out,builder,arg3);
+-    host_log("pc-options: System list includes Graphics below Brightness; Effects / Image are nested");
++    host_log("pc-options: System list: Brightness, Camera options, Graphics; Effects / Image are nested");
+     return out;
+ }
+ } // namespace
+@@ -900,7 +895,6 @@
+     effect_sliders[0].setting=&settings.graphics_bloom;fog_slider[0].setting=&settings.graphics_fog;
+     color_sliders[0].setting=&settings.graphics_brightness;color_sliders[1].setting=&settings.graphics_contrast;
+     color_sliders[2].setting=&settings.graphics_saturation;color_sliders[3].setting=&settings.graphics_hue;
+-    color_toggle[0].setting=&settings.graphics_controls;
+     camera[0].setting=&settings.camera_fov_scale;
+     camera[1].setting=&settings.camera_distance_scale;
+     camera[2].setting=&settings.camera_height_scale;
+@@ -912,7 +906,7 @@
+     const std::int32_t to_pad=pad-(call+5); std::memcpy(image+call+1,&to_pad,4);
+     Commit(menu_hooks);cleanup.committed=true;
+     g_installed=true;
+-    host_log("pc-options: native Controls and Environment installed (%u local assets)%s%s",installed,graphics_page?", Graphics / Effects / Colour":"",camera_page?", Camera":"");
++    host_log("pc-options: native Controls and System camera entry installed (%u local assets)%s%s",installed,graphics_page?", Graphics / Effects / Colour":"",camera_page?", Camera":"");
+     return true;
+ }
+ bool ClickDecides(std::uint8_t* list, int index) {
+@@ -927,7 +921,7 @@
+         return;
+     }
+     auto* c = static_cast<std::uint8_t*>(comp);
+-    update_parent(vanilla_controls);update_parent(vanilla_environment);update_parent(vanilla_graphics);
++    update_parent(vanilla_controls);update_parent(vanilla_graphics);
+     vanilla_update(c,focused);
+     defaults_view_update(c, focused);
+     if (!g_keys.dialog) {
+@@ -955,7 +949,7 @@
+ void Tick() {
+     if (!g_installed) return;
+     bool changed=g_keys_save.exchange(false);
+-    update_parent(vanilla_controls);update_parent(vanilla_environment);update_parent(vanilla_graphics);
++    update_parent(vanilla_controls);update_parent(vanilla_graphics);
+     for (auto& s:camera) {
+         if (!seeded) break;
+         if (s.value==s.last) continue;
+@@ -976,15 +970,13 @@
+         for (auto& t:rows) if (t.value!=t.last) { t.last=t.value;*t.setting=t.value!=0;changed=moved=true; }
+         return moved;
+     };
+-    // Picture tuning gates the picture settings (engine/graphics.cpp), live: moving one of them
+-    // turns it on, and its own switch is on PC Colour.
+-    push_toggles(color_toggle,color_seeded);
++    // Editing a live picture value enables the existing renderer setting.
++    // The redundant master switch is not exposed in the Image submenu.
+     bool picture=push_sliders(graphics_sliders,graphics_seeded);picture|=push_sliders(effect_sliders,effects_seeded);
+     picture|=push_sliders(fog_slider,graphics_seeded);picture|=push_sliders(color_sliders,color_seeded);
+     picture|=push_toggles(graphics_toggles,graphics_seeded);picture|=push_toggles(effect_toggles,effects_seeded);
+     if (picture && !BbSettings::Get().graphics_controls) {
+         BbSettings::Get().graphics_controls=true;
+-        for (auto& t:color_toggle) t.value=t.last=1;
+     }
+     if (graphics_seeded && output_resolution!=last_resolution) {
+         last_resolution=std::clamp(output_resolution,0,BbSettings::OutputCount-1);
+diff --git a/gpu/shim/input/menu_pointer.cpp b/gpu/shim/input/menu_pointer.cpp
+--- a/gpu/shim/input/menu_pointer.cpp
++++ b/gpu/shim/input/menu_pointer.cpp
+@@ -743,7 +743,12 @@
+     }
+ }
+ 
++std::int64_t g_startup_list_ms=0;
++std::atomic<bool> g_startup_list_seen{false};
+ GUEST_ABI void pc_list_update(std::uint8_t* comp, std::uint8_t* input) {
++    if(g_startup_list_ms && !g_startup_list_seen.load(std::memory_order_relaxed) && input && *input && field<std::int32_t>(comp,kCount)>0 && front_end() &&
++       !g_startup_list_seen.exchange(true,std::memory_order_relaxed))
++        host_log("Startup: first focused front-end list %.3f s after input hooks",(now_ms()-g_startup_list_ms)/1000.0);
+     // Before the pad, as DS3 does it: a direction the pad reads this frame
+     // then moves on from wherever the pointer put the cursor.
+     pointer_step(comp, input);
+@@ -772,6 +777,7 @@
+ 
+ void menu_pointer_install(ElfImage* image) {
+     g_slide = image->mem.slide;
++    g_startup_list_ms=now_ms();g_startup_list_seen=false;
+     g_log = [] {
+         const char* e = std::getenv("BBHOST_POINTER_LOG");
+         return e && e[0] == '1';
+diff --git a/scripts/engine_assets.py b/scripts/engine_assets.py
+--- a/scripts/engine_assets.py
++++ b/scripts/engine_assets.py
+@@ -11,6 +11,7 @@
+ from pathlib import Path
+ import struct
+ import zlib
++import time
+ 
+ LAYOUT = Path('dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx')
+ INPUT_SHA = '8e1de0ee223cd5137a93383cfc7bb1d27964bc480c63e35013674717b403ef8f'
+@@ -145,7 +146,8 @@
+ def prepare_mirror(game, elf_path, cache):
+     verify_executable(elf_path)
+     raw = dcx_unpack((Path(game) / LAYOUT).read_bytes())
+-    rewritten = mirror_layout(raw)
++    if sha(raw) != INPUT_SHA:
++        raise ValueError('Dream mirror requires the original 1.09 Dream layout')
+     destination = Path(cache) / 'dream-mirror' / LAYOUT
+     # Verify cached output as well; no stale marker bypasses either input check.
+     try:
+@@ -153,6 +155,7 @@
+             return destination.resolve()
+     except (OSError, ValueError, zlib.error):
+         pass
++    rewritten = mirror_layout(raw)
+     destination.parent.mkdir(parents=True, exist_ok=True)
+     temporary = destination.with_suffix(destination.suffix + '.tmp')
+     temporary.write_bytes(dcx_pack(rewritten))
+@@ -166,6 +169,8 @@
+     Validate every language, source and cached output together before publishing the
+     directory to the runtime. No version string or stale stamp enables native hooks.
+     """
++    started=time.monotonic()
++    reused=rebuilt=0
+     verify_executable(elf_path)
+     game, tool = Path(game), Path(tool)
+     root = Path(cache) / 'pc-menus'
+@@ -206,6 +211,7 @@
+             except OSError:
+                 pass
+         if current is None:
++            rebuilt+=1
+             destination.parent.mkdir(parents=True, exist_ok=True)
+             temporary = destination.with_name(destination.name + f'.{os.getpid()}.tmp')
+             try:
+@@ -231,9 +237,12 @@
+                 os.replace(temporary, destination)
+             finally:
+                 temporary.unlink(missing_ok=True)
++        else:
++            reused+=1
+         rows[relative.as_posix()] = {'input': digest, 'output': current}
+     root.mkdir(parents=True, exist_ok=True)
+     temporary = manifest_path.with_suffix(f'.{os.getpid()}.tmp')
+     temporary.write_text(json.dumps({'generator': generator, 'files': rows}, indent=2), encoding='utf-8')
+     os.replace(temporary, manifest_path)
++    print(f'Startup: menu resources: {reused} reused, {rebuilt} regenerated ({time.monotonic()-started:.3f} s)',flush=True)
+     return root.resolve()
+diff --git a/scripts/menu_layout.py b/scripts/menu_layout.py
+--- a/scripts/menu_layout.py
++++ b/scripts/menu_layout.py
+@@ -128,6 +128,6 @@
+ 
+ def expand_option_panels(data):
+     for name, growth in (('ControllSetting', 2400), ('PCGraphics', 1600),
+-                         ('PCKeys', 2400), ('PCEffects', -1100), ('PCColour', -1100)):
++                         ('PCKeys', 2400), ('PCEffects', -1100), ('PCColour', -2200), ('PCCamera', -3300)):
+         data = expand_panel(data, name, growth)
+     return data
+diff --git a/scripts/run_windows.py b/scripts/run_windows.py
+--- a/scripts/run_windows.py
++++ b/scripts/run_windows.py
+@@ -222,6 +222,7 @@
+ 
+ 
+ def main():
++    launch_started=time.monotonic()
+     arguments = sys.argv[1:]
+     game = os.environ.get('BB_GAME_DIR')
+     if arguments[:1] == ['--game-dir'] and len(arguments) > 1:
+@@ -290,9 +291,13 @@
+         # online fixes - all check the executable first, so it is always verified (~0.1 s).
+         try:
+             from engine_assets import prepare_mirror, verify_executable
++            phase=time.monotonic()
+             os.environ['BB_ENGINE_IMAGE_SHA256'] = verify_executable(out / 'eboot.elf')
++            print(f'Startup: executable verification {time.monotonic()-phase:.3f} s',flush=True)
+             if settings_value(config, 'change_appearance') == '1':
++                phase=time.monotonic()
+                 asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
++                print(f'Startup: Dream mirror preparation {time.monotonic()-phase:.3f} s',flush=True)
+                 os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
+                 print(f'Engine: Dream mirror prepared locally: {asset}', flush=True)
+             from engine_assets import prepare_menu_assets
+@@ -347,11 +352,13 @@
+             dmem = os.environ.get('BB_DMEM_MB', '5056')
+             print(f'Output {scaled_output}: scene {scaled_render}, direct memory {dmem} MiB '
+                   '(live_resolution=1: live changes)')
++        phase=time.monotonic()
+         run([PYTHON, SCRIPTS / 'patches.py', '--out', out, '--fps', fps, '--extra', os.environ.get('BB_PATCHES', ''),
+              '--settings', config, '--game-dir', merged, '--render-res', os.environ.get('BB_RENDER_RES', ''),
+              '--output-res', os.environ.get('BB_OUTPUT_RES', ''),
+              '--patches-dir', os.environ.get('BB_PATCHES_DIR', data / 'patches'),
+              '--patches-config', os.environ.get('BB_PATCHES_CONFIG', data / 'patches.json')])
++        print(f'Startup: patch preparation {time.monotonic()-phase:.3f} s',flush=True)
+         # bbport: a patch that enlarges the game's heaps (a resolution patch above 1080p chosen in
+         # the patches list, with a 1080p output here) overflows the 5056 MiB pool at start.
+         try:
+@@ -377,6 +384,7 @@
+         # MSYS2's DLLs (libc++, SDL3, FFmpeg, ...). System32 is searched before PATH, so the
+         # Vulkan loader stays the one installed with the GPU driver.
+         os.environ['PATH'] = os.pathsep.join([str(msys_root() / 'clang64/bin'), os.environ.get('PATH', '')])
++        print(f'Startup: Python preparation total {time.monotonic()-launch_started:.3f} s',flush=True)
+         print('Starting:', ' '.join(shlex.quote(str(c)) for c in command), flush=True)
+         try:
+             status = subprocess.call(
+diff --git a/src/probe.c b/src/probe.c
+--- a/src/probe.c
++++ b/src/probe.c
+@@ -844,6 +844,7 @@
+ 
+ int main(int argc, char **argv) {
+     setvbuf(stdout, NULL, _IONBF, 0);
++    const uint64_t startup_started=host_monotonic_ns();
+ #ifndef _WIN32
+     /* Keep host heap objects handed to the guest (thread handles, TLS) in the
+        non-PIE brk heap, i.e. below 1 TiB: the guest packs pointers into 40 bits. */
+@@ -1021,7 +1022,10 @@
+         if (procparam) memcpy(&sdk,image+procparam+16,8); /* procparam: size, magic, count, sdk_version */
+         BbGpuConfig gpu={title,serial,user_dir ? user_dir : "user",(uint32_t)sdk,attributes,1920,1080};
+         gpu_enabled=1; /* page tracking starts while the rasterizer registers guest memory */
++        printf("Startup: loader/image preparation %.3f s\n",(host_monotonic_ns()-startup_started)/1e9);
++        const uint64_t gpu_started=host_monotonic_ns();
+         if (bbgpu_init(&gpu)) fail("GPU initialization failed");
++        printf("Startup: GPU/window initialization %.3f s\n",(host_monotonic_ns()-gpu_started)/1e9);
+         printf("GPU: window and Vulkan presenter ready; SDK 0x%08x, %u HLE symbols\n",(unsigned)sdk,bbgpu_symbol_count());
+     }
+     unsigned char *traps = allocate(round_page((import_count + 1) * 32));
+@@ -1073,7 +1077,11 @@
+ #ifdef _WIN32
+     printf("Guest thread pointer reads: %" PRIu64 " use TEB TLS slot %u\n", patch_tls_reads(segments, ns), runtime_win_tls_slot());
+ #endif
+-    if (!cpu_only) bbgpu_patch_image(image, size);
++    if (!cpu_only) {
++        const uint64_t hooks_started=host_monotonic_ns();
++        bbgpu_patch_image(image, size);
++        printf("Startup: native image/input/menu hooks %.3f s\n",(host_monotonic_ns()-hooks_started)/1e9);
++    }
+     protect(traps, round_page((import_count + 1) * 32), 5);
+     protect(image, round_page(size), 0);
+     int executable_entry = 0;
+@@ -1084,6 +1092,7 @@
+     }
+     if (!executable_entry) fail("entry is not executable");
+     printf("Mapped %" PRIu64 " bytes, %" PRIu64 " segments; applied %" PRIu64 " relocations\n", size, ns, nr);
++    const uint64_t modules_started=host_monotonic_ns();
+     if (native_libc) {
+         for (uint64_t m=0;m<module_count;++m) {
+             int init_executable=0;
+@@ -1110,6 +1119,7 @@
+     SetUnhandledExceptionFilter(unhandled_filter);
+ #endif
+     if (!cpu_only) bbgpu_start_online();
++    printf("Startup: guest module startup %.3f s; total native startup %.3f s\n",(host_monotonic_ns()-modules_started)/1e9,(host_monotonic_ns()-startup_started)/1e9);
+     printf("Entering original x86-64 code at guest offset 0x%" PRIx64 "\n", entry);
+     entered_game=1;
+     struct { uint64_t argc; const char *argv[2]; } params = {1, {"/app0/eboot.bin", NULL}};
+diff --git a/tools/engine/menu_assets.cpp b/tools/engine/menu_assets.cpp
+--- a/tools/engine/menu_assets.cpp
++++ b/tools/engine/menu_assets.cpp
+@@ -31,7 +31,7 @@
+ 
+ // Bumped whenever a generator or the recipe changes, so installs remake their
+ // assets instead of keeping the last generation.
+-constexpr int kGeneratorVersion = 11;  // Key Bindings spacing matches the expanded Controls layout.
++constexpr int kGeneratorVersion = 12;  // Key Bindings spacing matches the expanded Controls layout.
+ 
+ const char kMessagesTsv[] =
+ #include "pc_option_messages.inc"
+@@ -889,9 +889,8 @@
+     section("PCCamera", 121020, 388, 3, 0, {"Item_3_0", "Item_4_0", "Item_5_0"});
+     section("PCDeck", 123020, 389, 2, 0, {"Item_2_0", "Item_3_0", "Item_4_0", "Item_5_0"});
+     
+-    section("PCColour", 125020, 391, 5, 0, {"Item_5_0"});
++    section("PCColour", 125020, 391, 4, 0, {"Item_4_0", "Item_5_0"});
+     m=extend_vanilla(m,"ControllSetting",2,true);
+-    m=extend_vanilla(m,"EnvironmentSetting",1,false);
+     return add_scrollbar(m, "Top", 1290, 354.5);
+ }
+ 

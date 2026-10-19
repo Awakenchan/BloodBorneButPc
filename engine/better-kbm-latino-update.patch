@@ -1,0 +1,12 @@
+diff --git a/gpu/shim/engine/game_language.h b/gpu/shim/engine/game_language.h
+--- a/gpu/shim/engine/game_language.h
++++ b/gpu/shim/engine/game_language.h
+@@ -17,7 +17,7 @@
+     if(!text||!*text)return -1;
+     char* end=nullptr;const long value=std::strtol(text,&end,10);
+     if(*end)return -1;
+-    switch(value){case 0:case 1:case 2:case 3:case 4:case 5:case 17:return int(value);default:return -1;}
++    switch(value){case 0:case 1:case 2:case 3:case 4:case 5:case 17:case 20:return int(value);default:return -1;}
+ }
+ template<class Writer>
+ bool Apply(std::uint8_t* image,std::size_t size,int language,Writer write) {

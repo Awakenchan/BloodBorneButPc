@@ -1,0 +1,2677 @@
+diff --git a/gpu/shim/engine/language_text.h b/gpu/shim/engine/language_text.h
+--- a/gpu/shim/engine/language_text.h
++++ b/gpu/shim/engine/language_text.h
+@@ -85,6 +85,8 @@
+ {"Open or close the developer debug menu when enabled.", {"Abre o cierra el menú de depuración si está habilitado.","Открывает или закрывает меню отладки, если оно включено.","有効な場合、デバッグメニューを開閉する。","Ouvre ou ferme le menu de débogage s’il est activé.","Öffnet oder schließt das aktivierte Debugmenü.","Apre o chiude il menu di debug, se abilitato.","Abre ou fecha o menu de depuração, quando habilitado."}},
+ {"Keyboard and mouse", {"Teclado y ratón","Клавиатура и мышь","キーボードとマウス","Clavier et souris","Tastatur und Maus","Tastiera e mouse","Teclado e mouse"}},
+ {"Controller", {"Mando","Геймпад","コントローラー","Manette","Controller","Controller","Controle"}},
++{"Input", {"Entrada","Управление","入力","Entrée","Eingabe","Input","Entrada"}},
++{"KB & Mouse", {"Tecl. y ratón","Клав. и мышь","キーボード・マウス","Clav./souris","Tast./Maus","Tast./mouse","Tecl./mouse"}},
+ {"Play with", {"Jugar con","Устройство управления","操作デバイス","Jouer avec","Spielen mit","Gioca con","Jogar com"}},
+ {"Use Controller or Keyboard and mouse", {"Usar Mando o Teclado y ratón","Использовать геймпад или клавиатуру и мышь","コントローラーまたはキーボードとマウスを使用","Utiliser une manette ou le clavier et la souris","Controller oder Tastatur und Maus verwenden","Usa il controller o tastiera e mouse","Usar controle ou teclado e mouse"}},
+ {"Category", {"Categoría","Категория","カテゴリー","Catégorie","Kategorie","Categoria","Categoria"}},
+diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
+--- a/gpu/shim/engine/option_menu.cpp
++++ b/gpu/shim/engine/option_menu.cpp
+@@ -413,7 +413,7 @@
+         g_keys.pad_was = pad;
+         const std::uint32_t decide = menu_confirm_button();
+         if (row == 0 && (edge & (decide | 0x20u | 0x80u))) {
+-            // Right, or Circle / a click, is the next page; Left the previous.
++            // Pointer arrow hits use exactly the same direction bits as the pad.
+             keys_fill(g_keys.page + ((edge & 0x80u) ? -1 : 1));
+             rows_changed = values_changed = true;
+         } else if (keys_row_bound(row) && BbSettings::Get().keyboard_mouse && host_bind_take_clear_key()) {
+@@ -561,6 +561,10 @@
+     hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);
+     return out;
+ }
++void graphics_screen(void* dialog);
++GUEST_ABI std::int64_t EffectsButton(std::uint64_t,std::uint64_t);
++GUEST_ABI std::int64_t ImageButton(std::uint64_t,std::uint64_t);
++void add_button_row(void*,std::uint32_t,void*);
+ GUEST_ABI void GraphicsHandler(void* dialog,void* params) {
+     host_log("pc-options: PCGraphics opened, dialog=%p params=%p",dialog,params);
+     alignas(16) std::uint8_t scratch[0x100]{};
+@@ -572,7 +576,10 @@
+     add_list_row(dialog,&output_resolution,117004,outputs,BbSettings::OutputCount,BbSettings::OutputDefault);
+     SeedSliders(fog_slider);
+     for (auto& s:fog_slider) add_slider_row(dialog,&s.value,s.id,s.def);
+-    graphics_seeded=true;log_rows("PCGraphics",dialog,6,6);
++    add_button_row(dialog,110010,reinterpret_cast<void*>(&EffectsButton));
++    add_button_row(dialog,110014,reinterpret_cast<void*>(&ImageButton));
++    graphics_screen(dialog);
++    graphics_seeded=true;log_rows("PCGraphics",dialog,8,8);
+ }
+ GUEST_ABI void EffectsHandler(void* dialog,void* params) {
+     host_log("pc-options: PCEffects opened, dialog=%p params=%p",dialog,params);
+@@ -619,11 +626,15 @@
+  std::uint8_t value=0;std::uint32_t pad_was=0;int anchor_row=0;
+  std::uint64_t child=0,root_data=0,hidden_rows[16]{};int hidden_count=0;bool visibility_logged=false;
+ };
+-VanillaScreen vanilla_controls,vanilla_environment;
++VanillaScreen vanilla_controls,vanilla_environment,vanilla_graphics;
++void graphics_screen(void* dialog){
++ vanilla_graphics=VanillaScreen{};vanilla_graphics.dialog=static_cast<std::uint8_t*>(dialog);
++ vanilla_graphics.anchor_row=6;vanilla_graphics.widget=dialog_widget(dialog,6);
++}
+ char16_t device_label[48],device_help[160],device_text[64];
+ 
+ void detect_language(){const auto* title=message_text(119020);g_keys_language=PcLanguage::Detect(title);}
+-void device_caption(){to_utf16(device_label,"Play with");to_utf16(device_help,"Use Controller or Keyboard and mouse");to_utf16(device_text,BbSettings::Get().keyboard_mouse?"Keyboard and mouse":"Controller");}
++void device_caption(){to_utf16(device_label,"Input");to_utf16(device_help,"Use Controller or Keyboard and mouse");to_utf16(device_text,BbSettings::Get().keyboard_mouse?"KB & Mouse":"Controller");}
+ bool screen_alive(const VanillaScreen& v){
+  if(!v.dialog||!v.widget)return false;
+  std::uint64_t vt=0,ptr=0;
+@@ -707,10 +718,10 @@
+  if(!active)screen.child=screen.root_data=0;
+ }
+ std::int64_t GUEST_ABI VisibilityHook(std::uint64_t,const std::uint64_t* saved) noexcept {
+- if(!saved[4]||(!vanilla_controls.child&&!vanilla_environment.child))return 0;
++ if(!saved[4]||(!vanilla_controls.child&&!vanilla_environment.child&&!vanilla_graphics.child))return 0;
+  std::uint64_t data=0;
+  if(!BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(saved[5]+0x50),&data,8))return 0;
+- for(const auto* screen:{&vanilla_controls,&vanilla_environment}){
++ for(const auto* screen:{&vanilla_controls,&vanilla_environment,&vanilla_graphics}){
+   bool target=data&&data==screen->root_data;
+   for(int i=0;i<screen->hidden_count&&!target;++i)target=data&&data==screen->hidden_rows[i];
+   if(target&&nested_active(*screen)){const_cast<std::uint64_t*>(saved)[4]=0;break;}
+@@ -736,6 +747,8 @@
+ }
+ GUEST_ABI std::int64_t KeysButton(std::uint64_t,std::uint64_t){open_nested(vanilla_controls,reinterpret_cast<void*>(&OpenKeys));return 0;}
+ GUEST_ABI std::int64_t CameraButton(std::uint64_t,std::uint64_t){open_nested(vanilla_environment,reinterpret_cast<void*>(&OpenCamera));return 0;}
++GUEST_ABI std::int64_t EffectsButton(std::uint64_t,std::uint64_t){open_nested(vanilla_graphics,reinterpret_cast<void*>(&OpenEffects));return 0;}
++GUEST_ABI std::int64_t ImageButton(std::uint64_t,std::uint64_t){open_nested(vanilla_graphics,reinterpret_cast<void*>(&OpenColor));return 0;}
+ void add_button_row(void* dialog,std::uint32_t id,void* action){
+  // Exactly the vanilla Defaults action-row builder; no choice list/value.
+  Captions captions(id);GuestFunction invoke(kOpenerFunctorVTable,action);alignas(16) std::uint8_t empty[0x28]{};
+@@ -791,18 +804,21 @@
+   }
+  }
+ }
++std::int64_t GUEST_ABI SystemRowHook(std::uint64_t,const std::uint64_t* saved) noexcept {
++    if(!graphics_page||!g_installed)return 0;
++    std::uint64_t text=0;
++    if(!BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(saved[4]),&text,8)||
++       text!=reinterpret_cast<std::uint64_t>(message_text(110003)))return 0;
++    // Add using the guest's own copy constructor: command rows own wstrings and
++    // inline function objects, so bytewise vector rotation would be unsafe.
++    Captions c(110007);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenGraphicsRow));
++    std::int64_t flag=0;
++    hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),reinterpret_cast<void*>(saved[5]),c.buf,f.buf,&flag);
++    return 0;
++}
+ GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
+-    std::int64_t flag=0;
+-    if (graphics_page) {
+-        { Captions c(110007);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenGraphicsRow));
+-          hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
+-        { Captions c(110010);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenEffectsRow));
+-          hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
+-        { Captions c(110014);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenColorRow));
+-          hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
+-    }
+     hle_call_guest<std::int64_t>(guest_fn(kSystemFinalize),out,builder,arg3);
+-    host_log("pc-options: System list includes native Controls / Environment%s%s",graphics_page?", PC Graphics / PC Effects / PC Colour":"",camera_page?", PC Camera":"");
++    host_log("pc-options: System list includes Graphics below Brightness; Effects / Image are nested");
+     return out;
+ }
+ } // namespace
+@@ -814,8 +830,8 @@
+     if (!assets || !*assets || !game || !*game) return false;
+     // Validate all four patch regions together while the loader owns the RW image.
+     constexpr std::size_t table=0x53398b0+6*8,imm=0x1b20e21,call=0x1bb4978,pad=0x1bb4c60;
+-    Hook menu_hooks[4]{};
+-    struct HookCleanup{Hook* hooks;bool committed=false;~HookCleanup(){if(!committed)for(int i=0;i<4;++i)Discard(hooks[i]);}} cleanup{menu_hooks};
++    Hook menu_hooks[5]{};
++    struct HookCleanup{Hook* hooks;bool committed=false;~HookCleanup(){if(!committed)for(int i=0;i<5;++i)Discard(hooks[i]);}} cleanup{menu_hooks};
+     if(menus_enabled){
+     constexpr std::uint8_t expected[]={0x90,0x66,0x66,0x66,0x66,0x66,0x66,0x2e,0x0f,0x1f,0x84,0,0,0,0,0};
+     if (size<table+16 || size<imm+1 || size<call+5 || size<pad+16) return false;
+@@ -827,12 +843,13 @@
+         host_log("pc-options disabled: System bytes differ from verified 1.09"); return false;
+     }
+ 
++    constexpr std::uint8_t command_bytes[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec,0x88,0x01,0,0};
+     constexpr std::uint8_t open_bytes[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec,0xa8,0x02,0,0};
+     constexpr std::uint8_t load_bytes[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x54,0x53,0x48,0x83,0xec,0x50};
+     constexpr std::uint8_t reset_bytes[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec,0x98,0,0,0};
+     constexpr std::uint8_t visible_bytes[]={0x55,0x48,0x89,0xe5,0x41,0x56,0x53,0x48,0x81,0xec,0x30,0x01,0,0,0x89,0xf3};
+     if(!Prepare(menu_hooks[0],image,size,0x1b20900,open_bytes,OpenSectionHook)||!Prepare(menu_hooks[1],image,size,0x14ef730,load_bytes,LoadCameraHook)||
+-       !Prepare(menu_hooks[2],image,size,0x1b1a2d0,reset_bytes,ConfirmedKeysResetHook)||!Prepare(menu_hooks[3],image,size,0x1acb760,visible_bytes,VisibilityHook)){
++       !Prepare(menu_hooks[2],image,size,0x1b1a2d0,reset_bytes,ConfirmedKeysResetHook)||!Prepare(menu_hooks[3],image,size,0x1acb760,visible_bytes,VisibilityHook)||!Prepare(menu_hooks[4],image,size,0x1b4e2a0,command_bytes,SystemRowHook)){
+      host_log("pc-options rejected: vanilla section/camera/reset/visibility signatures differ");return false;
+     }
+     }
+@@ -849,13 +866,17 @@
+                 return false; // A player's own file wins; never bind a foreign movie.
+             mounts.emplace_back(path,prepared.string()); return true;
+         };
+-        if (menus_enabled && !add("dvdroot_ps4/menu/optionsetting.gfx")) return false;
++        if (!add("dvdroot_ps4/menu/optionsetting.gfx")) return false;
++        for(const auto* name:{"title.gfx","title_dlc.gfx","title_dlc_eu.gfx"}){
++            const auto relative=fs::path("dvdroot_ps4/menu")/name;
++            if(fs::is_regular_file(original/relative)&&!add(relative))return false;
++        }
+         for (const auto& item:fs::directory_iterator(original/"dvdroot_ps4/msg")) {
+             if (!item.is_directory()) continue;
+             const auto relative=fs::path("dvdroot_ps4/msg")/item.path().filename()/"menu.msgbnd.dcx";
+             if (fs::is_regular_file(original/relative) && !add(relative)) return false;
+         }
+-        if (mounts.size()<(menus_enabled?2u:1u) || mounts.size()>24) return false;
++        if (mounts.size()<(menus_enabled?2u:1u) || mounts.size()>28) return false;
+     } catch (const std::exception& e) { host_log("pc-options disabled: %s",e.what()); return false; }
+     unsigned installed=0;
+     for (const auto& [path,file]:mounts) {
+@@ -897,7 +918,7 @@
+ bool ClickDecides(std::uint8_t* list, int index) {
+     if(screen_alive(vanilla_controls)&&list==vanilla_controls.dialog+kDialogRows&&index==0)return true;
+     return g_installed && g_keys.dialog && list == g_keys.rows && index >= 0 && index < kKeysRows &&
+-           (index==0 || keys_row_bound(index)) && keys_alive();
++           keys_row_bound(index) && keys_alive();
+ }
+ bool KeyBindingsOpen(){return g_keys.dialog && keys_alive();}
+ 
+@@ -906,7 +927,7 @@
+         return;
+     }
+     auto* c = static_cast<std::uint8_t*>(comp);
+-    update_parent(vanilla_controls);update_parent(vanilla_environment);
++    update_parent(vanilla_controls);update_parent(vanilla_environment);update_parent(vanilla_graphics);
+     vanilla_update(c,focused);
+     defaults_view_update(c, focused);
+     if (!g_keys.dialog) {
+@@ -934,7 +955,7 @@
+ void Tick() {
+     if (!g_installed) return;
+     bool changed=g_keys_save.exchange(false);
+-    update_parent(vanilla_controls);update_parent(vanilla_environment);
++    update_parent(vanilla_controls);update_parent(vanilla_environment);update_parent(vanilla_graphics);
+     for (auto& s:camera) {
+         if (!seeded) break;
+         if (s.value==s.last) continue;
+diff --git a/gpu/shim/input/pc_controls.cpp b/gpu/shim/input/pc_controls.cpp
+--- a/gpu/shim/input/pc_controls.cpp
++++ b/gpu/shim/input/pc_controls.cpp
+@@ -13,7 +13,7 @@
+  const char* pairs[][2]={{"roll","Space"},{"attack","Mouse1"},{"strong_attack","Left Shift + Mouse1"},{"strong_modifier","none"},
+  {"firearm","Left Ctrl, Mouse3"},{"transform","F"},{"blood_vial","C"},{"use_item","R"},{"interact","E"},
+  {"lock_on","Q, Mouse2"},{"l3","Z"},{"menu","Escape"},{"confirm","Return"},{"back","Backspace"},
+- {"switch_item","Down, WheelDown"},{"previous_item","WheelUp"}};
++ {"dpad_up","T"},{"switch_item","Down, WheelDown"},{"previous_item","WheelUp"}};
+  for(auto& pair:pairs)host_bindings_parse(pair[0],pair[1]);
+  Get().ds3_profile=true;Get().pc_controls=true;Get().mouse_menu=true;
+ }
+diff --git a/licenses/BBHOST-PORTS.md b/licenses/BBHOST-PORTS.md
+--- a/licenses/BBHOST-PORTS.md
++++ b/licenses/BBHOST-PORTS.md
+@@ -1,64 +1,73 @@
+-# bbhost engine ports
+-
+-Source: https://github.com/droogie/bbhost/tree/7c790536c2c27ad7bb5115e3b1a12d7ffd7a972e
+-
+-`gpu/shim/engine/engine_hooks.cpp` adapts `src/core/thunk.cpp` (the prologue emitter).
+-`gpu/shim/engine/change_appearance.cpp` adapts `src/engine/change_appearance.cpp`,
+-`menu_steps.cpp`, `frame_rate.cpp` (only the main-thread hook site) and `world_chr.cpp`
+-(only the player block lookup). `scripts/engine_assets.py` adapts
+-`dream_mirror_layout.cpp` and `gcn/container.cpp` (DCX).
+-`gpu/shim/engine/camera.cpp` adapts `engine/camera.cpp` and the typed repository
+-lookup in `engine/params.cpp`. Its sliders and the WPF launcher share the existing
+-`bbport.ini`; no bbhost renderer or second configuration store is introduced.
+-`gpu/shim/engine/option_menu.cpp` adapts the native row, caption, section opener and
+-System builder from `engine/option_menu.cpp`. `menu_memory.cpp` adapts bbhost's
+-Scaleform heap sizes. `tools/engine/menu_assets.cpp` adapts the independent GFX,
+-BND4 and FMG serializers from `engine/menu_assets.cpp`, with bounded inflation;
+-its PC strings come from `tools/engine/pc_option_messages.tsv`. All edited game movies
+-and language bundles are prepared locally, never packaged or committed.
+-`engine_state.cpp` adapts typed lookups from `params.cpp`, `player_data.cpp`,
+-`event_flags.cpp`, `world_chr.cpp` and the shared `menu_steps.cpp` watches.
+-`event_flag_layout.h` retains the traversal from `decomp/sprj_event_flag_man.h`.
+-`rebirth.cpp` retains the native apply/heal, refund, snapshot/undo and menu
+-lifecycle from `engine/rebirth.cpp`. The origin pricing in `rebirth_refund.h`
+-adds rejection of invalid attributes, non-finite curves and overflowing refunds.
+-`tools/engine/esd.*`, `rebirth_script.*` and `sha256.*` adapt the corresponding
+-bbhost serializers and digest helper. Both known altar script identities are
+-checked before and after preparation.
+-`graphics.cpp` adapts the render-view flags and freshly blended CPU parameters
+-from `engine/graphics_patch.cpp`. Fog, renderer replacement and shader patches
+-are not included; motion blur, DoF and CA keep bloodborne_pc's startup patches.
+-
+-These portions are GPL-3.0-or-later. Copyright remains with the bbhost contributors.
+-The surrounding bloodborne_pc code remains GPL-2.0-or-later under its existing notices.
+-Combined builds containing these ports are distributed under GPL-3.0-or-later; see
+-`GPL-3.0.txt`. Third-party notices remain unchanged. Generated game assets are local
+-cache entries from the player's own dump and are not distributed in the repository.
+-
+-Keyboard/mouse and widescreen source:
+-https://github.com/droogie/bbhost/tree/db5457cbd447f4ef129b58df0a78e0a8819c7033
+-
+-The input/bindings, mouse_camera and menu_pointer modules adapt the matching
+-bbhost host and engine modules. They retain angle-per-count camera movement,
+-controller priority, target flick, walking, region-aware confirmation, Scaleform
+-geometry hit tests and capture semantics. input.cpp bridges the existing SDL
+-event pump, scePad ABI, checked loader image and guest-call bridge.
+-Native PC Controls / Key Bindings reuse the row builders, checked widget identity
+-and Defaults lifecycle from option_menu.cpp. Both frontends use bbport.ini.
+-
+-engine/widescreen.cpp adapts the camera blend hook, UI stage pins and projected
+-world-plate bounds from live_resolution.cpp and graphics_patch.cpp. It checks
+-original bytes or the exact existing native-stage resolution patch, preserves
+-vertical FOV and uses this port's output size. Vulkan UI composition adds uniform
+-centered fitting, including stencil masks and window-space vertices. The existing
+-presenter already letterboxes. The existing renderer, temporal resources,
+-synchronization, shader and motion-vector paths remain in use.
+-
+-Online and picture sources:
+-https://github.com/droogie/bbhost/tree/566184a74f071166299bb656c4af479e5bbe2771
+-
+-engine/online_fixes.cpp adapts src/engine/chara_id.cpp (the login's character step clears the
+-empty-list character id) and src/engine/sos_signs.cpp (the summon sign timeout). The fog control in
+-engine/graphics.cpp adapts the fog table upload hook of src/engine/graphics_patch.cpp, redirected
+-through the function's padding; the play-log redirect in scripts/online.py follows src/hle/http.cpp. The boss defeat flags in
+-engine/trophy_sync.cpp are from the boss rush table of plugins/boss_rush/boss_rush.cpp.
++# bbhost engine ports
++
++Source: https://github.com/droogie/bbhost/tree/7c790536c2c27ad7bb5115e3b1a12d7ffd7a972e
++
++`gpu/shim/engine/engine_hooks.cpp` adapts `src/core/thunk.cpp` (the prologue emitter).
++`gpu/shim/engine/change_appearance.cpp` adapts `src/engine/change_appearance.cpp`,
++`menu_steps.cpp`, `frame_rate.cpp` (only the main-thread hook site) and `world_chr.cpp`
++(only the player block lookup). `scripts/engine_assets.py` adapts
++`dream_mirror_layout.cpp` and `gcn/container.cpp` (DCX).
++`gpu/shim/engine/camera.cpp` adapts `engine/camera.cpp` and the typed repository
++lookup in `engine/params.cpp`. Its sliders and the WPF launcher share the existing
++`bbport.ini`; no bbhost renderer or second configuration store is introduced.
++`gpu/shim/engine/option_menu.cpp` adapts the native row, caption, section opener and
++System builder from `engine/option_menu.cpp`. `menu_memory.cpp` adapts bbhost's
++Scaleform heap sizes. `tools/engine/menu_assets.cpp` adapts the independent GFX,
++BND4 and FMG serializers from `engine/menu_assets.cpp`, with bounded inflation;
++its PC strings come from `tools/engine/pc_option_messages.tsv`. All edited game movies
++and language bundles are prepared locally, never packaged or committed.
++`engine_state.cpp` adapts typed lookups from `params.cpp`, `player_data.cpp`,
++`event_flags.cpp`, `world_chr.cpp` and the shared `menu_steps.cpp` watches.
++`event_flag_layout.h` retains the traversal from `decomp/sprj_event_flag_man.h`.
++`rebirth.cpp` retains the native apply/heal, refund, snapshot/undo and menu
++lifecycle from `engine/rebirth.cpp`. The origin pricing in `rebirth_refund.h`
++adds rejection of invalid attributes, non-finite curves and overflowing refunds.
++`tools/engine/esd.*`, `rebirth_script.*` and `sha256.*` adapt the corresponding
++bbhost serializers and digest helper. Both known altar script identities are
++checked before and after preparation.
++`graphics.cpp` adapts the render-view flags and freshly blended CPU parameters
++from `engine/graphics_patch.cpp`. Fog, renderer replacement and shader patches
++are not included; motion blur, DoF and CA keep bloodborne_pc's startup patches.
++
++These portions are GPL-3.0-or-later. Copyright remains with the bbhost contributors.
++The surrounding bloodborne_pc code remains GPL-2.0-or-later under its existing notices.
++Combined builds containing these ports are distributed under GPL-3.0-or-later; see
++`GPL-3.0.txt`. Third-party notices remain unchanged. Generated game assets are local
++cache entries from the player's own dump and are not distributed in the repository.
++
++Keyboard/mouse and widescreen source:
++https://github.com/droogie/bbhost/tree/db5457cbd447f4ef129b58df0a78e0a8819c7033
++
++The input/bindings, mouse_camera and menu_pointer modules adapt the matching
++bbhost host and engine modules. They retain angle-per-count camera movement,
++controller priority, target flick, walking, region-aware confirmation, Scaleform
++geometry hit tests and capture semantics. input.cpp bridges the existing SDL
++event pump, scePad ABI, checked loader image and guest-call bridge.
++Native PC Controls / Key Bindings reuse the row builders, checked widget identity
++and Defaults lifecycle from option_menu.cpp. Both frontends use bbport.ini.
++
++engine/widescreen.cpp adapts the camera blend hook, UI stage pins and projected
++world-plate bounds from live_resolution.cpp and graphics_patch.cpp. It checks
++original bytes or the exact existing native-stage resolution patch, preserves
++vertical FOV and uses this port's output size. Vulkan UI composition adds uniform
++centered fitting, including stencil masks and window-space vertices. The existing
++presenter already letterboxes. The existing renderer, temporal resources,
++synchronization, shader and motion-vector paths remain in use.
++
++Online and picture sources:
++https://github.com/droogie/bbhost/tree/566184a74f071166299bb656c4af479e5bbe2771
++
++engine/online_fixes.cpp adapts src/engine/chara_id.cpp (the login's character step clears the
++empty-list character id) and src/engine/sos_signs.cpp (the summon sign timeout). The fog control in
++engine/graphics.cpp adapts the fog table upload hook of src/engine/graphics_patch.cpp, redirected
++through the function's padding; the play-log redirect in scripts/online.py follows src/hle/http.cpp. The boss defeat flags in
++engine/trophy_sync.cpp are from the boss rush table of plugins/boss_rush/boss_rush.cpp.
++
++Quit to Desktop source:
++
++`scripts/quit_menu.py`, `scripts/hud_layout.py` and the save-aware runtime exit
++flow are adapted from the supplied Supermedo/bloodborne_pc Windows source
++(`scripts/quit_menu.py`, `src/runtime_services.c`, `src/runtime_savedata.c`).
++Those portions retain their GPL-2.0-or-later license. The native exit command
++uses the game's original confirmation/save path before requesting SDL shutdown.
++Edited game movies and message bundles are generated locally and never shipped.
+diff --git a/scripts/engine_assets.py b/scripts/engine_assets.py
+--- a/scripts/engine_assets.py
++++ b/scripts/engine_assets.py
+@@ -160,7 +160,7 @@
+     return destination.resolve()
+ 
+ 
+-def prepare_menu_assets(game, elf_path, cache, tool, rebirth=False):
++def prepare_menu_assets(game, elf_path, cache, tool, rebirth=False, tweak_menus=True):
+     """Generate bbhost's native option movie and messages from the player's own dump.
+ 
+     Validate every language, source and cached output together before publishing the
+@@ -171,15 +171,20 @@
+     root = Path(cache) / 'pc-menus'
+     movie = Path('dvdroot_ps4/menu/optionsetting.gfx')
+     sources = [(movie, 'movie')]
++    import quit_menu
++    for name in quit_menu.TITLE_MOVIES:
++        relative=Path('dvdroot_ps4/menu')/name
++        if (game/relative).is_file():sources.append((relative,'quit-title'))
+     message_dir = game / 'dvdroot_ps4/msg'
+     sources += [(p.relative_to(game), 'messages')
+                 for p in sorted(message_dir.glob('*/menu.msgbnd.dcx')) if p.is_file()]
+-    if len(sources) < 2 or len(sources) > 24:
++    if len(sources) < 2 or len(sources) > 28:
+         raise ValueError('Native options require valid menu bundles for every installed language')
+     if rebirth:
+         sources.append((Path('dvdroot_ps4/script/talk/m24_02_00_00.talkesdbnd.dcx'), 'rebirth'))
+     from pc_localization import localize_bundle
+-    generator = sha(tool.read_bytes()+Path(__file__).with_name("pc_localization.py").read_bytes())
++    generator = sha(bytes([bool(tweak_menus)])+tool.read_bytes()+b''.join(Path(__file__).with_name(name).read_bytes()
++        for name in ('pc_localization.py','quit_menu.py','hud_layout.py','menu_layout.py')))
+     manifest_path = root / 'manifest.json'
+     try:
+         previous = json.loads(manifest_path.read_text(encoding='utf-8'))
+@@ -204,12 +209,24 @@
+             destination.parent.mkdir(parents=True, exist_ok=True)
+             temporary = destination.with_name(destination.name + f'.{os.getpid()}.tmp')
+             try:
+-                result = subprocess.run([str(tool), kind, str(source), str(temporary)],
+-                                        capture_output=True, text=True, errors='replace')
+-                if result.returncode:
+-                    raise ValueError(result.stderr.strip() or f'Menu generator failed: {relative}')
+-                if kind == 'messages':
+-                    temporary.write_bytes(dcx_pack(localize_bundle(dcx_unpack(temporary.read_bytes()),relative.parent.name)))
++                if kind=='movie' and not tweak_menus:
++                    original=source.read_bytes()
++                    temporary.write_bytes(quit_menu.taller_list(original) or original)
++                elif kind=='quit-title':
++                    original=source.read_bytes()
++                    temporary.write_bytes(quit_menu.taller_title(original) or original)
++                else:
++                    result = subprocess.run([str(tool), kind, str(source), str(temporary)],
++                                            capture_output=True, text=True, errors='replace')
++                    if result.returncode:
++                        raise ValueError(result.stderr.strip() or f'Menu generator failed: {relative}')
++                    if kind=='movie':
++                        from menu_layout import expand_option_panels
++                        data=expand_option_panels(temporary.read_bytes())
++                        temporary.write_bytes(quit_menu.taller_list(data) or data)
++                    elif kind=='messages':
++                        localized=dcx_pack(localize_bundle(dcx_unpack(temporary.read_bytes()),relative.parent.name))
++                        temporary.write_bytes(quit_menu.menu_texts(localized,quit_menu.TEXTS.get(relative.parent.name,quit_menu.TEXTS['engus'])))
+                 current = sha(temporary.read_bytes())
+                 os.replace(temporary, destination)
+             finally:
+diff --git a/scripts/hud_layout.py b/scripts/hud_layout.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/hud_layout.py
+@@ -0,0 +1,393 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++"""Ultrawide HUD layout: copies of the game's menu movies (dvdroot_ps4/menu/*.gfx) for a HUD canvas
++wider than 16:9 (patches.py hud_canvas), which the game fills with its 1920x1080 stage centred.
++
++Full-screen backdrops (dimming, fades, the shared menu textures) are widened to the canvas;
++pictures (the title art, loading screens) keep their shape. In the HUD movie (fe.gfx) the
++health/stamina/item block (PlayerHUD) at the left and Blood Echoes and Insight (inside PlayerHUD)
++and the autosave icon at the right move by `position` (0 centred, 1 at the edges) times the
++canvas margin. Lock-on and ally tags are placed by the game at run time and stay as they are.
++The copies go into a mod layer (mods.py --layer).
++"""
++import argparse
++import struct
++import sys
++from pathlib import Path
++
++# (sprite id or None for the root timeline, instance name): -1 moves left, +1 right. The right
++# side of PlayerHUD moves with it first, hence 2.
++MOVES = {
++    (None, 'PlayerHUD'): -1,
++    ('PlayerHUD', 'Soul'): 2,
++    ('PlayerHUD', 'HeroPoint'): 2,
++    (None, 'AutoSaveIcon'): 1,
++}
++STAGE_WIDTH = 1920
++SHAPE_TAGS = (2, 22, 32, 83)
++# Shared menu textures that full-screen backdrops use (dark overlays, banners); other bitmaps are
++# pictures that keep their 16:9 shape.
++BACKDROP_TEXTURES = ('MENU_Common_',)
++
++
++class Reader:
++    def __init__(self, data, offset):
++        self.data, self.bit = data, offset * 8
++
++    def unsigned(self, n):
++        value = 0
++        for _ in range(n):
++            value = value << 1 | (self.data[self.bit >> 3] >> (7 - (self.bit & 7))) & 1
++            self.bit += 1
++        return value
++
++    def signed(self, n):
++        value = self.unsigned(n)
++        return value - (1 << n) if n and value >> (n - 1) else value
++
++    def end(self):
++        return (self.bit + 7) >> 3
++
++
++class Writer:
++    def __init__(self):
++        self.bits = []
++
++    def unsigned(self, value, n):
++        self.bits += [(value >> (n - 1 - i)) & 1 for i in range(n)]
++
++    def bytes(self):
++        bits = self.bits + [0] * (-len(self.bits) % 8)
++        return bytes(sum(b << (7 - i) for i, b in enumerate(bits[k:k + 8]))
++                     for k in range(0, len(bits), 8))
++
++
++def signed_bits(*values):
++    return max([1] + [v.bit_length() + 1 if v >= 0 else (~v).bit_length() + 1 for v in values])
++
++
++def read_matrix(data, offset):
++    """MATRIX at offset: ((scale or None), (rotate or None), (tx, ty) in twips), end offset."""
++    r = Reader(data, offset)
++    scale = rotate = None
++    if r.unsigned(1):
++        n = r.unsigned(5)
++        scale = (r.signed(n), r.signed(n))
++    if r.unsigned(1):
++        n = r.unsigned(5)
++        rotate = (r.signed(n), r.signed(n))
++    n = r.unsigned(5)
++    translate = (r.signed(n), r.signed(n))
++    return (scale, rotate, translate), r.end()
++
++
++def write_matrix(matrix):
++    scale, rotate, translate = matrix
++    w = Writer()
++    for pair in (scale, rotate):
++        w.unsigned(pair is not None, 1)
++        if pair is not None:
++            n = signed_bits(*pair)
++            w.unsigned(n, 5)
++            for v in pair:
++                w.unsigned(v & ((1 << n) - 1), n)
++    n = signed_bits(*translate) if any(translate) else 0
++    w.unsigned(n, 5)
++    for v in translate:
++        w.unsigned(v & ((1 << n) - 1), n)
++    return w.bytes()
++
++
++def tags(data, offset, end):
++    """(code, header start, body start, body length) of each tag in [offset, end)."""
++    while offset < end:
++        header, = struct.unpack_from('<H', data, offset)
++        code, length, body = header >> 6, header & 63, offset + 2
++        if length == 63:
++            length, = struct.unpack_from('<I', data, body)
++            body += 4
++        yield code, offset, body, length
++        offset = body + length
++
++
++def tag(code, body):
++    if len(body) < 63 and code not in (39,):
++        return struct.pack('<H', code << 6 | len(body)) + body
++    return struct.pack('<HI', code << 6 | 63, len(body)) + body
++
++
++def place_fields(data, body, code):
++    """PlaceObject2/3: (character id, matrix span (start, end) or None, instance name)."""
++    flags = data[body]
++    i = body + 1
++    flags2 = 0
++    if code == 70:
++        flags2 = data[i]
++        i += 1
++    i += 2  # depth
++    if code == 70 and flags2 & 8:
++        i = data.index(0, i) + 1  # class name
++    character = None
++    if flags & 2:
++        character, = struct.unpack_from('<H', data, i)
++        i += 2
++    span = None
++    if flags & 4:
++        _, end = read_matrix(data, i)
++        span = (i, end)
++        i = end
++    if flags & 8:  # CXFORMWITHALPHA: skip
++        r = Reader(data, i)
++        add, mult = r.unsigned(1), r.unsigned(1)
++        n = r.unsigned(4)
++        r.bit += n * 4 * (add + mult)
++        i = r.end()
++    if flags & 16:
++        i += 2  # ratio
++    name = None
++    if flags & 32:
++        end = data.index(0, i)
++        name = data[i:end].decode('latin-1')
++    return character, span, name
++
++
++def placements(data, start, end):
++    """Named placements in a timeline: {name: character id}."""
++    found = {}
++    for code, _, body, length in tags(data, start, end):
++        if code in (26, 70):
++            character, _, name = place_fields(data, body, code)
++            if name and character is not None:
++                found[name] = character
++    return found
++
++
++def rewrite_timeline(data, start, end, edits, inserts=None, after=None):
++    """The tags of [start, end) with the placements at body offsets in `edits` given new
++    matrices, the tags in `inserts` {timeline start: bytes} added before that timeline's first
++    frame ends and those in `after` {tag body offset: bytes} right after that tag; sprites
++    holding changes are rebuilt with their new length."""
++    inserts, after = inserts or {}, after or {}
++    changed = list(edits) + list(inserts) + list(after)
++    out = bytearray()
++    pending = inserts.get(start)
++    for code, header, body, length in tags(data, start, end):
++        if code == 1 and pending:
++            out += pending
++            pending = None
++        if body in edits:
++            _, span, _ = place_fields(data, body, code)
++            out += tag(code, data[body:span[0]] + write_matrix(edits[body]) + data[span[1]:body + length])
++        elif code == 39 and any(body < offset < body + length for offset in changed):
++            inner = rewrite_timeline(data, body + 4, body + length, edits, inserts, after)
++            out += tag(code, data[body:body + 4] + inner)
++        else:
++            out += data[header:body + length]
++        out += after.get(body, b'')
++    return bytes(out)
++
++
++def stage_start(data):
++    bits = data[8] >> 3
++    return 8 + (5 + 4 * bits + 7) // 8 + 4  # RECT, frame rate, frame count
++
++
++def definitions(data):
++    """({shape id: (fill styles, x min, x max)}, {sprite id: (start, end)}, {bitmap id: name})."""
++    shapes, sprites, bitmaps = {}, {}, {}
++
++    def scan(start, end):
++        for code, _, body, length in tags(data, start, end):
++            if code in SHAPE_TAGS:
++                shape, = struct.unpack_from('<H', data, body)
++                r = Reader(data, body + 2)
++                n = r.unsigned(5)
++                x0, x1 = r.signed(n) / 20, r.signed(n) / 20
++                shapes[shape] = (fill_styles(data, body, code), x0, x1)
++            elif code == 39:
++                sprite, = struct.unpack_from('<H', data, body)
++                sprites[sprite] = (body + 4, body + length)
++                scan(body + 4, body + length)
++            elif code == 1009:  # GFX external image: id, format, size, then the texture name
++                bitmap, = struct.unpack_from('<H', data, body)
++                text = bytes(c if 32 <= c < 127 else 0 for c in data[body + 2:body + length])
++                names = [n for n in text.split(b'\0') if len(n) > 2]
++                bitmaps[bitmap] = names[0].decode('latin-1') if names else ''
++    scan(stage_start(data), len(data))
++    return shapes, sprites, bitmaps
++
++
++def fill_styles(data, body, code):
++    """Fill style types of a shape, bitmap fills as (type, bitmap id); None past an unknown one."""
++    r = Reader(data, body + 2)
++    bits = r.unsigned(5)
++    r.bit += 4 * bits
++    i = r.end()
++    if code in (83, 84):  # DefineShape4: edge bounds, flags
++        r = Reader(data, i)
++        bits = r.unsigned(5)
++        r.bit += 4 * bits
++        i = r.end() + 1
++    count = data[i]
++    i += 1
++    if count == 0xFF:
++        count, = struct.unpack_from('<H', data, i)
++        i += 2
++    alpha = code in (32, 83, 84)
++    styles = []
++    for _ in range(count):
++        kind = data[i]
++        i += 1
++        if kind == 0x00:
++            styles.append(kind)
++            i += 4 if alpha else 3
++        elif kind in (0x10, 0x12, 0x13):
++            styles.append(kind)
++            _, i = read_matrix(data, i)
++            i += 1 + (data[i] & 15) * (5 if alpha else 4) + (2 if kind == 0x13 else 0)
++        elif 0x40 <= kind <= 0x43:
++            bitmap, = struct.unpack_from('<H', data, i)
++            styles.append((kind, bitmap))
++            _, i = read_matrix(data, i + 2)
++        else:
++            return None
++    return styles
++
++
++def widens(styles, bitmaps):
++    """A full-stage shape that is a backdrop (solid, gradient, shared menu textures), not a
++    picture (the title art, loading screens) that would stretch."""
++    if not styles:
++        return False
++    for style in styles:
++        if isinstance(style, tuple) and not bitmaps.get(style[1], '').startswith(BACKDROP_TEXTURES):
++            return False
++    return True
++
++
++def backdrop_edits(data, factor, shapes, sprites, bitmaps):
++    """Matrices that widen full-stage backdrops by `factor` around the stage centre: {placement
++    body offset: matrix}. A placement reached with different parent transforms is left alone."""
++    centre = STAGE_WIDTH / 2
++    edits, seen = {}, {}
++
++    def walk(start, end, px, ps, level):
++        if level > 16:
++            return
++        characters = {}
++        for code, _, body, length in tags(data, start, end):
++            if code not in (26, 70):
++                continue
++            flags = data[body]
++            depth, = struct.unpack_from('<H', data, body + 1 + (code == 70))
++            character, span, _ = place_fields(data, body, code)
++            if character is None:
++                character = characters.get(depth)
++            else:
++                characters[depth] = character
++            if character is None or not span:
++                continue
++            (scale, rotate, (tx, ty)), _ = read_matrix(data, span[0])
++            sx = (scale[0] if scale else 65536) / 65536
++            x = px + ps * tx / 20
++            if character in sprites and flags & 2:
++                walk(*sprites[character], x, ps * sx, level + 1)
++            if character not in shapes or rotate or not ps:
++                continue
++            styles, x0, x1 = shapes[character]
++            left, right = sorted((x + ps * sx * x0, x + ps * sx * x1))
++            if left > 8 or right < STAGE_WIDTH - 8 or not widens(styles, bitmaps):
++                continue
++            scale = scale or (65536, 65536)
++            new_tx = round(factor * tx + (factor - 1) * (px - centre) / ps * 20)
++            matrix = ((round(scale[0] * factor), scale[1]), None, (new_tx, ty))
++            other = seen.setdefault(body, matrix)
++            if other and (other[0] != matrix[0] or abs(other[2][0] - new_tx) > 8 * 20):
++                seen[body] = None  # shared by parents placed apart: left alone
++            if seen[body] is None:
++                edits.pop(body, None)
++            else:
++                edits[body] = matrix
++    walk(stage_start(data), len(data), 0.0, 1.0, 0)
++    return edits
++
++
++def hud_edits(data, margin, sprites):
++    """fe.gfx: the corner groups `margin` stage pixels toward the screen edges."""
++    twips = round(margin * 20)
++    edits = {}
++    holders = []
++
++    def move(start, end, parent):
++        for code, _, body, length in tags(data, start, end):
++            if code not in (26, 70):
++                continue
++            character, span, name = place_fields(data, body, code)
++            sign = MOVES.get((parent, name))
++            if sign and span:
++                (scale, rotate, (tx, ty)), _ = read_matrix(data, span[0])
++                edits[body] = (scale, rotate, (tx + sign * twips, ty))
++            if parent is None and name == 'PlayerHUD' and character in sprites:
++                holders.append(character)
++    move(stage_start(data), len(data), None)
++    for character in holders:
++        move(*sprites[character], 'PlayerHUD')
++    if not edits:
++        raise ValueError('PlayerHUD is not in the HUD movie')
++    return edits
++
++
++def layout(data, canvas_width, margin=None):
++    """A menu movie for a `canvas_width` HUD canvas: backdrops widened, and for the HUD movie
++    (margin given) the corner groups moved. None when nothing changes."""
++    if data[:3] not in (b'GFX', b'FWS'):
++        raise ValueError('not an uncompressed GFX/SWF movie')
++    shapes, sprites, bitmaps = definitions(data)
++    # 1% beyond the canvas: no seam at the screen edges.
++    edits = backdrop_edits(data, canvas_width / STAGE_WIDTH * 1.01, shapes, sprites, bitmaps)
++    if margin is not None:
++        edits.update(hud_edits(data, margin, sprites))
++    if not edits:
++        return None
++    start = stage_start(data)
++    out = data[:start] + rewrite_timeline(data, start, len(data), edits)
++    return out[:4] + struct.pack('<I', len(out)) + out[8:]
++
++
++def main():
++    p = argparse.ArgumentParser(description=__doc__)
++    p.add_argument('game', type=Path, help='game folder (with dvdroot_ps4)')
++    p.add_argument('--out', type=Path, required=True, help='mod layer folder to write')
++    p.add_argument('--canvas-width', type=int, required=True, help='HUD canvas width (BB_UI_RES)')
++    p.add_argument('--position', type=float, default=1.0, help='0 centred 16:9 .. 1 screen edges')
++    p.add_argument('--source', type=Path, action='append', default=[],
++                   help='a mod layer whose menu movies replace the game ones (quit_menu.py)')
++    a = p.parse_args()
++    margin = max(0.0, min(1.0, a.position)) * (a.canvas_width - STAGE_WIDTH) / 2
++    menu = a.game / 'dvdroot_ps4' / 'menu'
++    target = a.out / 'dvdroot_ps4' / 'menu'
++    target.mkdir(parents=True, exist_ok=True)
++    written = 0
++    for source in sorted(menu.glob('*.gfx')):
++        for layer in a.source:
++            if (layer / 'dvdroot_ps4' / 'menu' / source.name).is_file():
++                source = layer / 'dvdroot_ps4' / 'menu' / source.name
++        try:
++            data = layout(source.read_bytes(), a.canvas_width,
++                          margin if source.name.casefold() == 'fe.gfx' else None)
++        except (ValueError, IndexError, struct.error) as error:
++            print(f'HUD layout: {source.name}: {error}; left as it is', file=sys.stderr)
++            continue
++        if data:
++            (target / source.name).write_bytes(data)
++            written += 1
++    print(f'HUD layout: corner groups {margin:.0f} px toward the edges, backdrops widened in '
++          f'{written} menus (canvas {a.canvas_width})')
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (OSError, ValueError, IndexError, struct.error) as error:
++        # The game still starts, with the HUD centred in 16:9.
++        print(f'HUD layout: {error}; the HUD stays centred', file=sys.stderr)
+diff --git a/scripts/menu_layout.py b/scripts/menu_layout.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/menu_layout.py
+@@ -0,0 +1,133 @@
++# SPDX-License-Identifier: GPL-2.0-or-later
++"""Expand native settings frames without scaling fonts or sharing mutable art.
++
++Uses the original bbport GFX serializer. Edited movies remain local game cache.
++"""
++import struct
++import hud_layout as swf
++import quit_menu as quit
++
++
++def stretch_y(matrix, ratio, anchor):
++    """Scale a placement vertically around a parent-space anchor, including flips."""
++    scale, rotate, (x, y) = matrix
++    sx, sy = scale or (65536, 65536)
++    # SWF RotateSkew0 contributes to the Y coordinate; RotateSkew1 to X.
++    if rotate is not None:
++        rotate = (round(rotate[0]*ratio), rotate[1])
++    return ((sx, round(sy*ratio)), rotate, (x, round(anchor+(y-anchor)*ratio)))
++
++
++def expand_panel(data, name, growth):
++    """Clone the section's frame and grow only its settings area downward."""
++    _, sprites, _ = swf.definitions(data)
++    root = quit.placements_in(data, swf.stage_start(data), len(data))
++    if name not in root:
++        raise ValueError(f'Missing native panel: {name}')
++    timeline = sprites[root[name][3]]
++    placements = quit.placements_in(data, *timeline)
++    frame_place = placements.get(3)
++    status = placements.get('StatusBar')
++    if not frame_place or not status or frame_place[3] not in sprites:
++        raise ValueError(f'Unexpected settings frame: {name}')
++    frame_timeline = sprites[frame_place[3]]
++    frame = quit.placements_in(data, *frame_timeline)
++    # Verified Controls frame: background, lower corner/lines, vertical fill.
++    required = (1, 11, 14, 25, 33, 41, 49)
++    if not all(depth in frame for depth in required):
++        raise ValueError(f'Unexpected settings frame decorations: {name}')
++    edits = {}
++    for depth in (25, 33, 49):
++        quit.shift_depth(data, frame_timeline, depth, growth, edits)
++    # The interior is a pair of identical texture clips: one top-left and
++    # one mirrored bottom-right. Moving the mirrored clip alone separates
++    # the two textures. Apply one vertical transform to BOTH placements.
++    texture = frame[11]
++    if texture[3] != frame[14][3]:
++        raise ValueError(f'Unexpected mirrored settings textures: {name}')
++    top, bottom = quit.swf_shape_y(data, texture[3])
++    texture_scale = texture[4][0] or (65536, 65536)
++    texture_height = (bottom-top)*texture_scale[1]/65536
++    texture_top = texture[4][2][1] + top*texture_scale[1]/65536
++    if texture_height <= 0 or texture_height+growth <= 0:
++        raise ValueError('Invalid settings texture height')
++    ratio = (texture_height+growth)/texture_height
++    for code, _, body, _ in swf.tags(data, *frame_timeline):
++        if code not in (26, 70) or quit.depth_of(data, body, code) not in (11, 14):
++            continue
++        _, span, _ = swf.place_fields(data, body, code)
++        if span:
++            edits[body] = stretch_y(swf.read_matrix(data, span[0])[0], ratio, texture_top)
++    # Grow the opaque backing and central fill while keeping their local
++    # top edges fixed. Keep each animation frame's own scale/translation.
++    for depth in (1, 41):
++        _, _, _, character, matrix = frame[depth]
++        top, bottom = quit.swf_shape_y(data, character)
++        scale = matrix[0] or (65536, 65536)
++        height = (bottom-top)*scale[1]/65536
++        if height <= 0 or height+growth <= 0:
++            raise ValueError('Invalid settings frame bounds')
++        ratio = (height+growth)/height
++        for code, _, body, _ in swf.tags(data, *frame_timeline):
++            if code not in (26, 70) or quit.depth_of(data, body, code) != depth:
++                continue
++            _, span, _ = swf.place_fields(data, body, code)
++            if span:
++                current = swf.read_matrix(data, span[0])[0]
++                local_scale = current[0] or (65536, 65536)
++                anchor = current[2][1] + top*local_scale[1]/65536
++                edits[body] = stretch_y(current, ratio, anchor)
++    # Clone the frame. Other sections still reference the untouched original.
++    shapes, sprites, bitmaps = swf.definitions(data)
++    new_id = max(set(shapes)|set(sprites)|set(bitmaps))+1
++    rewritten = swf.rewrite_timeline(data, *frame_timeline, edits, {})
++    clone = swf.tag(39, struct.pack('<HH', new_id, struct.unpack_from('<H', data, frame_timeline[0]-2)[0]) + rewritten)
++    # Update every placement of this section's frame and its help/status anchor.
++    status_depth = quit.depth_of(data, status[1], status[0])
++    quit.shift_depth(data, timeline, status_depth, growth, edits := {})
++    replaces = {}
++    frame_depth = quit.depth_of(data, frame_place[1], frame_place[0])
++    for code, _, body, length in swf.tags(data, *timeline):
++        if code in (26, 70) and quit.depth_of(data, body, code) == frame_depth:
++            cid, _, _ = swf.place_fields(data, body, code)
++            if cid is not None:
++                raw = bytearray(data[body:body+length])
++                struct.pack_into('<H', raw, 4 if code == 70 else 3, new_id)
++                replaces[body] = swf.tag(code, raw)
++    # The serializer's insert/after hooks preserve nested sizes and all timings.
++    section = bytearray()
++    for code, head, at, length in swf.tags(data, *timeline):
++        if at in replaces:
++            section += replaces[at]
++        elif at in edits:
++            _, span, _ = swf.place_fields(data, at, code)
++            section += swf.tag(code, data[at:span[0]] + swf.write_matrix(edits[at]) + data[span[1]:at+length])
++        else:
++            section += data[head:at+length]
++    section = bytes(section)
++    section_id = root[name][3]
++    return replace_sprite(data, section_id, section, clone)
++
++
++def replace_sprite(data, character, body, extra):
++    """Replace one top-level sprite body; insert its private frame before it."""
++    start = swf.stage_start(data)
++    output = bytearray(data[:start])
++    found = False
++    for code, head, at, length in swf.tags(data, start, len(data)):
++        if code == 39 and struct.unpack_from('<H', data, at)[0] == character:
++            output += extra + swf.tag(39, data[at:at+4] + body)
++            found = True
++        else:
++            output += data[head:at+length]
++    if not found:
++        raise ValueError('Settings sprite was not found')
++    struct.pack_into('<I', output, 4, len(output))
++    return bytes(output)
++
++
++def expand_option_panels(data):
++    for name, growth in (('ControllSetting', 2400), ('PCGraphics', 1600),
++                         ('PCKeys', 2400), ('PCEffects', -1100), ('PCColour', -1100)):
++        data = expand_panel(data, name, growth)
++    return data
+diff --git a/scripts/patches.py b/scripts/patches.py
+--- a/scripts/patches.py
++++ b/scripts/patches.py
+@@ -666,6 +666,11 @@
+             writes+=compile_patches(a.xml,[heap],a.app_version,segments)
+             names.append(heap)
+         print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
++    if os.environ.get('BB_QUIT_TO_DESKTOP')=='1':
++        import quit_menu
++        quit_menu.check_original(lambda start,end: original_bytes(elf,start,end-start))
++        writes+=quit_menu.code_writes()
++        names.append('Quit to Desktop')
+     if a.patches_dir:
+         # After the built-in ones: an external patch of the same bytes wins.
+         resolution=(resolution_footprint(a.xml,a.app_version,segments),out) if out!=OUTPUT_SIZE else None
+diff --git a/scripts/pc_localization.py b/scripts/pc_localization.py
+--- a/scripts/pc_localization.py
++++ b/scripts/pc_localization.py
+@@ -3,7 +3,7 @@
+ Formats adapted from upstream engine/menu_assets.cpp; no GUI textures touched.
+ """
+ import struct
+-VERSION = 'awaken-eight-languages-2'
++VERSION = 'awaken-eight-languages-3'
+ SPANISH = {
+ 110006:('Ajustes de PC','Opciones añadidas para PC.'),110007:('Gráficos de PC','Opciones gráficas para PC.'),110008:('Controles de PC','Ratón: cámara, sensibilidad y puntero.'),110009:('Asignación de teclas','Asignaciones de teclado y ratón.'),110010:('Efectos de PC','Desenfoque, brillo, viñeta y otros efectos.'),110011:('Ajustes de cámara','Campo de visión, distancia y altura de la cámara.'),110012:('Steam Deck','Rendimiento y detalle para Steam Deck.'),110013:('Mejoras de PC','Activa el espejo, el renacimiento y la cámara de PC. Requiere reiniciar.'),
+ 116000:('Sincronización vertical','Sincroniza la imagen con la pantalla.'),116001:('Pantalla completa','Sin bordes, a la resolución del escritorio.'),116002:('Ratón en los menús','Mueve el ratón y haz clic para seleccionar.'),116003:('Mostrar puntero','Muestra el puntero del ratón.'),116004:('Omitir logotipos','Omite los logotipos y el aviso inicial. Se aplica al reiniciar.'),116005:('Límite de FPS','30 es el ritmo original; 60 o más ejecuta el juego a 60. Más de 60 solo limita la presentación. Reinicia para aplicar.'),116007:('Mostrar FPS','Fotogramas presentados por segundo, en la esquina superior derecha.'),116020:('Ajustes de PC',''),116035:('Sin límite',''),
+@@ -1650,6 +1650,14 @@
+     "Shift + Botão do meio"
+   ]
+ }
++TRANSLATIONS['Input'] = ['Input', 'Entrada', 'Управление', '入力', 'Entrée', 'Eingabe', 'Input', 'Entrada']
++TRANSLATIONS['KB & Mouse'] = ['KB & Mouse', 'Tecl. y ratón', 'Клав. и мышь', 'キーボード・マウス', 'Clav./souris', 'Tast./Maus', 'Tast./mouse', 'Tecl./mouse']
++TRANSLATIONS['Graphics'] = ['Graphics', 'Gráficos', 'Графика', 'グラフィック', 'Graphismes', 'Grafik', 'Grafica', 'Gráficos']
++TRANSLATIONS['Effects'] = ['Effects', 'Efectos', 'Эффекты', 'エフェクト', 'Effets', 'Effekte', 'Effetti', 'Efeitos']
++TRANSLATIONS['Image'] = ['Image', 'Imagen', 'Изображение', '映像', 'Image', 'Bild', 'Immagine', 'Imagem']
++TRANSLATIONS['Adjust graphics settings.'] = ['Adjust graphics settings.', 'Ajusta las opciones gráficas.', 'Настройка графики.', 'グラフィックを設定します。', 'Ajuster les paramètres graphiques.', 'Grafikeinstellungen anpassen.', 'Regola le impostazioni grafiche.', 'Ajuste as configurações gráficas.']
++TRANSLATIONS['Adjust visual effects.'] = ['Adjust visual effects.', 'Ajusta los efectos visuales.', 'Настройка визуальных эффектов.', '視覚効果を設定します。', 'Ajuster les effets visuels.', 'Bildeffekte anpassen.', 'Regola gli effetti visivi.', 'Ajuste os efeitos visuais.']
++TRANSLATIONS['Adjust brightness, contrast, saturation and hue.'] = ['Adjust brightness, contrast, saturation and hue.', 'Ajusta brillo, contraste, saturación y tono.', 'Настройка яркости, контрастности, насыщенности и оттенка.', '明るさ・コントラスト・彩度・色相を設定します。', 'Ajuster luminosité, contraste, saturation et teinte.', 'Helligkeit, Kontrast, Sättigung und Farbton anpassen.', 'Regola luminosità, contrasto, saturazione e tonalità.', 'Ajuste brilho, contraste, saturação e matiz.']
+ LANGUAGES = ('en','es','ru','ja','fr','de','it','pt')
+ def language_index(language):
+     code=language.lower().replace("_","-")
+@@ -1659,8 +1667,11 @@
+         if code==short or code.startswith(short+'-'):return i
+     return None
+ ACTIVE_MESSAGES = {
++110007:('Graphics','Adjust graphics settings.'),117020:('Graphics',''),
++110010:('Effects','Adjust visual effects.'),120020:('Effects',''),
++110014:('Image','Adjust brightness, contrast, saturation and hue.'),125020:('Image',''),
+ 119020:('Key Bindings',''),119000:('Category','Left and right change the group of actions shown.'),
+-126000:('Play with','Use Controller or Keyboard and mouse'),
++126000:('Input','Use Controller or Keyboard and mouse'),
+ 126003:('Key Bindings','Assign keys and mouse buttons or view controller bindings.'),
+ 126004:('Camera options','Adjust camera field of view, distance and height.'),
+ 126001:('Assign keys and mouse buttons or view controller bindings.',''),
+diff --git a/scripts/quit_menu.py b/scripts/quit_menu.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/quit_menu.py
+@@ -0,0 +1,559 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++"""Quit to Desktop in the game's own menus (bbport.ini quit_to_desktop, game version 01.09).
++
++Both menus keep entries of FromSoftware's PC builds that the console game removes: "Opinion
++Box" on the title menu and "Language" in the System menu. The patches show them, as Quit to
++Desktop, and change what they do:
++
++- Title menu: the entry tells the port to close the game ("bb:q"). Nothing is lost there.
++- System menu (in the world): the entry runs Exit Game, so the game saves and leaves the world as
++  it always does. It tells the port first ("bb:p"); Exit Game's confirmation then asks the port
++  ("bb:d") and shows the Quit to Desktop question. The port closes the game when the intro logos
++  start loading, once the save is done (src/runtime_services.c), or at the latest when the
++  title screen is built ("bb:t", the Play Online / Play Offline choice or the title menu).
++
++The messages go through the game's sceSystemServiceLaunchWebBrowser import, which the port
++answers itself (src/runtime_services.c). The new code lives where the Language entry's old
++handler and item code were. `text` writes the entries' texts as a mod layer (mods.py --layer):
++the game's menu text archives with those strings replaced.
++"""
++import argparse
++import struct
++import sys
++import zlib
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++import hud_layout as swf  # noqa: E402  (SWF/GFX reading and writing)
++
++EBOOT_BASE = 0x400000
++# Image offsets (vaddr - EBOOT_BASE) in the 01.09 eboot.
++BROWSER = 0x2BC09A8          # sceSystemServiceLaunchWebBrowser import stub
++TEXT = 0x1AE8CC0             # text lookup (destination, FMG id, string id)
++ADD_DELEGATE = 0x1B4C9A0     # list item with a {context, handler} callback (Exit Game's)
++EXIT_HANDLER = 0x1C0C9F0     # Exit Game: confirmation, save, back to the title menu
++OPINION_INVOKE = 0x1B46030   # the Opinion Box callback
++OPINION_SLOT = 0x533B960     # its vtable slot
++TITLE_CONDITION = 0x1B4ABF3  # call: is the Opinion Box shown
++ONLINE_LABEL = 0x1B390A7     # call TEXT: "Play Online", the first screen after leaving the world
++SYSTEM_ITEM = 0x1BB4441      # the Language item's callback and add, up to SYSTEM_CONDITION
++SYSTEM_CONDITION = 0x1BB44C1 # in the world: keep the item; title System menu: remove it
++SYSTEM_KEEP, SYSTEM_REMOVE = 0x1BB4561, 0x1BB44D3
++EXIT_DIALOG = 0x1C0CA1B      # Exit Game's confirmation text (mov esi, 0xcc; mov edx, 110000)
++CAVE = 0x1BB4BE0             # the Language item's handler, 128 bytes, unused after SYSTEM_ITEM
++
++# Text ids (menu.msgbnd.dcx): FMG 200 item names, 201 one-line help, 204 dialogs.
++TITLE_ID, SYSTEM_ID, DIALOG_ID = 401307, 110005, 110005
++ORIGINAL = {
++    TITLE_CONDITION: 'e8c8eef9ff',
++    ONLINE_LABEL: 'e814fcfaff',
++    SYSTEM_ITEM: '488d05d88c7803 48898570dfffff 488d058a070000',
++    SYSTEM_CONDITION: '4584ff 750d e87556f3ff 84c0 0f858e000000',
++    EXIT_DIALOG: 'becc000000 bab0ad0100',
++    CAVE: '554889e5415741565348 83ec38 4989fe',
++}
++
++
++def rel32(at, end, target):
++    return struct.pack('<i', target - (at + end))
++
++
++class Code:
++    """Machine code placed at an image offset, with rip-relative references."""
++
++    def __init__(self, offset):
++        self.offset, self.data = offset, bytearray()
++
++    @property
++    def here(self):
++        return self.offset + len(self.data)
++
++    def raw(self, hexbytes):
++        self.data += bytes.fromhex(hexbytes)
++
++    def call(self, target):
++        self.data += b'\xe8' + struct.pack('<i', target - (self.here + 5))
++
++    def jmp(self, target):
++        self.data += b'\xe9' + struct.pack('<i', target - (self.here + 5))
++
++    def lea(self, prefix, target):  # prefix: '488d3d' (rdi), '488d05' (rax)
++        self.data += bytes.fromhex(prefix) + struct.pack('<i', target - (self.here + 7))
++
++    def browser(self, message):
++        """Calls the browser import with `message` (8-byte aligned stack at the call)."""
++        self.lea('488d3d', message)
++        self.raw('31f6')  # xor esi, esi
++        self.call(BROWSER)
++
++
++def code_writes():
++    """(offset, bytes) writes, the vtable slot holding a patch-base address (probe.c rebases it)."""
++    cave = Code(CAVE)
++    strings = {}
++    string_at = CAVE + 0x60
++    for name in ('t', 'q', 'p', 'd'):
++        strings[name] = string_at
++        string_at += 5
++    # Title menu condition: tell the port the title menu is being built; always show the entry.
++    title_condition = cave.here
++    cave.raw('4883ec08')       # sub rsp, 8
++    cave.browser(strings['t'])
++    cave.raw('4883c408b001c3')  # add rsp, 8; mov al, 1; ret
++    # Title menu entry: close the game, then the entry's own job as before.
++    title_invoke = cave.here
++    cave.raw('57564883ec08')   # push rdi; push rsi; sub rsp, 8
++    cave.browser(strings['q'])
++    cave.raw('4883c4085e5f')   # add rsp, 8; pop rsi; pop rdi
++    cave.jmp(OPINION_INVOKE)
++    # System menu entry (handler(out, context) like Exit Game's): mark the quit, then Exit Game.
++    system_handler = cave.here
++    cave.raw('57564883ec08')
++    cave.browser(strings['p'])
++    cave.raw('4883c4085e5f')
++    cave.jmp(EXIT_HANDLER)
++    if cave.here > CAVE + 0x60:
++        raise ValueError('quit menu code does not fit')
++    cave.data = cave.data.ljust(0x60, b'\xcc')
++    for name in ('t', 'q', 'p', 'd'):
++        cave.data += f'bb:{name}'.encode() + b'\0'
++
++    # The Language item's callback becomes Exit Game's kind ({context, handler}); the context is
++    # the one Exit Game's item just used, still at [rbp-0x1fe0].
++    item = Code(SYSTEM_ITEM)
++    item.raw('488b8520e0ffff')  # mov rax, [rbp-0x1fe0]
++    item.raw('48898570dfffff')  # mov [rbp-0x2090], rax
++    item.lea('488d05', system_handler)
++    item.raw('48898578dfffff')  # mov [rbp-0x2088], rax
++    item.raw('488d9570dfffff')  # lea rdx, [rbp-0x2090]
++    item.raw('48899590dfffff')  # mov [rbp-0x2070], rdx
++    item.raw('31c94c89ef4c89f6')  # xor ecx, ecx; mov rdi, r13; mov rsi, r14
++    item.call(ADD_DELEGATE)
++    item.raw('4989c5')         # mov r13, rax
++    item.raw('eb' + format(SYSTEM_CONDITION - (item.here + 2), '02x'))
++    # Exit Game's confirmation text: Quit to Desktop's when the port says so.
++    dialog = item.here
++    item.raw('4883ec08')
++    item.browser(strings['d'])
++    item.raw('4883c408')
++    item.raw('becc000000bab0ad0100')  # mov esi, 0xcc; mov edx, 110000
++    item.raw('85c07405')               # test eax, eax; jz +5
++    item.raw('ba' + struct.pack('<I', DIALOG_ID).hex() + 'c3')  # mov edx, DIALOG_ID; ret
++    # The Play Online / Play Offline label: the game is back at the title screen.
++    online = item.here
++    item.raw('575652')         # push rdi; push rsi; push rdx (the text lookup's arguments)
++    item.browser(strings['t'])
++    item.raw('5a5e5f')         # pop rdx; pop rsi; pop rdi
++    item.jmp(TEXT)
++    if item.here > SYSTEM_CONDITION:
++        raise ValueError('System menu code does not fit')
++    item.data = item.data.ljust(SYSTEM_CONDITION - SYSTEM_ITEM, b'\xcc')
++
++    condition = Code(SYSTEM_CONDITION)
++    condition.raw('4584ff')        # test r15b, r15b (in the world)
++    condition.raw('0f85' + rel32(SYSTEM_CONDITION + 3, 6, SYSTEM_KEEP).hex())
++    condition.raw('eb' + format(SYSTEM_REMOVE - (condition.here + 2), '02x'))
++    condition.data = condition.data.ljust(SYSTEM_REMOVE - SYSTEM_CONDITION, b'\x90')
++
++    title = Code(TITLE_CONDITION)
++    title.call(title_condition)
++    exit_dialog = Code(EXIT_DIALOG)
++    exit_dialog.call(dialog)
++    exit_dialog.raw('0f1f440000')
++    online_label = Code(ONLINE_LABEL)
++    online_label.call(online)
++    return [(c.offset, bytes(c.data)) for c in (cave, item, condition, title, exit_dialog,
++                                                online_label)] + \
++           [(OPINION_SLOT, struct.pack('<Q', EBOOT_BASE + title_invoke))]
++
++
++def check_original(image_bytes):
++    """image_bytes(start, end): the eboot's memory image. Raises unless it is the 01.09 code."""
++    for offset, expected in ORIGINAL.items():
++        expected = bytes.fromhex(expected.replace(' ', ''))
++        if image_bytes(offset, offset + len(expected)) != expected:
++            raise ValueError(f'Quit to Desktop: unexpected code at {offset + EBOOT_BASE:#x}')
++
++
++# ---- Menu texts -------------------------------------------------------------------------------
++# folder: (entry name, title menu help, System menu help, confirmation)
++TEXTS = {
++    'engus': ('Quit to Desktop', 'Close the game.', 'Save and close the game.',
++              'Quit the game and return to the desktop?'),
++    'dandk': ('Afslut til skrivebordet', 'Luk spillet.', 'Gem og luk spillet.',
++              'Afslut spillet og vend tilbage til skrivebordet?'),
++    'deude': ('Zum Desktop beenden', 'Das Spiel schließen.', 'Speichern und das Spiel schließen.',
++              'Spiel beenden und zum Desktop zurückkehren?'),
++    'finfi': ('Lopeta työpöydälle', 'Sulje peli.', 'Tallenna ja sulje peli.',
++              'Lopetetaanko peli ja palataanko työpöydälle?'),
++    'frafr': ('Quitter vers le bureau', 'Fermer le jeu.', 'Sauvegarder et fermer le jeu.',
++              'Quitter le jeu et revenir au bureau ?'),
++    'itait': ('Esci al desktop', 'Chiudi il gioco.', 'Salva e chiudi il gioco.',
++              'Uscire dal gioco e tornare al desktop?'),
++    'jpnjp': ('デスクトップに戻る', 'ゲームを終了します', 'セーブしてゲームを終了します',
++              'ゲームを終了してデスクトップに戻りますか？'),
++    'korkr': ('바탕 화면으로 종료', '게임을 종료합니다.', '저장하고 게임을 종료합니다.',
++              '게임을 종료하고 바탕 화면으로 돌아가시겠습니까?'),
++    'nldnl': ('Afsluiten naar bureaublad', 'Het spel afsluiten.', 'Opslaan en het spel afsluiten.',
++              'Het spel afsluiten en terugkeren naar het bureaublad?'),
++    'norno': ('Avslutt til skrivebordet', 'Lukk spillet.', 'Lagre og lukk spillet.',
++              'Avslutte spillet og gå tilbake til skrivebordet?'),
++    'polpl': ('Wyjdź do pulpitu', 'Zamknij grę.', 'Zapisz i zamknij grę.',
++              'Zakończyć grę i wrócić do pulpitu?'),
++    'porbr': ('Sair para a área de trabalho', 'Fechar o jogo.', 'Salvar e fechar o jogo.',
++              'Sair do jogo e voltar para a área de trabalho?'),
++    'porpt': ('Sair para o ambiente de trabalho', 'Fechar o jogo.', 'Guardar e fechar o jogo.',
++              'Sair do jogo e voltar ao ambiente de trabalho?'),
++    'rusru': ('Выйти на рабочий стол', 'Закрыть игру.', 'Сохранить и закрыть игру.',
++              'Выйти из игры на рабочий стол?'),
++    'spaes': ('Salir al escritorio', 'Cerrar el juego.', 'Guardar y cerrar el juego.',
++              '¿Salir del juego y volver al escritorio?'),
++    'swese': ('Avsluta till skrivbordet', 'Stäng spelet.', 'Spara och stäng spelet.',
++              'Avsluta spelet och återgå till skrivbordet?'),
++    'turtr': ('Masaüstüne çık', 'Oyunu kapat.', 'Kaydet ve oyunu kapat.',
++              'Oyundan çıkıp masaüstüne dönülsün mü?'),
++    'zhocn': ('退出到桌面', '关闭游戏。', '保存并关闭游戏。',
++              '要退出游戏并返回桌面吗？'),
++    'zhotw': ('結束並返回桌面', '關閉遊戲。', '存檔並關閉遊戲。',
++              '要結束遊戲並返回桌面嗎？'),
++}
++TEXTS['japanese'] = TEXTS['jpnjp']
++TEXTS['enggb'] = TEXTS['engus']
++TEXTS['spaar'] = TEXTS['spaes']
++
++
++def read_fmg(data):
++    """{id: text or None} of an FMG (version 2: 64-bit string offsets)."""
++    groups, = struct.unpack_from('<I', data, 0x0C)
++    offsets, = struct.unpack_from('<Q', data, 0x18)
++    strings = {}
++    for g in range(groups):
++        index, first, last, _ = struct.unpack_from('<iiii', data, 0x28 + 16 * g)
++        for k, string_id in enumerate(range(first, last + 1)):
++            at, = struct.unpack_from('<q', data, offsets + 8 * (index + k))
++            if at <= 0:
++                strings[string_id] = None
++                continue
++            end = at
++            while data[end:end + 2] != b'\0\0':
++                end += 2
++            strings[string_id] = data[at:end].decode('utf-16-le')
++    return strings
++
++
++def write_fmg(template, strings):
++    """An FMG like `template` (its header flags) holding `strings`."""
++    ids = sorted(strings)
++    groups = []
++    for string_id in ids:
++        if groups and groups[-1][2] == string_id - 1:
++            groups[-1][2] = string_id
++        else:
++            groups.append([sum(g[2] - g[1] + 1 for g in groups), string_id, string_id])
++    offsets_at = 0x28 + 16 * len(groups)
++    text_at = offsets_at + 8 * len(ids)
++    texts = bytearray()
++    slots = []
++    for string_id in ids:
++        if strings[string_id] is None:
++            slots.append(0)
++            continue
++        slots.append(text_at + len(texts))
++        texts += strings[string_id].encode('utf-16-le') + b'\0\0'
++    out = bytearray(template[:0x28])
++    struct.pack_into('<I', out, 0x0C, len(groups))
++    struct.pack_into('<I', out, 0x10, len(ids))
++    struct.pack_into('<Q', out, 0x18, offsets_at)
++    for index, first, last in groups:
++        out += struct.pack('<iiii', index, first, last, 0)
++    for slot in slots:
++        out += struct.pack('<q', slot)
++    out += texts
++    out += b'\0' * (4 + (-(len(out) + 4) % 4))  # the game's files end in zeros like this
++    struct.pack_into('<I', out, 0x04, len(out))
++    return bytes(out)
++
++
++def unpack_dcx(data):
++    if data[:4] != b'DCX\0' or data[0x28:0x2C] != b'DFLT':
++        raise ValueError('not a DFLT DCX archive')
++    return zlib.decompress(data[0x4C:])
++
++
++def pack_dcx(template, body):
++    packed = zlib.compress(body, 9)
++    header = bytearray(template[:0x4C])
++    struct.pack_into('>II', header, 0x1C, len(body), len(packed))
++    return bytes(header) + packed
++
++
++def bnd4_files(data):
++    """[(entry offset, data offset, size)] of a BND4 with 0x24-byte entries."""
++    if data[:4] != b'BND4':
++        raise ValueError('not a BND4 archive')
++    count, = struct.unpack_from('<I', data, 0x0C)
++    size, = struct.unpack_from('<Q', data, 0x20)
++    if size != 0x24:
++        raise ValueError(f'unsupported BND4 entry size {size:#x}')
++    out = []
++    for i in range(count):
++        entry = 0x40 + i * size
++        length, = struct.unpack_from('<Q', data, entry + 0x08)
++        offset, = struct.unpack_from('<I', data, entry + 0x18)
++        file_id, = struct.unpack_from('<I', data, entry + 0x1C)
++        out.append((entry, offset, length, file_id))
++    return out
++
++
++def rebuild_bnd4(data, replace):
++    """The BND4 with files {id: bytes} replaced; data re-laid out with the original alignment."""
++    files = bnd4_files(data)
++    start = min(offset for _, offset, _, _ in files)
++    out = bytearray(data[:start])
++    for entry, offset, length, file_id in sorted(files, key=lambda f: f[1]):
++        body = replace.get(file_id, data[offset:offset + length])
++        out += b'\0' * (-len(out) % 16)
++        struct.pack_into('<QQI', out, entry + 0x08, len(body), len(body), len(out))
++        out += body
++    return bytes(out)
++
++
++def menu_texts(archive, texts):
++    """menu.msgbnd.dcx with the Quit to Desktop strings."""
++    name, title_help, system_help, question = texts
++    bnd = unpack_dcx(archive)
++    files = {file_id: bnd[offset:offset + length] for _, offset, length, file_id in bnd4_files(bnd)}
++    if not {200, 201, 204} <= files.keys():
++        raise ValueError('menu texts without the SP menu, help or dialog files')
++    replace = {}
++    for file_id, changes in ((200, {TITLE_ID: name, SYSTEM_ID: name}),
++                             (201, {TITLE_ID: title_help, SYSTEM_ID: system_help}),
++                             (204, {DIALOG_ID: question})):
++        strings = read_fmg(files[file_id])
++        strings.update(changes)
++        replace[file_id] = write_fmg(files[file_id], strings)
++    return pack_dcx(archive, rebuild_bnd4(bnd, replace))
++
++
++# ---- Menu rows --------------------------------------------------------------------------------
++# The title menu and the System menu show five rows and scroll; with Quit to Desktop they hold
++# six. Their movies get a sixth row (and the System panel grows to fit it).
++TITLE_MOVIES = ('title.gfx', 'title_dlc.gfx', 'title_dlc_eu.gfx')
++# The System menu: optionsetting.gfx's Top panel. Depths in it: the screen dimming, the frame;
++# in the frame: its background, and what sits below the rows (bottom edge, lower separator).
++SYSTEM_MOVIE = 'optionsetting.gfx'
++SYSTEM_PANEL = {'list': 'Top', 'dim': 1, 'frame': 3, 'background': 1, 'below': (17, 27)}
++
++
++def placements_in(data, start, end):
++    """{name or depth: (code, body, length, character, matrix)} of a timeline's first frame."""
++    found = {}
++    for code, _, body, length in swf.tags(data, start, end):
++        if code == 1:
++            break
++        if code not in (26, 70):
++            continue
++        character, span, name = swf.place_fields(data, body, code)
++        if not span:
++            continue
++        depth, = struct.unpack_from('<H', data, body + 1 + (code == 70))
++        entry = (code, body, length, character, swf.read_matrix(data, span[0])[0])
++        found[depth] = entry
++        if name:
++            found[name] = entry
++    return found
++
++
++def moved(matrix, dy):
++    scale, rotate, (tx, ty) = matrix
++    return (scale, rotate, (tx, ty + round(dy)))
++
++
++def depth_of(data, body, code):
++    return struct.unpack_from('<H', data, body + 1 + (code == 70))[0]
++
++
++def shift_depth(data, timeline, depth, dy, edits):
++    """Moves what sits at `depth` by `dy` twips in every frame of `timeline` (start, end)."""
++    for code, _, body, length in swf.tags(data, *timeline):
++        if code in (26, 70) and depth_of(data, body, code) == depth:
++            _, span, _ = swf.place_fields(data, body, code)
++            if span:
++                edits[body] = moved(swf.read_matrix(data, span[0])[0], dy)
++
++
++def add_row(data, timeline, rows, inserts, after):
++    """A sixth Item_5_0 after Item_4_0 in `timeline` (start, end): its first placement and its
++    animation (each later Item_4_0 keyframe, one row lower) at a free depth below it. Returns
++    the row step in twips."""
++    code, body, length, _, matrix = rows['Item_4_0']
++    step = matrix[2][1] - rows['Item_3_0'][4][2][1]
++    depth = depth_of(data, body, code)
++    used = {depth_of(data, b, c) for c, _, b, _ in swf.tags(data, *timeline) if c in (26, 70)}
++    free = next(d for d in range(depth + 1, depth + 64) if d not in used)
++
++    def copy(code, body, length):
++        record = bytearray(data[body:body + length])
++        struct.pack_into('<H', record, 1 + (code == 70), free)
++        _, span, _ = swf.place_fields(data, body, code)
++        if span:
++            matrix = swf.read_matrix(data, span[0])[0]
++            record = record[:span[0] - body] + swf.write_matrix(moved(matrix, step)) + record[span[1] - body:]
++        return swf.tag(code, bytes(record).replace(b'Item_4_0\0', b'Item_5_0\0'))
++    first = copy(code, body, length)
++    if b'Item_5_0\0' not in first:
++        raise ValueError('unexpected list row')
++    inserts[timeline[0]] = inserts.get(timeline[0], b'') + first
++    for c, _, b, n in swf.tags(data, *timeline):
++        if b <= body:
++            continue
++        if c in (26, 70) and depth_of(data, b, c) == depth:
++            after[b] = after.get(b, b'') + copy(c, b, n)
++        elif c == 28 and struct.unpack_from('<H', data, b)[0] == depth:  # RemoveObject2
++            after[b] = after.get(b, b'') + swf.tag(28, struct.pack('<H', free))
++    return step
++
++
++def taller_title(data):
++    """title*.gfx: a sixth row under the title menu's five."""
++    _, sprites, _ = swf.definitions(data)
++    root = placements_in(data, swf.stage_start(data), len(data))
++    top = placements_in(data, *sprites[root['Top'][3]])
++    timeline = sprites[top['CommandList'][3]]
++    rows = placements_in(data, *timeline)
++    if 'Item_5_0' in rows:
++        return None
++    inserts, after = {}, {}
++    add_row(data, timeline, rows, inserts, after)
++    return rebuild(data, {}, inserts, after)
++
++
++def taller_list(data, panel=SYSTEM_PANEL):
++    """The System menu panel: a sixth row, what sits below the rows (frame edge, separator, help
++    and button guide) one row lower, the panel half a row higher to stay centred. The panel
++    animates as it opens: the moves apply to every frame."""
++    _, sprites, _ = swf.definitions(data)
++    start = swf.stage_start(data)
++    root = placements_in(data, start, len(data))
++    code, body, _, character, _ = root[panel['list']]
++    timeline = sprites[character]
++    rows = placements_in(data, *timeline)
++    if 'Item_5_0' in rows:
++        return None
++    dim, frame_place = rows.get(panel['dim']), rows.get(panel['frame'])
++    if not dim or not frame_place or 'StatusBar' not in rows or frame_place[3] not in sprites:
++        raise ValueError('unexpected list panel')
++    frame = placements_in(data, *sprites[frame_place[3]])
++    background = frame.get(panel['background'])
++    below = [frame.get(depth) for depth in panel['below']]
++    if not background or None in below:
++        raise ValueError('unexpected list frame')
++    inserts, after, edits = {}, {}, {}
++    step = add_row(data, timeline, rows, inserts, after)
++    shift_depth(data, (start, len(data)), depth_of(data, body, code), -step / 2, edits)  # centred
++    shift_depth(data, timeline, panel['dim'], step / 2, edits)  # the screen dimming stays put
++    shift_depth(data, timeline, depth_of(data, rows['StatusBar'][1], rows['StatusBar'][0]), step, edits)
++    for entry in below:
++        shift_depth(data, sprites[frame_place[3]], depth_of(data, entry[1], entry[0]), step, edits)
++    # The background grows downward: its top edge (shape top, in twips) stays.
++    shape_top, shape_bottom = swf_shape_y(data, background[3])
++    scale, rotate, (tx, ty) = background[4]
++    sx, sy = scale or (65536, 65536)
++    grow = (shape_bottom - shape_top + step * 65536 / sy) / (shape_bottom - shape_top)
++    edits[background[1]] = ((sx, round(sy * grow)), rotate,
++                            (tx, round(ty + shape_top * sy / 65536 * (1 - grow))))
++    return rebuild(data, edits, inserts, after)
++
++
++def swf_shape_y(data, character):
++    """A shape's (top, bottom) in twips; for a sprite, that of the shapes it places."""
++    _, sprites, _ = swf.definitions(data)
++    if character in sprites:
++        spans = []
++        for code, _, body, length in swf.tags(data, *sprites[character]):
++            if code == 1:
++                break
++            if code in (26, 70):
++                child, span, _ = swf.place_fields(data, body, code)
++                if child is not None and child not in sprites:
++                    dy = swf.read_matrix(data, span[0])[0][2][1] if span else 0
++                    top, bottom = swf_shape_y(data, child)
++                    spans.append((top + dy, bottom + dy))
++        if not spans:
++            raise ValueError(f'sprite {character} has no shapes')
++        return min(t for t, _ in spans), max(b for _, b in spans)
++    shape = character
++
++    def scan(start, end):
++        for code, _, body, length in swf.tags(data, start, end):
++            if code in swf.SHAPE_TAGS and struct.unpack_from('<H', data, body)[0] == shape:
++                r = swf.Reader(data, body + 2)
++                n = r.unsigned(5)
++                r.signed(n), r.signed(n)
++                return r.signed(n), r.signed(n)
++            if code == 39:
++                found = scan(body + 4, body + length)
++                if found:
++                    return found
++        return None
++    found = scan(swf.stage_start(data), len(data))
++    if not found:
++        raise ValueError(f'shape {shape} not found')
++    return found
++
++
++def rebuild(data, edits, inserts, after=None):
++    start = swf.stage_start(data)
++    out = data[:start] + swf.rewrite_timeline(data, start, len(data), edits, inserts, after)
++    return out[:4] + struct.pack('<I', len(out)) + out[8:]
++
++
++def write_row_layer(game, out):
++    menu = game / 'dvdroot_ps4' / 'menu'
++    target = out / 'dvdroot_ps4' / 'menu'
++    target.mkdir(parents=True, exist_ok=True)
++    for name, grow in [(n, taller_title) for n in TITLE_MOVIES] + [(SYSTEM_MOVIE, taller_list)]:
++        source = menu / name
++        if not source.is_file():
++            continue
++        try:
++            data = grow(source.read_bytes())
++        except (ValueError, KeyError, IndexError, StopIteration, struct.error) as error:
++            print(f'Quit to Desktop: {name}: {error}; the list keeps five rows', file=sys.stderr)
++            continue
++        if data:
++            (target / name).write_bytes(data)
++    print('Quit to Desktop: title and System menus with six rows')
++
++
++def write_text_layer(game, out):
++    msg = game / 'dvdroot_ps4' / 'msg'
++    written = 0
++    for folder in sorted(p for p in msg.iterdir() if p.is_dir()):
++        source = folder / 'menu.msgbnd.dcx'
++        if not source.is_file():
++            continue
++        texts = TEXTS.get(folder.name.casefold(), TEXTS['engus'])
++        target = out / 'dvdroot_ps4' / 'msg' / folder.name / source.name
++        target.parent.mkdir(parents=True, exist_ok=True)
++        target.write_bytes(menu_texts(source.read_bytes(), texts))
++        written += 1
++    print(f'Quit to Desktop: menu texts for {written} languages')
++
++
++def main():
++    p = argparse.ArgumentParser(description=__doc__)
++    p.add_argument('game', type=Path, help='game folder (with dvdroot_ps4)')
++    p.add_argument('--out', type=Path, required=True, help='mod layer folder to write')
++    a = p.parse_args()
++    write_text_layer(a.game, a.out)
++    write_row_layer(a.game, a.out)
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (OSError, ValueError, KeyError, struct.error, zlib.error) as error:
++        # The game still starts; the entries then keep their old names.
++        print(f'Quit to Desktop: menu texts: {error}', file=sys.stderr)
+diff --git a/scripts/run_windows.py b/scripts/run_windows.py
+--- a/scripts/run_windows.py
++++ b/scripts/run_windows.py
+@@ -1,401 +1,401 @@
+-#!/usr/bin/env python3
+-# SPDX-License-Identifier: GPL-2.0-or-later
+-"""Windows counterpart of run.sh: prepare the game image, compile the patches and start
+-out/bb-probe.exe. Same environment variables and bbport.ini settings as run.sh.
+-
+-    run.bat [--game-dir DIR] [bb-probe options...]
+-
+-The game folder: --game-dir, else BB_GAME_DIR, else the last one used (out/game_dir.txt), else
+-../CUSA03173 (as run.sh). Unless BB_PREBUILT=1
+-the port is (re)built first through MSYS2 (build.sh in the CLANG64 environment)."""
+-import atexit
+-from datetime import datetime
+-import hashlib
+-import json
+-import os
+-from pathlib import Path
+-import shlex
+-import shutil
+-import subprocess
+-import sys
+-import struct
+-import time
+-import zlib
+-from mods import remove_overlay
+-
+-ROOT = Path(__file__).resolve().parent.parent
+-SCRIPTS = ROOT / 'scripts'
+-PYTHON = sys.executable
+-LOG_STREAM = None
+-
+-
+-def init_session_log():
+-    """Route launcher/runtime diagnostics to BB_LOG_FILE when the GUI launcher supplies one."""
+-    global LOG_STREAM
+-    path = os.environ.get('BB_LOG_FILE')
+-    if not path:
+-        return
+-    log_path = Path(path)
+-    log_path.parent.mkdir(parents=True, exist_ok=True)
+-    LOG_STREAM = log_path.open('a', encoding='utf-8', errors='backslashreplace', buffering=1)
+-    atexit.register(LOG_STREAM.close)
+-    sys.stdout = LOG_STREAM
+-    sys.stderr = LOG_STREAM
+-    print('=' * 80)
+-    print(f'Bloodborne PC session log started: {datetime.now().isoformat(timespec="seconds")}')
+-    print(f'Launcher root: {ROOT}')
+-    print(f'Log file: {log_path.resolve()}')
+-    print('=' * 80, flush=True)
+-
+-
+-def msys_root():
+-    return Path(os.environ.get('BB_MSYS2', r'C:\msys64'))
+-
+-
+-def display_size():
+-    """The primary display's resolution in pixels (output_res = auto), or None."""
+-    try:
+-        import ctypes
+-        user32 = ctypes.windll.user32
+-        user32.SetProcessDPIAware()  # physical pixels, not the scaled ones
+-        w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+-        return (w - w % 2, h - h % 2) if w >= 640 and h >= 360 else None
+-    except (AttributeError, OSError):
+-        return None
+-
+-
+-def large_scene(render):
+-    """Whether a scene of `render` ('WxH') needs the 9152 MiB pool: above 1920x1080."""
+-    w, h = (int(v) for v in render.split('x'))
+-    return w * h > 1920 * 1080
+-
+-
+-def run(arguments, capture=False, check=True, env=None):
+-    result = subprocess.run(
+-        [str(a) for a in arguments],
+-        cwd=ROOT,
+-        env=env,
+-        stdout=subprocess.PIPE if capture else LOG_STREAM,
+-        stderr=LOG_STREAM,
+-        text=True,
+-    )
+-    if capture and LOG_STREAM is not None and result.stdout:
+-        LOG_STREAM.write(result.stdout)
+-        if not result.stdout.endswith('\n'):
+-            LOG_STREAM.write('\n')
+-        LOG_STREAM.flush()
+-    if check and result.returncode:
+-        print(f'Command failed with exit code {result.returncode}: '
+-              f'{" ".join(shlex.quote(str(a)) for a in arguments)}', flush=True)
+-        sys.exit(result.returncode)
+-    return result.stdout.strip() if capture else result.returncode
+-
+-
+-def build():
+-    """build.sh in a CLANG64 login shell (its clang, cmake, ninja and pkg-config)."""
+-    bash = msys_root() / 'usr/bin/bash.exe'
+-    if not bash.is_file():
+-        sys.exit(f'MSYS2 not found at {msys_root()} (set BB_MSYS2, or BB_PREBUILT=1 with a built out/)')
+-    env = dict(os.environ, MSYSTEM='CLANG64', CHERE_INVOKING='1')
+-    run([bash, '-lc', 'bash build.sh'], env=env)
+-
+-
+-# The image the engine boots (prepare.py, link_libc.py, link_modules.py, content_profile.py):
+-# about 300 MB written and 235,000 relocations applied, the same every launch for the same game.
+-# It is made again only when what it is made from changes - the game's executable, modules and
+-# parameters, the content SKU, these scripts - and reused otherwise (out/prepared.json).
+-PREPARE_SCRIPTS = ('prepare.py', 'link_libc.py', 'link_modules.py', 'content_profile.py', 'game_check.py')
+-PREPARED = ('boot.bin', 'eboot.elf', 'entry.bin', 'analysis.json', 'boot-libc.bin', 'libc-link.json',
+-            'boot-linked.bin', 'link.json', 'content.bin', 'content-profile.json')
+-
+-
+-def prepare_key(game, sku):
+-    digest = hashlib.sha256()
+-    modules = sorted((game / 'sce_module').iterdir()) if (game / 'sce_module').is_dir() else []
+-    # patches/redzone.json: the stores link_modules.py moves below the red zone (Intel 12th gen+).
+-    for path in [game / 'eboot.bin', game / 'sce_sys/param.sfo', *modules, *(SCRIPTS / s for s in PREPARE_SCRIPTS),
+-                 ROOT / 'patches' / 'redzone.json']:
+-        digest.update(path.name.encode('utf-8') + b'\0')
+-        if path.is_file():
+-            with path.open('rb') as f:
+-                while chunk := f.read(1 << 20):
+-                    digest.update(chunk)
+-        digest.update(b'\0')
+-    digest.update(f'sku={sku};check={os.environ.get("BB_SKIP_GAME_CHECK", "")}'.encode('utf-8'))
+-    return digest.hexdigest()
+-
+-
+-def prepare_image(game, out):
+-    """The boot image for `game` in `out`: reused when unchanged, else made by the scripts."""
+-    started = time.monotonic()
+-    sku = os.environ.get('BB_CONTENT_SKU', 'full')
+-    stamp = out / 'prepared.json'
+-    key = prepare_key(game, sku)
+-    try:
+-        reusable = json.loads(stamp.read_text(encoding='utf-8')).get('key') == key
+-    except (OSError, ValueError, AttributeError):
+-        reusable = False
+-    if reusable and all((out / name).is_file() for name in PREPARED):
+-        print(f'Boot image unchanged: reused ({time.monotonic() - started:.1f} s)', flush=True)
+-        return
+-    stamp.unlink(missing_ok=True)  # a run stopped half way leaves no stamp behind
+-    for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
+-                          ('content_profile.py', ['--sku', sku])):
+-        run([PYTHON, SCRIPTS / script, game, '--out', out, *extra])
+-    stamp.write_text(json.dumps({'key': key}) + '\n', encoding='utf-8')
+-    print(f'Boot image prepared in {time.monotonic() - started:.1f} s (reused on later launches)', flush=True)
+-
+-
+-def settings_value(config, key):
+-    if not config.is_file():
+-        return None
+-    for line in config.read_text(errors='replace').splitlines():
+-        name, _, value = line.partition('=')
+-        if name.strip() == key:
+-            return value.strip()
+-    return None
+-
+-
+-def gpu_cache_dir(env=os.environ):
+-    """Where the engine keeps its shader and pipeline caches (bb-probe runs in ROOT)."""
+-    return Path(env.get('BB_GPU_USER_DIR', ROOT / 'user')) / 'cache'
+-
+-
+-def reset_stale_gpu_cache(cache, engine):
+-    """Deletes the shader and pipeline caches another engine build wrote. The engine checks them
+-    against the GPU only, so a damaged record or one from an older build was preloaded every
+-    session, through updates (characters' skin and hair missing in every save: GitHub issue 30).
+-    The first start of each engine rebuilds them, as after a driver update. The GPU driver's own
+-    cache (*.vkcache) stays: the engine checks it against the GPU and driver, and it holds only
+-    what the driver compiled, so the next start compiles less."""
+-    stamp = cache / 'engine.txt'
+-    try:
+-        if not engine or stamp.read_text(encoding='utf-8').strip() == engine:
+-            return False
+-    except OSError:
+-        pass
+-    removed = False
+-    if cache.is_dir():
+-        for entry in cache.iterdir():
+-            if entry == stamp or entry.suffix == '.vkcache':
+-                continue
+-            try:
+-                if entry.is_dir() and not entry.is_symlink():
+-                    shutil.rmtree(entry)
+-                else:
+-                    entry.unlink()
+-                removed = True
+-            except OSError as error:
+-                print(f'GPU cache: cannot remove {entry.name}: {error}', flush=True)
+-                return False
+-    cache.mkdir(parents=True, exist_ok=True)
+-    stamp.write_text(engine + '\n', encoding='utf-8')
+-    if removed:
+-        print(f'GPU cache: cleared for engine {engine}; shaders compile again on this start', flush=True)
+-    return removed
+-
+-
+-def configure_frame_rate(env):
+-    """Windows supports the tested fixed-timestep presets, including old config migration.
+-
+-    Explicit limits also override inherited BB_VBLANK_HZ=0 / BB_FPS_LIMIT=0 so a
+-    legacy uncapped launch cannot saturate the desktop during menus or loading.
+-    """
+-    fps = env.get('BB_FPS', '60')
+-    # Bloodborne PC: 120 and 144 are the 90 FPS++ patch with its frame-rate values for that rate
+-    # (patches.py SCALED_FPS; the uncapped patch froze Vicar Amelia's intro at any rate). 144 Hz
+-    # is above the vblank rates the engine paces on (it runs 480 Hz then); the limit holds 144.
+-    if fps in ('120', '144'):
+-        env.update(BB_FPS=fps, BB_FPS_LIMIT=fps, BB_VBLANK_HZ=fps)
+-        return fps
+-    # Other rates above 90 use the uncapped patch (with the sprint fix) and the frame limiter;
+-    # "uncap" runs unlimited unless BB_FPS_LIMIT asks for a cap.
+-    if fps == 'uncap' or (fps.isdigit() and int(fps) > 90):
+-        limit = fps if fps.isdigit() else env.get('BB_FPS_LIMIT', '0')
+-        env.update(BB_FPS='uncap', BB_FPS_LIMIT=limit if limit.isdigit() else '0', BB_VBLANK_HZ='0')
+-        return 'uncap'
+-    if fps not in ('30', '60', '90'):
+-        print(f'Unsupported Windows FPS preset {fps!r}; using 60 FPS.', flush=True)
+-        fps = '60'
+-    env.update(BB_FPS=fps, BB_FPS_LIMIT=fps, BB_VBLANK_HZ='90' if fps == '90' else '60')
+-    return fps
+-
+-
+-def main():
+-    arguments = sys.argv[1:]
+-    game = os.environ.get('BB_GAME_DIR')
+-    if arguments[:1] == ['--game-dir'] and len(arguments) > 1:
+-        game, arguments = arguments[1], arguments[2:]
+-    data = Path(os.environ.get('BB_DATA_DIR', ROOT))
+-    out = data / 'out'
+-    try:
+-        engine = json.loads((ROOT / 'package.json').read_text(encoding='utf-8-sig')).get('engine', '')
+-        reset_stale_gpu_cache(gpu_cache_dir(), engine)
+-    except (OSError, ValueError):
+-        pass
+-    out.mkdir(parents=True, exist_ok=True)
+-    os.environ.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
+-    config = Path(os.environ['BB_CONFIG'])
+-    from online import configure_online, read_settings
+-    try:
+-        override = configure_online(read_settings(config) if config.exists() else {}, data, os.environ)
+-        print('Online: configured server profile and automatic game redirect' if override else 'Online: offline mode')
+-    except (OSError, ValueError) as error:
+-        sys.exit(f'Online configuration: {error}')
+-    if 'BB_FSR411_DIR' not in os.environ and not (ROOT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
+-        os.environ['BB_FSR411_DIR'] = str(data / 'fsr4_411')
+-    # FSR 4.1.1 on any GPU: the fsr4vk provider DLL the package ships (vk_fsr4vk.cpp). The engine
+-    # looks beside bb-probe.exe without this; the package keeps it at its top.
+-    if 'BB_FSR4VK_DIR' not in os.environ and (ROOT / 'fsr4vk' / 'amd_fidelityfx_upscaler_vk.dll').is_file():
+-        os.environ['BB_FSR4VK_DIR'] = str(ROOT / 'fsr4vk')
+-    # The last folder that worked is remembered, so run.bat alone starts the game afterwards.
+-    remembered = out / 'game_dir.txt'
+-    if not game and remembered.is_file():
+-        game = remembered.read_text(encoding='utf-8').strip()
+-    game = Path(game) if game else ROOT.parent / 'CUSA03173'
+-    if not (game / 'eboot.bin').is_file():
+-        sys.exit(f'No eboot.bin in {game} (pass --game-dir or set BB_GAME_DIR).')
+-    original = game.resolve()
+-    remembered.write_text(str(original), encoding='utf-8')
+-    os.environ['BB_GAME_DIR'] = str(original)
+-    # The in-game menu's "Apply and restart" runs this launcher again (probe.c runtime_restart).
+-    os.environ['BB_RESTART_COMMAND'] = subprocess.list2cmdline([PYTHON, str(Path(__file__).resolve()), *sys.argv[1:]])
+-
+-    merged = Path(run([PYTHON, SCRIPTS / 'mods.py', original, '--out', out,
+-                       '--mods-dir', os.environ.get('BB_MODS_DIR', data / 'mods'),
+-                       '--config', os.environ.get('BB_MODS_CONFIG', data / 'mods.json'),
+-                       '--enabled', os.environ.get('BB_MODS_ENABLED', '1')], capture=True))
+-    overlay = merged if merged.resolve() != original else None
+-    # The first files the game reads: without them it crashes a second after opening.
+-    core = ('dvdroot_ps4/shader/gxshader.shaderbnd.dcx', 'dvdroot_ps4/other/systex.tpf.dcx')
+-    missing = [name for name in core if not (merged / name).is_file()]
+-    if missing and overlay and all((original / name).is_file() for name in core):
+-        print('Mods: the merged game lost its own files; starting without mods', flush=True)
+-        remove_overlay(overlay)
+-        merged, overlay, missing = original, None, []
+-    if missing:
+-        if overlay:
+-            remove_overlay(overlay)
+-        sys.exit(f'The game folder {original} is incomplete: {", ".join(missing)} missing. '
+-                 'Dump or extract the game again (base game plus the 1.09 update).')
+-    try:
+-        prepare_image(merged, out)
+-        prebuilt = os.environ.get('BB_PREBUILT') == '1'
+-        if not prebuilt:
+-            build()
+-        # Engine features are prepared locally and only mounted after runtime byte checks.
+-        for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256', 'BB_PC_MENU_ASSETS', 'BB_REBIRTH_ASSET'):
+-            os.environ.pop(key, None)
+-        # bbport: the engine's own features - picture tuning, cheats, trophies from a save, the
+-        # online fixes - all check the executable first, so it is always verified (~0.1 s).
+-        try:
+-            from engine_assets import prepare_mirror, verify_executable
+-            os.environ['BB_ENGINE_IMAGE_SHA256'] = verify_executable(out / 'eboot.elf')
+-            if settings_value(config, 'change_appearance') == '1':
+-                asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
+-                os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
+-                print(f'Engine: Dream mirror prepared locally: {asset}', flush=True)
+-            if (any(settings_value(config, key) == '1' for key in ('change_appearance', 'camera_controls', 'rebirth', 'graphics_controls'))
+-                or any(settings_value(config, key) != '0' for key in ('pc_controls', 'widescreen'))):
+-                from engine_assets import prepare_menu_assets
+-                try:
+-                    menus = prepare_menu_assets(merged, out / 'eboot.elf', data / 'engine-assets',
+-                                                out / 'bb-engine-assets.exe', rebirth=settings_value(config, 'rebirth') == '1')
+-                    os.environ['BB_PC_MENU_ASSETS'] = str(menus)
+-                    print(f'Engine: native PC menus prepared locally: {menus}', flush=True)
+-                    if settings_value(config, 'rebirth') == '1':
+-                        os.environ['BB_REBIRTH_ASSET'] = str(menus / 'dvdroot_ps4/script/talk/m24_02_00_00.talkesdbnd.dcx')
+-                except (OSError, ValueError) as error:
+-                    print(f'Engine: native PC menus disabled: {error}', flush=True)
+-        except (OSError, ValueError, IndexError, struct.error, zlib.error) as error:
+-            print(f'Engine: enhancement preparation skipped: {error}', flush=True)
+-        # output_res = auto: the display's own size, for the scene size below and the engine.
+-        if not os.environ.get('BB_DISPLAY_SIZE'):
+-            size = display_size()
+-            if size:
+-                os.environ['BB_DISPLAY_SIZE'] = f'{size[0]}x{size[1]}'
+-                if (settings_value(config, 'output_res') or '').lower() == 'auto':
+-                    print(f'Output resolution: the display\'s own, {size[0]}x{size[1]}', flush=True)
+-        # Sizes chosen below for the previous launch are recomputed after an in-game restart.
+-        if os.environ.get('BB_AUTO_RENDER_RES') == '1':
+-            for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
+-                os.environ.pop(key, None)
+-        fps = configure_frame_rate(os.environ)
+-        scaled_render = scaled_output = None
+-        if not os.environ.get('BB_RENDER_RES'):
+-            sizes = run([PYTHON, SCRIPTS / 'patches.py', '--print-scaled', '--settings', config], capture=True, check=False)
+-            if sizes and len(sizes.split()) == 2:
+-                scaled_render, scaled_output = sizes.split()
+-        live = '0'
+-        if scaled_output:
+-            live = os.environ.get('BB_LIVE_RES') or settings_value(config, 'live_resolution') or '0'
+-            if live == 'auto':
+-                caps = out / 'bb-gpu-capabilities.exe'
+-                live = run([caps, '--live-resolution'], capture=True, check=False) or '0'
+-            live = '1' if live == '1' else '0'
+-        if live == '1':
+-            print(f'Output {scaled_output}: live resolution changes (live_resolution=0: startup patch)')
+-        elif scaled_output:
+-            os.environ.update(BB_RENDER_RES=scaled_render, BB_OUTPUT_RES=scaled_output, BB_AUTO_RENDER_RES='1')
+-            # The extra 4 GiB is for scenes above 1080p only: Windows counts the whole pool
+-            # against RAM plus page file from the start, used or not. The scene, not the output:
+-            # the output exists only on the host side (the upscaler fills it), and the game's UI
+-            # stays 1920x1080. A 1440p output with a Quality upscaler (a 1706x960 scene) asked for
+-            # 10 GB at start and failed on PCs with 16 GB (Windows error 1450).
+-            if large_scene(scaled_render):
+-                os.environ.setdefault('BB_DMEM_MB', '9152')
+-            dmem = os.environ.get('BB_DMEM_MB', '5056')
+-            print(f'Output {scaled_output}: scene {scaled_render}, direct memory {dmem} MiB '
+-                  '(live_resolution=1: live changes)')
+-        run([PYTHON, SCRIPTS / 'patches.py', '--out', out, '--fps', fps, '--extra', os.environ.get('BB_PATCHES', ''),
+-             '--settings', config, '--game-dir', merged, '--render-res', os.environ.get('BB_RENDER_RES', ''),
+-             '--output-res', os.environ.get('BB_OUTPUT_RES', ''),
+-             '--patches-dir', os.environ.get('BB_PATCHES_DIR', data / 'patches'),
+-             '--patches-config', os.environ.get('BB_PATCHES_CONFIG', data / 'patches.json')])
+-        # bbport: a patch that enlarges the game's heaps (a resolution patch above 1080p chosen in
+-        # the patches list, with a 1080p output here) overflows the 5056 MiB pool at start.
+-        try:
+-            info = json.loads((out / 'patches-info.json').read_text(encoding='utf-8'))
+-        except (OSError, ValueError):
+-            info = {}
+-        heaps = info.get('heap_patch')
+-        # The UI movie viewport the patches gave the game (patches.py ui_size): the renderer
+-        # recognizes the UI pass by it and fits it to the output (ui_composition.h).
+-        if info.get('ui_size', '1920x1080') != '1920x1080':
+-            os.environ['BB_UI_SIZE'] = info['ui_size']
+-            print(f"Widescreen: UI viewport {info['ui_size']} (the 16:9 stage centred in it)", flush=True)
+-        else:
+-            os.environ.pop('BB_UI_SIZE', None)
+-        if heaps and 'BB_DMEM_MB' not in os.environ:
+-            os.environ['BB_DMEM_MB'] = '9152'
+-            print("Patches: the game's heaps are enlarged; direct memory 9152 MiB", flush=True)
+-        probe = ROOT / os.environ.get('BB_PROBE', out / 'bb-probe.exe')
+-        command = [probe, out / 'boot-linked.bin', '--content-profile', out / 'content.bin',
+-                   '--patches', out / 'patches.bin', '--app0', merged,
+-                   '--user', os.environ.get('BB_USER_DIR', data / 'user'),
+-                   '--timeout', os.environ.get('BB_TIMEOUT', '0'), *arguments]
+-        # MSYS2's DLLs (libc++, SDL3, FFmpeg, ...). System32 is searched before PATH, so the
+-        # Vulkan loader stays the one installed with the GPU driver.
+-        os.environ['PATH'] = os.pathsep.join([str(msys_root() / 'clang64/bin'), os.environ.get('PATH', '')])
+-        print('Starting:', ' '.join(shlex.quote(str(c)) for c in command), flush=True)
+-        try:
+-            status = subprocess.call(
+-                [str(c) for c in command],
+-                cwd=ROOT,
+-                stdout=LOG_STREAM,
+-                stderr=LOG_STREAM,
+-            )
+-        except KeyboardInterrupt:
+-            status = 130
+-        print(f'bb-probe exited with code {status}', flush=True)
+-        # Windows crash codes (0xC0000005) do not fit sys.exit: pass them on as the signed
+-        # 32-bit value the launcher reads, not -1.
+-        return status - (1 << 32) if status >= (1 << 31) else status
+-    finally:
+-        if overlay:
+-            remove_overlay(overlay)
+-
+-
+-if __name__ == '__main__':
+-    init_session_log()
+-    sys.exit(main())
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0-or-later
++"""Windows counterpart of run.sh: prepare the game image, compile the patches and start
++out/bb-probe.exe. Same environment variables and bbport.ini settings as run.sh.
++
++    run.bat [--game-dir DIR] [bb-probe options...]
++
++The game folder: --game-dir, else BB_GAME_DIR, else the last one used (out/game_dir.txt), else
++../CUSA03173 (as run.sh). Unless BB_PREBUILT=1
++the port is (re)built first through MSYS2 (build.sh in the CLANG64 environment)."""
++import atexit
++from datetime import datetime
++import hashlib
++import json
++import os
++from pathlib import Path
++import shlex
++import shutil
++import subprocess
++import sys
++import struct
++import time
++import zlib
++from mods import remove_overlay
++
++ROOT = Path(__file__).resolve().parent.parent
++SCRIPTS = ROOT / 'scripts'
++PYTHON = sys.executable
++LOG_STREAM = None
++
++
++def init_session_log():
++    """Route launcher/runtime diagnostics to BB_LOG_FILE when the GUI launcher supplies one."""
++    global LOG_STREAM
++    path = os.environ.get('BB_LOG_FILE')
++    if not path:
++        return
++    log_path = Path(path)
++    log_path.parent.mkdir(parents=True, exist_ok=True)
++    LOG_STREAM = log_path.open('a', encoding='utf-8', errors='backslashreplace', buffering=1)
++    atexit.register(LOG_STREAM.close)
++    sys.stdout = LOG_STREAM
++    sys.stderr = LOG_STREAM
++    print('=' * 80)
++    print(f'Bloodborne PC session log started: {datetime.now().isoformat(timespec="seconds")}')
++    print(f'Launcher root: {ROOT}')
++    print(f'Log file: {log_path.resolve()}')
++    print('=' * 80, flush=True)
++
++
++def msys_root():
++    return Path(os.environ.get('BB_MSYS2', r'C:\msys64'))
++
++
++def display_size():
++    """The primary display's resolution in pixels (output_res = auto), or None."""
++    try:
++        import ctypes
++        user32 = ctypes.windll.user32
++        user32.SetProcessDPIAware()  # physical pixels, not the scaled ones
++        w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
++        return (w - w % 2, h - h % 2) if w >= 640 and h >= 360 else None
++    except (AttributeError, OSError):
++        return None
++
++
++def large_scene(render):
++    """Whether a scene of `render` ('WxH') needs the 9152 MiB pool: above 1920x1080."""
++    w, h = (int(v) for v in render.split('x'))
++    return w * h > 1920 * 1080
++
++
++def run(arguments, capture=False, check=True, env=None):
++    result = subprocess.run(
++        [str(a) for a in arguments],
++        cwd=ROOT,
++        env=env,
++        stdout=subprocess.PIPE if capture else LOG_STREAM,
++        stderr=LOG_STREAM,
++        text=True,
++    )
++    if capture and LOG_STREAM is not None and result.stdout:
++        LOG_STREAM.write(result.stdout)
++        if not result.stdout.endswith('\n'):
++            LOG_STREAM.write('\n')
++        LOG_STREAM.flush()
++    if check and result.returncode:
++        print(f'Command failed with exit code {result.returncode}: '
++              f'{" ".join(shlex.quote(str(a)) for a in arguments)}', flush=True)
++        sys.exit(result.returncode)
++    return result.stdout.strip() if capture else result.returncode
++
++
++def build():
++    """build.sh in a CLANG64 login shell (its clang, cmake, ninja and pkg-config)."""
++    bash = msys_root() / 'usr/bin/bash.exe'
++    if not bash.is_file():
++        sys.exit(f'MSYS2 not found at {msys_root()} (set BB_MSYS2, or BB_PREBUILT=1 with a built out/)')
++    env = dict(os.environ, MSYSTEM='CLANG64', CHERE_INVOKING='1')
++    run([bash, '-lc', 'bash build.sh'], env=env)
++
++
++# The image the engine boots (prepare.py, link_libc.py, link_modules.py, content_profile.py):
++# about 300 MB written and 235,000 relocations applied, the same every launch for the same game.
++# It is made again only when what it is made from changes - the game's executable, modules and
++# parameters, the content SKU, these scripts - and reused otherwise (out/prepared.json).
++PREPARE_SCRIPTS = ('prepare.py', 'link_libc.py', 'link_modules.py', 'content_profile.py', 'game_check.py')
++PREPARED = ('boot.bin', 'eboot.elf', 'entry.bin', 'analysis.json', 'boot-libc.bin', 'libc-link.json',
++            'boot-linked.bin', 'link.json', 'content.bin', 'content-profile.json')
++
++
++def prepare_key(game, sku):
++    digest = hashlib.sha256()
++    modules = sorted((game / 'sce_module').iterdir()) if (game / 'sce_module').is_dir() else []
++    # patches/redzone.json: the stores link_modules.py moves below the red zone (Intel 12th gen+).
++    for path in [game / 'eboot.bin', game / 'sce_sys/param.sfo', *modules, *(SCRIPTS / s for s in PREPARE_SCRIPTS),
++                 ROOT / 'patches' / 'redzone.json']:
++        digest.update(path.name.encode('utf-8') + b'\0')
++        if path.is_file():
++            with path.open('rb') as f:
++                while chunk := f.read(1 << 20):
++                    digest.update(chunk)
++        digest.update(b'\0')
++    digest.update(f'sku={sku};check={os.environ.get("BB_SKIP_GAME_CHECK", "")}'.encode('utf-8'))
++    return digest.hexdigest()
++
++
++def prepare_image(game, out):
++    """The boot image for `game` in `out`: reused when unchanged, else made by the scripts."""
++    started = time.monotonic()
++    sku = os.environ.get('BB_CONTENT_SKU', 'full')
++    stamp = out / 'prepared.json'
++    key = prepare_key(game, sku)
++    try:
++        reusable = json.loads(stamp.read_text(encoding='utf-8')).get('key') == key
++    except (OSError, ValueError, AttributeError):
++        reusable = False
++    if reusable and all((out / name).is_file() for name in PREPARED):
++        print(f'Boot image unchanged: reused ({time.monotonic() - started:.1f} s)', flush=True)
++        return
++    stamp.unlink(missing_ok=True)  # a run stopped half way leaves no stamp behind
++    for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
++                          ('content_profile.py', ['--sku', sku])):
++        run([PYTHON, SCRIPTS / script, game, '--out', out, *extra])
++    stamp.write_text(json.dumps({'key': key}) + '\n', encoding='utf-8')
++    print(f'Boot image prepared in {time.monotonic() - started:.1f} s (reused on later launches)', flush=True)
++
++
++def settings_value(config, key):
++    if not config.is_file():
++        return None
++    for line in config.read_text(errors='replace').splitlines():
++        name, _, value = line.partition('=')
++        if name.strip() == key:
++            return value.strip()
++    return None
++
++
++def gpu_cache_dir(env=os.environ):
++    """Where the engine keeps its shader and pipeline caches (bb-probe runs in ROOT)."""
++    return Path(env.get('BB_GPU_USER_DIR', ROOT / 'user')) / 'cache'
++
++
++def reset_stale_gpu_cache(cache, engine):
++    """Deletes the shader and pipeline caches another engine build wrote. The engine checks them
++    against the GPU only, so a damaged record or one from an older build was preloaded every
++    session, through updates (characters' skin and hair missing in every save: GitHub issue 30).
++    The first start of each engine rebuilds them, as after a driver update. The GPU driver's own
++    cache (*.vkcache) stays: the engine checks it against the GPU and driver, and it holds only
++    what the driver compiled, so the next start compiles less."""
++    stamp = cache / 'engine.txt'
++    try:
++        if not engine or stamp.read_text(encoding='utf-8').strip() == engine:
++            return False
++    except OSError:
++        pass
++    removed = False
++    if cache.is_dir():
++        for entry in cache.iterdir():
++            if entry == stamp or entry.suffix == '.vkcache':
++                continue
++            try:
++                if entry.is_dir() and not entry.is_symlink():
++                    shutil.rmtree(entry)
++                else:
++                    entry.unlink()
++                removed = True
++            except OSError as error:
++                print(f'GPU cache: cannot remove {entry.name}: {error}', flush=True)
++                return False
++    cache.mkdir(parents=True, exist_ok=True)
++    stamp.write_text(engine + '\n', encoding='utf-8')
++    if removed:
++        print(f'GPU cache: cleared for engine {engine}; shaders compile again on this start', flush=True)
++    return removed
++
++
++def configure_frame_rate(env):
++    """Windows supports the tested fixed-timestep presets, including old config migration.
++
++    Explicit limits also override inherited BB_VBLANK_HZ=0 / BB_FPS_LIMIT=0 so a
++    legacy uncapped launch cannot saturate the desktop during menus or loading.
++    """
++    fps = env.get('BB_FPS', '60')
++    # Bloodborne PC: 120 and 144 are the 90 FPS++ patch with its frame-rate values for that rate
++    # (patches.py SCALED_FPS; the uncapped patch froze Vicar Amelia's intro at any rate). 144 Hz
++    # is above the vblank rates the engine paces on (it runs 480 Hz then); the limit holds 144.
++    if fps in ('120', '144'):
++        env.update(BB_FPS=fps, BB_FPS_LIMIT=fps, BB_VBLANK_HZ=fps)
++        return fps
++    # Other rates above 90 use the uncapped patch (with the sprint fix) and the frame limiter;
++    # "uncap" runs unlimited unless BB_FPS_LIMIT asks for a cap.
++    if fps == 'uncap' or (fps.isdigit() and int(fps) > 90):
++        limit = fps if fps.isdigit() else env.get('BB_FPS_LIMIT', '0')
++        env.update(BB_FPS='uncap', BB_FPS_LIMIT=limit if limit.isdigit() else '0', BB_VBLANK_HZ='0')
++        return 'uncap'
++    if fps not in ('30', '60', '90'):
++        print(f'Unsupported Windows FPS preset {fps!r}; using 60 FPS.', flush=True)
++        fps = '60'
++    env.update(BB_FPS=fps, BB_FPS_LIMIT=fps, BB_VBLANK_HZ='90' if fps == '90' else '60')
++    return fps
++
++
++def main():
++    arguments = sys.argv[1:]
++    game = os.environ.get('BB_GAME_DIR')
++    if arguments[:1] == ['--game-dir'] and len(arguments) > 1:
++        game, arguments = arguments[1], arguments[2:]
++    data = Path(os.environ.get('BB_DATA_DIR', ROOT))
++    out = data / 'out'
++    try:
++        engine = json.loads((ROOT / 'package.json').read_text(encoding='utf-8-sig')).get('engine', '')
++        reset_stale_gpu_cache(gpu_cache_dir(), engine)
++    except (OSError, ValueError):
++        pass
++    out.mkdir(parents=True, exist_ok=True)
++    os.environ.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
++    config = Path(os.environ['BB_CONFIG'])
++    from online import configure_online, read_settings
++    try:
++        override = configure_online(read_settings(config) if config.exists() else {}, data, os.environ)
++        print('Online: configured server profile and automatic game redirect' if override else 'Online: offline mode')
++    except (OSError, ValueError) as error:
++        sys.exit(f'Online configuration: {error}')
++    if 'BB_FSR411_DIR' not in os.environ and not (ROOT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
++        os.environ['BB_FSR411_DIR'] = str(data / 'fsr4_411')
++    # FSR 4.1.1 on any GPU: the fsr4vk provider DLL the package ships (vk_fsr4vk.cpp). The engine
++    # looks beside bb-probe.exe without this; the package keeps it at its top.
++    if 'BB_FSR4VK_DIR' not in os.environ and (ROOT / 'fsr4vk' / 'amd_fidelityfx_upscaler_vk.dll').is_file():
++        os.environ['BB_FSR4VK_DIR'] = str(ROOT / 'fsr4vk')
++    # The last folder that worked is remembered, so run.bat alone starts the game afterwards.
++    remembered = out / 'game_dir.txt'
++    if not game and remembered.is_file():
++        game = remembered.read_text(encoding='utf-8').strip()
++    game = Path(game) if game else ROOT.parent / 'CUSA03173'
++    if not (game / 'eboot.bin').is_file():
++        sys.exit(f'No eboot.bin in {game} (pass --game-dir or set BB_GAME_DIR).')
++    original = game.resolve()
++    remembered.write_text(str(original), encoding='utf-8')
++    os.environ['BB_GAME_DIR'] = str(original)
++    # The in-game menu's "Apply and restart" runs this launcher again (probe.c runtime_restart).
++    os.environ['BB_RESTART_COMMAND'] = subprocess.list2cmdline([PYTHON, str(Path(__file__).resolve()), *sys.argv[1:]])
++
++    merged = Path(run([PYTHON, SCRIPTS / 'mods.py', original, '--out', out,
++                       '--mods-dir', os.environ.get('BB_MODS_DIR', data / 'mods'),
++                       '--config', os.environ.get('BB_MODS_CONFIG', data / 'mods.json'),
++                       '--enabled', os.environ.get('BB_MODS_ENABLED', '1')], capture=True))
++    overlay = merged if merged.resolve() != original else None
++    # The first files the game reads: without them it crashes a second after opening.
++    core = ('dvdroot_ps4/shader/gxshader.shaderbnd.dcx', 'dvdroot_ps4/other/systex.tpf.dcx')
++    missing = [name for name in core if not (merged / name).is_file()]
++    if missing and overlay and all((original / name).is_file() for name in core):
++        print('Mods: the merged game lost its own files; starting without mods', flush=True)
++        remove_overlay(overlay)
++        merged, overlay, missing = original, None, []
++    if missing:
++        if overlay:
++            remove_overlay(overlay)
++        sys.exit(f'The game folder {original} is incomplete: {", ".join(missing)} missing. '
++                 'Dump or extract the game again (base game plus the 1.09 update).')
++    try:
++        prepare_image(merged, out)
++        prebuilt = os.environ.get('BB_PREBUILT') == '1'
++        if not prebuilt:
++            build()
++        # Engine features are prepared locally and only mounted after runtime byte checks.
++        for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256', 'BB_PC_MENU_ASSETS', 'BB_REBIRTH_ASSET', 'BB_QUIT_TO_DESKTOP'):
++            os.environ.pop(key, None)
++        # bbport: the engine's own features - picture tuning, cheats, trophies from a save, the
++        # online fixes - all check the executable first, so it is always verified (~0.1 s).
++        try:
++            from engine_assets import prepare_mirror, verify_executable
++            os.environ['BB_ENGINE_IMAGE_SHA256'] = verify_executable(out / 'eboot.elf')
++            if settings_value(config, 'change_appearance') == '1':
++                asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
++                os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
++                print(f'Engine: Dream mirror prepared locally: {asset}', flush=True)
++            from engine_assets import prepare_menu_assets
++            try:
++                menus = prepare_menu_assets(merged, out / 'eboot.elf', data / 'engine-assets',
++                                            out / 'bb-engine-assets.exe', rebirth=settings_value(config, 'rebirth') == '1',
++                                            tweak_menus=settings_value(config, 'ingame_tweak_menus') != '0')
++                os.environ['BB_PC_MENU_ASSETS'] = str(menus)
++                os.environ['BB_QUIT_TO_DESKTOP'] = '1'
++                print(f'Engine: native PC menus prepared locally: {menus}', flush=True)
++                if settings_value(config, 'rebirth') == '1':
++                    os.environ['BB_REBIRTH_ASSET'] = str(menus / 'dvdroot_ps4/script/talk/m24_02_00_00.talkesdbnd.dcx')
++            except (OSError, ValueError) as error:
++                print(f'Engine: native PC menus disabled: {error}', flush=True)
++        except (OSError, ValueError, IndexError, struct.error, zlib.error) as error:
++            print(f'Engine: enhancement preparation skipped: {error}', flush=True)
++        # output_res = auto: the display's own size, for the scene size below and the engine.
++        if not os.environ.get('BB_DISPLAY_SIZE'):
++            size = display_size()
++            if size:
++                os.environ['BB_DISPLAY_SIZE'] = f'{size[0]}x{size[1]}'
++                if (settings_value(config, 'output_res') or '').lower() == 'auto':
++                    print(f'Output resolution: the display\'s own, {size[0]}x{size[1]}', flush=True)
++        # Sizes chosen below for the previous launch are recomputed after an in-game restart.
++        if os.environ.get('BB_AUTO_RENDER_RES') == '1':
++            for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
++                os.environ.pop(key, None)
++        fps = configure_frame_rate(os.environ)
++        scaled_render = scaled_output = None
++        if not os.environ.get('BB_RENDER_RES'):
++            sizes = run([PYTHON, SCRIPTS / 'patches.py', '--print-scaled', '--settings', config], capture=True, check=False)
++            if sizes and len(sizes.split()) == 2:
++                scaled_render, scaled_output = sizes.split()
++        live = '0'
++        if scaled_output:
++            live = os.environ.get('BB_LIVE_RES') or settings_value(config, 'live_resolution') or '0'
++            if live == 'auto':
++                caps = out / 'bb-gpu-capabilities.exe'
++                live = run([caps, '--live-resolution'], capture=True, check=False) or '0'
++            live = '1' if live == '1' else '0'
++        if live == '1':
++            print(f'Output {scaled_output}: live resolution changes (live_resolution=0: startup patch)')
++        elif scaled_output:
++            os.environ.update(BB_RENDER_RES=scaled_render, BB_OUTPUT_RES=scaled_output, BB_AUTO_RENDER_RES='1')
++            # The extra 4 GiB is for scenes above 1080p only: Windows counts the whole pool
++            # against RAM plus page file from the start, used or not. The scene, not the output:
++            # the output exists only on the host side (the upscaler fills it), and the game's UI
++            # stays 1920x1080. A 1440p output with a Quality upscaler (a 1706x960 scene) asked for
++            # 10 GB at start and failed on PCs with 16 GB (Windows error 1450).
++            if large_scene(scaled_render):
++                os.environ.setdefault('BB_DMEM_MB', '9152')
++            dmem = os.environ.get('BB_DMEM_MB', '5056')
++            print(f'Output {scaled_output}: scene {scaled_render}, direct memory {dmem} MiB '
++                  '(live_resolution=1: live changes)')
++        run([PYTHON, SCRIPTS / 'patches.py', '--out', out, '--fps', fps, '--extra', os.environ.get('BB_PATCHES', ''),
++             '--settings', config, '--game-dir', merged, '--render-res', os.environ.get('BB_RENDER_RES', ''),
++             '--output-res', os.environ.get('BB_OUTPUT_RES', ''),
++             '--patches-dir', os.environ.get('BB_PATCHES_DIR', data / 'patches'),
++             '--patches-config', os.environ.get('BB_PATCHES_CONFIG', data / 'patches.json')])
++        # bbport: a patch that enlarges the game's heaps (a resolution patch above 1080p chosen in
++        # the patches list, with a 1080p output here) overflows the 5056 MiB pool at start.
++        try:
++            info = json.loads((out / 'patches-info.json').read_text(encoding='utf-8'))
++        except (OSError, ValueError):
++            info = {}
++        heaps = info.get('heap_patch')
++        # The UI movie viewport the patches gave the game (patches.py ui_size): the renderer
++        # recognizes the UI pass by it and fits it to the output (ui_composition.h).
++        if info.get('ui_size', '1920x1080') != '1920x1080':
++            os.environ['BB_UI_SIZE'] = info['ui_size']
++            print(f"Widescreen: UI viewport {info['ui_size']} (the 16:9 stage centred in it)", flush=True)
++        else:
++            os.environ.pop('BB_UI_SIZE', None)
++        if heaps and 'BB_DMEM_MB' not in os.environ:
++            os.environ['BB_DMEM_MB'] = '9152'
++            print("Patches: the game's heaps are enlarged; direct memory 9152 MiB", flush=True)
++        probe = ROOT / os.environ.get('BB_PROBE', out / 'bb-probe.exe')
++        command = [probe, out / 'boot-linked.bin', '--content-profile', out / 'content.bin',
++                   '--patches', out / 'patches.bin', '--app0', merged,
++                   '--user', os.environ.get('BB_USER_DIR', data / 'user'),
++                   '--timeout', os.environ.get('BB_TIMEOUT', '0'), *arguments]
++        # MSYS2's DLLs (libc++, SDL3, FFmpeg, ...). System32 is searched before PATH, so the
++        # Vulkan loader stays the one installed with the GPU driver.
++        os.environ['PATH'] = os.pathsep.join([str(msys_root() / 'clang64/bin'), os.environ.get('PATH', '')])
++        print('Starting:', ' '.join(shlex.quote(str(c)) for c in command), flush=True)
++        try:
++            status = subprocess.call(
++                [str(c) for c in command],
++                cwd=ROOT,
++                stdout=LOG_STREAM,
++                stderr=LOG_STREAM,
++            )
++        except KeyboardInterrupt:
++            status = 130
++        print(f'bb-probe exited with code {status}', flush=True)
++        # Windows crash codes (0xC0000005) do not fit sys.exit: pass them on as the signed
++        # 32-bit value the launcher reads, not -1.
++        return status - (1 << 32) if status >= (1 << 31) else status
++    finally:
++        if overlay:
++            remove_overlay(overlay)
++
++
++if __name__ == '__main__':
++    init_session_log()
++    sys.exit(main())
+diff --git a/src/runtime.h b/src/runtime.h
+--- a/src/runtime.h
++++ b/src/runtime.h
+@@ -25,6 +25,9 @@
+ extern __thread RuntimeRecoverBuf *runtime_fault_recover;
+ /* Restarts the game (in-game settings menu, render resolution change). */
+ void runtime_restart(void);
++void runtime_quit_on_open(const char *guest);
++void runtime_quit_on_save_done(void);
++int runtime_savedata_mounted(void);
+ #define ABI __attribute__((sysv_abi))
+ typedef void (ABI *GuestCallback)(void);
+ void runtime_start(uint64_t capabilities);
+diff --git a/src/runtime_file.c b/src/runtime_file.c
+--- a/src/runtime_file.c
++++ b/src/runtime_file.c
+@@ -200,6 +200,7 @@
+ }
+ /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
+ static int64_t do_open(const char *guest,int flags,int mode) {
++    runtime_quit_on_open(guest);
+     if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
+     char path[1024];
+     int e=translate(guest,path,sizeof(path));
+diff --git a/src/runtime_savedata.c b/src/runtime_savedata.c
+--- a/src/runtime_savedata.c
++++ b/src/runtime_savedata.c
+@@ -200,7 +200,13 @@
+     int slot=slot_of(point);
+     if (slot>=0) { runtime_file_unmount(point->data); slots[slot].used=0; }
+     host_unlock(&lock);
++    if(slot>=0)runtime_quit_on_save_done();
+     return slot>=0 ? 0 : ERR_NOT_FOUND;
++}
++int runtime_savedata_mounted(void){
++    host_lock(&lock);int used=0;
++    for(int i=0;i<SLOTS;++i)used+=slots[i].used;
++    host_unlock(&lock);return used;
+ }
+ static ABI int32_t save_set_param(const MountPoint *point, uint32_t type, const void *buffer, uint64_t size) {
+     if (!initialized) return ERR_NOT_INITIALIZED;
+diff --git a/src/runtime_services.c b/src/runtime_services.c
+--- a/src/runtime_services.c
++++ b/src/runtime_services.c
+@@ -11,6 +11,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <time.h>
++#include <SDL3/SDL.h>
+ #ifdef _WIN32
+ #define htons(v) __builtin_bswap16(v)
+ #define ntohs(v) __builtin_bswap16(v)
+@@ -100,7 +101,61 @@
+ }
+ static ABI int32_t system_event(void *event) { (void)event; return SYSTEM_NO_EVENT; }
+ static ABI int32_t hide_splash(void) { note("SystemService: splash screen hidden"); return 0; }
+-static ABI int32_t launch_browser(void) { note("SystemService: web browser request ignored (offline)"); return 0; }
++/* Quit to Desktop (scripts/quit_menu.py): the patched menus call the browser with these
++ * addresses. "bb:q" (title menu) closes the game; "bb:p" (System menu, in the world) marks the
++ * Exit Game that follows, and "bb:d" (its confirmation dialog) answers 1 to show the Quit to
++ * Desktop text and arms the quit. The game then saves and leaves the world, and closes as soon
++ * as it starts the intro logos (a menu/logo_ file opens) with no save data mounted, or when the
++ * title screen is built ("bb:t", with the intro skipped). An unanswered dialog disarms it after
++ * two minutes. */
++static int quit_pending, quit_waiting;
++static time_t quit_armed;
++static HostMutex quit_lock=HOST_MUTEX_INIT;
++static void quit_game(void) {
++    note("Quit to Desktop");
++    SDL_Event quit={.type=SDL_EVENT_QUIT};
++    SDL_PushEvent(&quit);
++}
++static int quit_ready(void) { return quit_armed && time(NULL)-quit_armed<120; }
++void runtime_quit_on_open(const char *guest) {
++    if (!guest || !strstr(guest,"/menu/logo_")) return;
++    host_lock(&quit_lock);
++    if (quit_ready()) {
++        quit_armed=0;
++        /* A save still writing finishes first (runtime_quit_on_save_done). */
++        if (runtime_savedata_mounted()) quit_waiting=1; else quit_game();
++    }
++    host_unlock(&quit_lock);
++}
++void runtime_quit_on_save_done(void) {
++    host_lock(&quit_lock);
++    if (quit_waiting && !runtime_savedata_mounted()) { quit_waiting=0; quit_game(); }
++    host_unlock(&quit_lock);
++}
++static ABI int32_t launch_browser(const char *url) {
++    if (url && !strcmp(url,"bb:q")) { quit_game(); return 0; }
++    if (url && !strcmp(url,"bb:p")) { host_lock(&quit_lock);quit_pending=1;host_unlock(&quit_lock);return 0; }
++    if (url && !strcmp(url,"bb:d")) {
++        host_lock(&quit_lock);
++        const int armed=quit_pending;
++        quit_pending=0;
++        quit_armed=armed ? time(NULL) : 0;
++        host_unlock(&quit_lock);
++        return armed;
++    }
++    if (url && !strcmp(url,"bb:t")) {
++        host_lock(&quit_lock);
++        if (quit_ready() || quit_waiting) {
++            if(runtime_savedata_mounted())quit_waiting=1;else {quit_waiting=0;quit_game();}
++        }
++        quit_armed=0;
++        host_unlock(&quit_lock);
++        return 0;
++    }
++    note("SystemService: web browser request ignored (offline)");
++    return 0;
++}
++
+ 
+ /* ---- NetCtl / Net / Http / Ssl: no network ---- */
+ static int32_t net_errno;
+@@ -192,7 +247,7 @@
+ typedef struct { const char *name; int initialized, status; } Dialog;
+ static Dialog dialogs[]={{"CommonDialog",0,0},{"MsgDialog",0,0},{"SaveDataDialog",0,0},
+                          {"NpProfileDialog",0,0},{"NpCommerceDialog",0,0},{"ImeDialog",0,0}};
+-static ABI int32_t common_init(void) { return 0; }
++static ABI int32_t common_init(void) { return 0; }
+ static int32_t dialog_init(int i) {
+     if (dialogs[i].initialized) return (int32_t)0x80B80004;
+     dialogs[i].initialized=1; dialogs[i].status=1; return 0;
+@@ -488,26 +543,26 @@
+     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
+     {"sceVoiceInit",ok_void}, {"sceVoiceEnd",ok_void},
+ };
+-/* Opt-in native networking. Saves, trophies and dialogs retain their local contracts. */
+-static int online_symbol(const char *symbol) {
+-    static const char *const prefixes[]={"sceNet","sceNp","sceHttp","sceSsl"};
+-    static const char *const local[]={"sceNpTrophy","sceNpCommerce","sceNpProfileDialog"};
+-    int online=0;
+-    for (size_t i=0;i<sizeof(prefixes)/sizeof(*prefixes);++i)
+-        if (!strncmp(symbol,prefixes[i],strlen(prefixes[i]))) online=1;
+-    for (size_t i=0;i<sizeof(local)/sizeof(*local);++i)
+-        if (!strncmp(symbol,local[i],strlen(local[i]))) online=0;
+-    return online;
+-}
+-uintptr_t runtime_services_resolve(const char *name) {
+-    const char *enabled=getenv("BB_ONLINE");
+-    if (enabled && enabled[0]=='1') {
+-        const char *symbol=runtime_symbol(name);
+-        if (symbol && online_symbol(symbol)) {
+-            const uintptr_t function=bbgpu_resolve(name);
+-            if (function) return function;
+-            printf("Online: %s unavailable; retaining its offline contract\n",symbol);
+-        }
+-    }
+-    return RUNTIME_LOOKUP(exports,name);
+-}
++/* Opt-in native networking. Saves, trophies and dialogs retain their local contracts. */
++static int online_symbol(const char *symbol) {
++    static const char *const prefixes[]={"sceNet","sceNp","sceHttp","sceSsl"};
++    static const char *const local[]={"sceNpTrophy","sceNpCommerce","sceNpProfileDialog"};
++    int online=0;
++    for (size_t i=0;i<sizeof(prefixes)/sizeof(*prefixes);++i)
++        if (!strncmp(symbol,prefixes[i],strlen(prefixes[i]))) online=1;
++    for (size_t i=0;i<sizeof(local)/sizeof(*local);++i)
++        if (!strncmp(symbol,local[i],strlen(local[i]))) online=0;
++    return online;
++}
++uintptr_t runtime_services_resolve(const char *name) {
++    const char *enabled=getenv("BB_ONLINE");
++    if (enabled && enabled[0]=='1') {
++        const char *symbol=runtime_symbol(name);
++        if (symbol && online_symbol(symbol)) {
++            const uintptr_t function=bbgpu_resolve(name);
++            if (function) return function;
++            printf("Online: %s unavailable; retaining its offline contract\n",symbol);
++        }
++    }
++    return RUNTIME_LOOKUP(exports,name);
++}
+diff --git a/tools/engine/menu_assets.cpp b/tools/engine/menu_assets.cpp
+--- a/tools/engine/menu_assets.cpp
++++ b/tools/engine/menu_assets.cpp
+@@ -31,7 +31,7 @@
+ 
+ // Bumped whenever a generator or the recipe changes, so installs remake their
+ // assets instead of keeping the last generation.
+-constexpr int kGeneratorVersion = 9;  // 9: PC Colour, Fog on PC Graphics; 8: 8: PC Enhancements' three rows; 7: the PC Enhancements section; 6: event text (group 30) for the altar's rebirth
++constexpr int kGeneratorVersion = 11;  // Key Bindings spacing matches the expanded Controls layout.
+ 
+ const char kMessagesTsv[] =
+ #include "pc_option_messages.inc"
+@@ -795,12 +795,12 @@
+  struct Clone {int source,depth,index;std::int64_t dx,dy;};std::vector<Clone> clones;
+  int depth=*depths.rbegin()+1;
+  // There is one real action button, beside Defaults, rather than an arrow selector.
+- for(int index=old_default;index<button_index;++index)clones.push_back({rows[old_default-1].depth,depth++,index,0,rows[0].mat->ty+index*1100-rows[old_default-1].mat->ty});
++ for(int index=old_default;index<button_index;++index)clones.push_back({rows[old_default-1].depth,depth++,index,0,rows[0].mat->ty+index*(compact?1260:1100)-rows[old_default-1].mat->ty});
+  const auto column_x=rows[0].mat->tx+caption_x(b,*rows[0].cid);
+  const auto button_x=column_x-caption_x(b,*rows[old_default].cid)+600; // Match the native button caption inset (600 twips).
+- clones.push_back({rows[old_default].depth,depth++,button_index,button_x-rows[old_default].mat->tx,compact?400:0});
++ clones.push_back({rows[old_default].depth,depth++,button_index,button_x-rows[old_default].mat->tx,compact?2800:0});
+  std::map<int,std::int64_t> delta;
+- if(compact){for(int i=0;i<old_default;++i)delta[rows[i].depth]=rows[0].mat->ty+i*1100-rows[i].mat->ty;delta[rows[old_default].depth]=400;}
++ if(compact){for(int i=0;i<old_default;++i)delta[rows[i].depth]=rows[0].mat->ty+i*1260-rows[i].mat->ty;delta[rows[old_default].depth]=2800;}
+  Bytes body(b.begin()+sp->s,b.begin()+sp->s+4);
+  for(const auto& t:tags(b,sp->s+4,sp->e)){
+   if(t.code==kPlace2){
+@@ -819,6 +819,33 @@
+  Bytes out(b.begin(),b.begin()+sp->head);app(out,tag_bytes(kDefineSprite,body));app(out,b,sp->e,b.size());put32(out,4,out.size());return out;
+ }
+ 
++// Two real action buttons share a horizontal row; native Defaults follows on
++// the right. Clone every placement/update/removal so opening animations agree.
++Bytes graphics_buttons(const Bytes& b){
++ std::uint16_t cid=0;
++ for(const auto& t:tags(b,body_start(b),b.size()))if(t.code==kPlace3){auto p=placement(b,t.code,t.s);if(p.name&&*p.name=="PCGraphics")cid=*p.cid;}
++ auto sp=find_sprite(b,cid);if(!sp)throw Fail{"missing PCGraphics"};
++ std::map<int,Place2> rows;int depth=0;
++ for(const auto& t:tags(b,sp->s+4,sp->e))if(t.code==kPlace2){auto p=parse_place2(b,t.s,t.e);depth=std::max(depth,int(p.depth));if(p.name&&starts_with(*p.name,"Item_")&&p.mat)rows[std::atoi(p.name->substr(5).c_str())]=p;}
++ const auto& def=rows.at(8);const auto& first=rows.at(0);
++ const auto left=first.mat->tx+caption_x(b,*first.cid)-caption_x(b,*def.cid)+600;
++ const auto button_y=rows.at(5).mat->ty+2640;
++ const auto default_delta=button_y+1600-def.mat->ty;
++ const int left_depth=++depth,right_depth=++depth;
++ Bytes body(b.begin()+sp->s,b.begin()+sp->s+4);
++ for(const auto& t:tags(b,sp->s+4,sp->e)){
++  if(t.code==kPlace2){auto p=parse_place2(b,t.s,t.e);if(p.depth==def.depth){
++   auto m=p.mat;if(m)m->ty+=default_delta;app(body,tag_bytes(kPlace2,build_place2(p,p.depth,m,p.name)));
++   for(int column=0;column<2;++column){auto bm=p.mat;if(bm){bm->ty+=button_y-def.mat->ty;if(!column)bm->tx+=left-def.mat->tx;}
++    app(body,tag_bytes(kPlace2,build_place2(p,column?right_depth:left_depth,bm,p.name?std::optional<std::string>(column?"Item_7_0":"Item_6_0"):std::nullopt)));}
++   continue;
++  }}
++  app(body,b,t.head,t.e);
++  if(t.code==28&&u16(b,t.s)==def.depth){for(int d:{left_depth,right_depth}){Bytes rm;app16(rm,d);app(body,tag_bytes(28,rm));}}
++ }
++ Bytes out(b.begin(),b.begin()+sp->head);app(out,tag_bytes(kDefineSprite,body));app(out,b,sp->e,b.size());put32(out,4,out.size());return out;
++}
++
+ // Re-space the cloned keys choice rows while retaining the original Defaults
+ // action button at its bottom-right placement, across all animation frames.
+ Bytes space_keys_rows(const Bytes& b){
+@@ -827,8 +854,8 @@
+  auto sp=find_sprite(b,cid);if(!sp)throw Fail{"missing PCKeys"};
+  std::map<int,std::int64_t> delta;std::map<int,Place2> rows;
+  for(const auto& t:tags(b,sp->s+4,sp->e))if(t.code==kPlace2){auto p=parse_place2(b,t.s,t.e);if(p.name&&starts_with(*p.name,"Item_")&&p.mat)rows[std::atoi(p.name->substr(5).c_str())]=p;}
+- for(int i=0;i<7;++i)delta[rows.at(i).depth]=rows.at(0).mat->ty+i*1100-rows.at(i).mat->ty;
+- delta[rows.at(7).depth]=400; // Apply the same 400-twip offset to Defaults in every animation frame.
++ for(int i=0;i<7;++i)delta[rows.at(i).depth]=rows.at(0).mat->ty+i*1260-rows.at(i).mat->ty;
++ delta[rows.at(7).depth]=2800; // Match the taller Controls frame, including every animation frame.
+  Bytes body(b.begin()+sp->s,b.begin()+sp->s+4);
+  for(const auto& t:tags(b,sp->s+4,sp->e)){
+   if(t.code==kPlace2){auto p=parse_place2(b,t.s,t.e);auto m=p.mat;if(m&&delta.count(p.depth))m->ty+=delta[p.depth];app(body,tag_bytes(kPlace2,build_place2(p,p.depth,m,p.name)));}
+@@ -853,7 +880,8 @@
+         m = add_option_section(m, a);
+     };
+     section("PCSetting", 116020, 383, 6, 0, {});
+-    section("PCGraphics", 117020, 384, 6, 0, {});
++    section("PCGraphics", 117020, 384, 8, 0, {});
++    m=graphics_buttons(m);
+     
+     section("PCKeys", 119020, 386, 7, 1, {});
+     m=space_keys_rows(m);
+diff --git a/tools/engine/pc_option_messages.tsv b/tools/engine/pc_option_messages.tsv
+--- a/tools/engine/pc_option_messages.tsv
++++ b/tools/engine/pc_option_messages.tsv
+@@ -26,14 +26,14 @@
+ #
+ # id	menu text (group 0xc8)	line help (group 0xc9)
+ 110006	PC Settings	Options added by the PC port.
+-110007	PC Graphics	Graphics options added by the PC port.
++110007	Graphics	Adjust graphics settings.
+ 110008	PC Controls	The mouse: camera, sensitivity and the pointer; button prompts and controller icons.
+ 110009	Key Bindings	Keyboard and mouse bindings.
+-110010	PC Effects	Post-processing: blur, bloom, vignette and lens effects.
++110010	Effects	Adjust visual effects.
+ 110011	Camera options	The follow camera: field of view, distance and height.
+ 110012	Steam Deck	Frame rate and model detail for the Steam Deck.
+ 110013	PC Enhancements	Enable the mirror, rebirth and Camera options controls. Each needs a restart.
+-110014	PC Colour	Brightness, contrast, saturation and hue of the picture.
++110014	Image	Adjust brightness, contrast, saturation and hue.
+ 116000	Vertical Sync	Wait for the display. Off can tear.
+ 116001	Fullscreen	Borderless, at the desktop resolution.
+ 116002	Mouse in Menus	Move and click to select.
+@@ -52,15 +52,15 @@
+ 117005	Motion Blur	The blur on fast camera and character movement. Requires a restart in this renderer.
+ 117001	Anti-Aliasing	The game's own anti-aliasing pass.
+ 117002	Depth of Field	Blurs distant scenery. Off keeps far views sharp. Requires a restart in this renderer.
+-117020	PC Graphics	
++117020	Graphics	
+ 117003	Chromatic Aberration	The colour fringing at the edges of the frame. Requires a restart in this renderer.
+ 117006	Shadow Distance	How far sun and moon shadows reach. 0 is the game's own.
+ 117007	AO Strength	How dark corners and contact get. 5 is the game's own.
+ 117008	Fog	How thick the haze over distant streets is. 10 is the game's own.
+-120020	PC Effects	
++120020	Effects	
+ 120000	Bloom	The glow around bright light. 10 is the game's own.
+ 120001	Vignette	The darkened frame edges some areas use.
+-125020	PC Colour	
++125020	Image	
+ 125004	Picture Tuning	Applies PC Graphics, PC Effects and PC Colour live. Off: the game's own picture. Moving one of their settings turns it on.
+ 125000	Brightness	How bright the picture is. 5 is the game's own.
+ 125001	Contrast	The difference between dark and bright. 5 is the game's own.
+@@ -143,6 +143,6 @@
+ 117046	7680x2160 (32:9)
+ 117047	Display (auto)
+ 
+-126000	Play with	Use Controller or Keyboard and mouse
++126000	Input	Use Controller or Keyboard and mouse
+ 126003	Key Bindings	Assign keyboard and mouse or controller buttons.
+ 126004	Camera options	Adjust field of view, distance and height.

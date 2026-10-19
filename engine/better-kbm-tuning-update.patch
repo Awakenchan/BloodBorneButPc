@@ -1,0 +1,107 @@
+diff --git a/gpu/shim/bbport_settings.cpp b/gpu/shim/bbport_settings.cpp
+--- a/gpu/shim/bbport_settings.cpp
++++ b/gpu/shim/bbport_settings.cpp
+@@ -143,6 +143,9 @@
+     } else if (key == "widescreen") {
+         v.widescreen=i!=0;
+     } else if(key=="input_mode"){v.keyboard_mouse=value!="controller";
++    } else if(key=="stick_turn_rate"){v.stick_turn_rate=std::clamp(i,0,5000);
++    } else if(key=="stick_release_delay_ms"){v.stick_release_delay_ms=std::clamp(i,0,200);
++    } else if(key=="stick_circular"){v.stick_circular=value=="on"||i!=0;
+     } else if(key=="ds3_profile"){v.ds3_profile=i!=0;
+     } else if(key=="ingame_tweak_menus"){v.ingame_tweak_menus=i!=0;
+     } else if (key == "pc_controls") {
+@@ -514,6 +517,9 @@
+     put("widescreen",flag(v.widescreen));
+     put("input_mode",v.keyboard_mouse?"keyboard_mouse":"controller");
+     put("ds3_profile",flag(v.ds3_profile));
++    put("stick_turn_rate",std::to_string(v.stick_turn_rate.load()));
++    put("stick_release_delay_ms",std::to_string(v.stick_release_delay_ms.load()));
++    put("stick_circular",flag(v.stick_circular));
+     put("ingame_tweak_menus",flag(v.ingame_tweak_menus));
+     put("pc_controls",flag(v.pc_controls));
+     put("mouse_camera",flag(v.mouse_camera));
+diff --git a/gpu/shim/bbport_settings.h b/gpu/shim/bbport_settings.h
+--- a/gpu/shim/bbport_settings.h
++++ b/gpu/shim/bbport_settings.h
+@@ -136,6 +136,8 @@
+     std::atomic<bool> widescreen{true},pc_controls{true},mouse_camera{true},mouse_menu{true};
+     std::atomic<bool> mouse_invert_x{false},mouse_invert_y{false},mouse_auto_rotation{false};
+     std::atomic<int> mouse_sensitivity{5};
++    std::atomic<int> stick_turn_rate{900},stick_release_delay_ms{60};
++    std::atomic<bool> stick_circular{false};
+     std::atomic<int> button_prompts{PromptsAuto}; ///< ButtonPrompts; live
+     std::atomic<int> pad_icons{PadIconsAuto}; ///< PadIcons; live
+     std::atomic<bool> change_appearance{false}, rebirth{false}; // next launch, engine features
+diff --git a/gpu/shim/input/bindings.cpp b/gpu/shim/input/bindings.cpp
+--- a/gpu/shim/input/bindings.cpp
++++ b/gpu/shim/input/bindings.cpp
+@@ -7,6 +7,7 @@
+ static bool native_reserved_key(int sc){return sc==SDL_SCANCODE_INSERT;}
+ #include "chords.h"
+ #include "sprint_turn.h"
++#include "../bbport_settings.h"
+ 
+ 
+ #include <atomic>
+@@ -408,8 +409,10 @@
+     const int y = (held[kBindMoveB] ? 1 : 0) - (held[kBindMoveF] ? 1 : 0);
+     const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count();
+-    auto axes = SprintTurn::Apply(sprint_turn, x, y, held[kBindRoll] && !held[kBindWalk], now);
+-    if (x != 0 || y != 0) {
++    const auto& settings=BbSettings::Get();
++    auto axes = SprintTurn::Apply(sprint_turn, x, y, held[kBindRoll] && !held[kBindWalk], now,
++        {settings.stick_turn_rate,settings.stick_release_delay_ms,settings.stick_circular});
++    if (axes.x != 0 || axes.y != 0) {
+         if (held[kBindWalk]) {
+             const double scale = kWalkPush/std::hypot(double(x),double(y));
+             axes = {int(std::lround(x*127*scale)),int(std::lround(y*127*scale))};
+diff --git a/gpu/shim/input/sprint_turn.h b/gpu/shim/input/sprint_turn.h
+--- a/gpu/shim/input/sprint_turn.h
++++ b/gpu/shim/input/sprint_turn.h
+@@ -7,18 +7,23 @@
+ namespace SprintTurn {
+ struct State {
+     double angle = 0;
+-    std::int64_t at = 0;
++    std::int64_t at = 0, active_at = 0;
+     int target_x = 0, target_y = 0;
+     bool active = false;
+ };
+ struct Axes { int x, y; };
++struct Config { int degrees_per_second=900, release_delay_ms=0; bool circular=false; };
+ 
+ // Round only compatible sprint turns, never an opposing-key reversal. Retain
+ // the square stick boundary (one axis fully pushed) throughout the turn.
+-inline Axes Apply(State& state, int x, int y, bool sprint, std::int64_t now_us) {
++inline Axes Apply(State& state, int x, int y, bool sprint, std::int64_t now_us, Config config={}) {
+     constexpr double pi = 3.14159265358979323846;
+-    constexpr double rate = 900*pi/180;
++    const double rate = std::clamp(config.degrees_per_second,0,5000)*pi/180;
+     constexpr int reach = 127;
++    if (sprint && !x && !y && state.active && now_us>=state.active_at &&
++        now_us-state.active_at<std::clamp(config.release_delay_ms,0,200)*1000LL) {
++        x=state.target_x;y=state.target_y;
++    } else if (x || y) state.active_at=now_us;
+     const double target = std::atan2(double(y), double(x));
+     const auto elapsed = now_us-state.at;
+     const bool reversal = state.target_x*x < 0 || state.target_y*y < 0;
+@@ -26,7 +31,7 @@
+         state = {};
+         return {x*reach, y*reach};
+     }
+-    if (!state.active || reversal || elapsed < 0 || elapsed > 250000) {
++    if (!state.active || reversal || rate==0 || elapsed < 0 || elapsed > 250000) {
+         state.angle = target;
+     } else {
+         const double difference = std::remainder(target-state.angle, 2*pi);
+@@ -39,7 +44,7 @@
+     state.target_x = x;
+     state.target_y = y;
+     const double cx = std::cos(state.angle), cy = std::sin(state.angle);
+-    const double scale = reach/std::max(std::abs(cx), std::abs(cy));
++    const double scale = config.circular ? reach : reach/std::max(std::abs(cx), std::abs(cy));
+     return {int(std::lround(cx*scale)), int(std::lround(cy*scale))};
+ }
+ }

@@ -168,8 +168,8 @@ namespace BloodborneLauncher
             _pages.Clear();
             if (current == null) return;
             var page = _pages[current.GetType()] = (LauncherPage)Activator.CreateInstance(current.GetType())!;
-            PageFrame.Navigate(page);
-            page.OnShown();
+            if (!ReferenceEquals(PageFrame.Content,page)) PageFrame.Navigate(page);
+            RefreshAfterNavigation(page);
         }
 
         /// <summary>The game ended with an error by itself: what happened, safe mode, a report to copy.</summary>
@@ -279,6 +279,18 @@ namespace BloodborneLauncher
 
         // ---------------------------------------------------------------- navigation
 
+        private System.Windows.Threading.DispatcherOperation? _shownRefresh;
+
+        private void RefreshAfterNavigation(LauncherPage page)
+        {
+            _shownRefresh?.Abort();
+            _shownRefresh=Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(() =>
+            {
+                _shownRefresh=null;
+                if (ReferenceEquals(PageFrame.Content,page)) page.OnShown();
+            }));
+        }
+
         private void SidebarItem_Checked(object sender, RoutedEventArgs e)
         {
             if (sender is not System.Windows.Controls.RadioButton { Tag: Type pageType } item)
@@ -286,8 +298,8 @@ namespace BloodborneLauncher
 
             if (!_pages.TryGetValue(pageType, out var page))
                 _pages[pageType] = page = (LauncherPage)Activator.CreateInstance(pageType)!;
-            PageFrame.Navigate(page);
-            page.OnShown();
+            if (!ReferenceEquals(PageFrame.Content,page)) PageFrame.Navigate(page);
+            RefreshAfterNavigation(page);
 
             var name = item.Content as string ??
                        (item.Content as Panel)?.Children.OfType<System.Windows.Controls.TextBlock>().FirstOrDefault()?.Text;

@@ -26,6 +26,7 @@ namespace BloodborneLauncher.Core
     {
         public const string Format = "bbport-controls";
         public const int Version = 2;
+        public const string DarkSouls3Name = "Dark Souls 3 PC";
         private const int MaxBytes = 64 * 1024;
 
         /// <summary>Pad: the controller layout (pad.* lines, only inputs off their default); null: the profile leaves the controller alone.</summary>
@@ -43,6 +44,34 @@ namespace BloodborneLauncher.Core
 
         public static readonly Profile[] BuiltIns =
         {
+            new(DarkSouls3Name, "Bloodborne PC", "Dark Souls III PC layout adapted to Bloodborne: left click attacks, Shift + left click strong attack, " +
+                "right click or Ctrl firearm, E interact, R quick item, C Blood Vial, F transform, Space dodge/sprint, Q or middle click lock on. " +
+                "Enables PC controls, mouse camera and mouse menus; keeps your controller bindings.",
+                new Dictionary<string, string>(DefaultBindings())
+                {
+                    ["attack"] = "Mouse1",
+                    ["strong_modifier"] = "none",
+                    ["strong_attack"] = "Left Shift + Mouse1",
+                    ["firearm"] = "Left Ctrl, Mouse3",
+                    ["transform"] = "F",
+                    ["lock_on"] = "Q, Mouse2",
+                    ["roll"] = "Space",
+                    ["blood_vial"] = "C",
+                    ["use_item"] = "R",
+                    ["interact"] = "E",
+                    ["switch_item"] = "WheelDown",
+                    ["previous_item"] = "WheelUp",
+                    ["switch_right"] = "Left Shift + WheelUp",
+                    ["switch_left"] = "Left Shift + WheelDown",
+                    ["dpad_up"] = "T",
+                    ["walk"] = "Left Alt",
+                    ["l3"] = "Z",
+                    ["gestures"] = "G",
+                    ["personal_effects"] = "Tab",
+                    ["menu"] = "Escape",
+                    ["confirm"] = "Return",
+                    ["back"] = "Backspace",
+                }, BuiltIn: true),
             new("PC default", "Bloodborne PC", "The engine's own layout: attack on left click, firearm and transform on the mouse too.",
                 DefaultBindings(), BuiltIn: true),
             new("EldenRingStyle", "Bloodborne PC", "Elden Ring's PC layout (the package default): left click attacks, Shift + left click strong attack, " +
@@ -62,7 +91,7 @@ namespace BloodborneLauncher.Core
                     ["switch_item"] = "Down",
                     ["switch_right"] = "Right",
                     ["switch_left"] = "Left",
-                    ["dpad_up"] = "Up",
+                    ["dpad_up"] = "T",
                     ["walk"] = "Left Alt",
                 }, BuiltIn: true),
             new("Mouse focus", "Bloodborne PC", "Both attacks and lock on on the mouse: left click attack, right click strong attack, " +
@@ -141,6 +170,15 @@ namespace BloodborneLauncher.Core
             }
             if (profile.Pad != null)
                 PadMap.Apply(ini, profile.Pad);
+            if (profile.BuiltIn && profile.Name == DarkSouls3Name)
+            {
+                ini.Set("input_mode","keyboard_mouse");
+                ini.Set("ds3_profile","1");
+                ini.Set("button_prompts","keyboard");
+                ini.Set("pc_controls", "1");
+                ini.Set("mouse_camera", "1");
+                ini.Set("mouse_menu", "1");
+            }
             s.Set("controls_profile", profile.Name);
         }
 
@@ -221,7 +259,8 @@ namespace BloodborneLauncher.Core
                     else if (!names.Contains(canonical, StringComparer.OrdinalIgnoreCase))
                         names.Add(canonical);
                 }
-                // The engine takes one key and one mouse input per action.
+                if(names.FirstOrDefault(BindingExpressions.IsChord) is {} chord){result[control.Name]=chord;continue;}
+                // Legacy alternatives retain one key and one mouse input.
                 var key = names.FirstOrDefault(n => !InputMap.IsMouse(n));
                 var mouse = names.FirstOrDefault(InputMap.IsMouse);
                 if (names.Count > (key != null ? 1 : 0) + (mouse != null ? 1 : 0))

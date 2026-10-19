@@ -1,0 +1,68 @@
+diff --git a/gpu/shim/engine/change_appearance.cpp b/gpu/shim/engine/change_appearance.cpp
+--- a/gpu/shim/engine/change_appearance.cpp
++++ b/gpu/shim/engine/change_appearance.cpp
+@@ -184,8 +184,9 @@
+         const int language=GameLanguage::Parse(voice);
+         const bool installed=GameLanguage::Apply(image,size,language,
+             [](void* at,const void* bytes,std::size_t n){return WriteCode(at,bytes,n);});
+-        Log(installed ? "Voice language: independent selection %d installed" :
+-            "Voice language: override unavailable; using the game's original selection",language);
++        if(installed)Log("Voice language: requested %d -> native track %d (%s)",language,
++            GameLanguage::VoiceIndex(language),GameLanguage::TrackName(language));
++        else Log("Voice language: override unavailable; using the game's original selection");
+     }
+     constexpr const char* guest = "/app0/dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx";
+     const char* original = std::getenv("BB_GAME_DIR");
+diff --git a/gpu/shim/engine/game_language.h b/gpu/shim/engine/game_language.h
+--- a/gpu/shim/engine/game_language.h
++++ b/gpu/shim/engine/game_language.h
+@@ -7,11 +7,12 @@
+ #include <cstdlib>
+ namespace GameLanguage {
+ struct Site {std::size_t at;std::array<std::uint8_t,5> expected;};
+-// Both reads of Localize.VoiceLang: boot localization and the property accessor.
+-// Their integer result goes through the game's original region/voice-track mapping.
++// Read the voice property consistently and replace the subsequent regional conversion.
++// Explicit voice selection must not be folded into a different regional track.
+ inline constexpr Site sites[] = {
+     {0x1fb6ee4,{0xe8,0x17,0x4b,0x13,0x00}},
+     {0x2001b85,{0xe8,0x76,0x9e,0x0e,0x00}},
++    {0x1fb6f08,{0xe8,0xd3,0x28,0x00,0x00}},
+ };
+ inline int Parse(const char* text) {
+     if(!text||!*text)return -1;
+@@ -19,16 +20,30 @@
+     if(*end)return -1;
+     switch(value){case 0:case 1:case 2:case 3:case 4:case 5:case 17:case 20:return int(value);default:return -1;}
+ }
++// Platform language IDs are not the game's internal sound-language indexes.
++// These indexes select jajp, engb, frfr, itit, dede, eses, esar and ptbr.
++inline int VoiceIndex(int language) {
++    switch(language) {
++        case 0:return 0;case 1:return 1;case 2:return 2;case 3:return 5;
++        case 4:return 4;case 5:return 3;case 17:return 7;case 20:return 6;
++        default:return -1;
++    }
++}
++inline const char* TrackName(int language) {
++    static constexpr const char* tracks[]={"jajp","engb","frfr","itit","dede","eses","esar","ptbr"};
++    const int index=VoiceIndex(language);return index>=0?tracks[index]:"unavailable";
++}
+ template<class Writer>
+ bool Apply(std::uint8_t* image,std::size_t size,int language,Writer write) {
+-    if(language<0)return false;
++    const int voice=VoiceIndex(language);
++    if(voice<0)return false;
+     for(const auto& site:sites) {
+         if(site.at>size||site.expected.size()>size-site.at||
+            std::memcmp(image+site.at,site.expected.data(),site.expected.size()))return false;
+     }
+-    // mov eax, language replaces only the property read. Text, subtitles and
+-    // item descriptions continue to use the independent platform text language.
+-    const std::array<std::uint8_t,5> replacement={0xb8,std::uint8_t(language),0,0,0};
++    // mov eax, voice replaces the property results and the final voice conversion.
++    // Text, subtitles and item descriptions keep their independent platform language.
++    const std::array<std::uint8_t,5> replacement={0xb8,std::uint8_t(voice),0,0,0};
+     std::size_t committed=0;
+     for(const auto& site:sites) {
+         if(!write(image+site.at,replacement.data(),replacement.size())) {

@@ -25,9 +25,14 @@ namespace BloodborneLauncher.Views
 
         private readonly InfoBar _engine;
 
-        public CheatsPage() : base("Cheats",
+        public CheatsPage() : base("Tweaks & Cheats",
             "Set here for the next start. While playing, change them in the in-game menu (Insert or L3 + R3): they apply live. Turning a cheat off puts the game's values back; items you already have stay.")
         {
+            Group(PcText.Get("Gameplay Tweaks"));
+            ToggleRow(SymbolRegular.Settings24,PcText.Get("In-game tweak menus"),null,()=>Ini.Get("ingame_tweak_menus","1")!="0",v=>Ini.Set("ingame_tweak_menus",v?"1":"0"));
+            IniToggle(SymbolRegular.Person24,PcText.Get("Hunter's dream mirror opens the appearance editor"),null,"change_appearance");
+            IniToggle(SymbolRegular.ArrowUndo24,PcText.Get("The Altar of Despair resets level and attributes with the Yharnam Stone"),null,"rebirth");
+            Group("Cheats");
             _engine = new InfoBar
             {
                 IsClosable = false,
@@ -96,7 +101,7 @@ namespace BloodborneLauncher.Views
         }
 
         /// <summary>The package's engine applies cheats (newer than the builds listed above).</summary>
-        public static bool Supported => Updater.LocalEngine() is { } engine && !EnginesWithoutCheats.Contains(engine);
+        public static bool Supported => (Updater.LocalEngine() is { } engine && !EnginesWithoutCheats.Contains(engine)) || System.IO.File.Exists(System.IO.Path.Combine(Paths.PortDir,"out","better-kbm-build.json"));
 
         public override void OnShown() => _engine.IsOpen = !Supported;
     }

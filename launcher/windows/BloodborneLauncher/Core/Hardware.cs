@@ -37,7 +37,12 @@ namespace BloodborneLauncher.Core
             (ScreenWidth > 0 ? $"{ScreenWidth} × {ScreenHeight} at {RefreshHz} Hz" : "display unknown");
 
         private static Hardware? _detected;
-        public static Hardware Detect() => _detected ??= Probe();
+        public static void Reset()=>_detected=null;
+        public static Hardware Detect(){
+            var detected=_detected??=Probe();
+            var gpu=GpuAdapters.Selected(Workspace.Current.Ini);
+            return gpu==null?detected:detected with{Gpu=gpu.Name,Vendor=gpu.Vendor,VramBytes=gpu.Memory};
+        }
 
         private static Hardware Probe()
         {

@@ -5,13 +5,13 @@ using System.Windows.Input;
 namespace BloodborneLauncher.Core
 {
     /// <summary>
-    /// One game action the engine binds (bbport.ini bind.&lt;name&gt;): one keyboard key and one mouse
+    /// One game action the engine binds (bbport.ini bind.&lt;name&gt;): a keyboard/mouse chord, or one key and one mouse
     /// input at most. Pad is the controller button that does it (shown for reference).
     /// </summary>
     public sealed record ControlDef(string Name, string Label, string Group, string Hint, string Default, string? Pad);
 
     /// <summary>
-    /// The engine's PC controls (bbhost input, gpu/shim/input/bindings.cpp): 29 actions, keys by SDL
+    /// The engine's PC controls (bbhost input, gpu/shim/input/bindings.cpp): 30 actions, keys by SDL
     /// name ("Left Shift", "Return"), mouse as Mouse1..Mouse5, WheelUp, WheelDown; "none" unbinds.
     /// </summary>
     public static class InputMap
@@ -24,22 +24,23 @@ namespace BloodborneLauncher.Core
             new("move_right", "Move right", "Movement", "", "D", "Left stick"),
             new("walk", "Walk", "Movement", "Hold with the movement keys", "Left Alt", null),
             new("roll", "Dodge / sprint", "Movement", "Tap to dodge, hold to sprint", "Space", "Circle"),
-            new("l3", "Left stick click", "Movement", "", "Left Ctrl", "L3"),
+            new("l3", "Left stick click", "Movement", "", "Z", "L3"),
             new("attack", "Attack", "Combat", "With the strong modifier held: strong attack", "Mouse1", "R1"),
-            new("strong_attack", "Strong attack", "Combat", "Hold to charge", "V", "R2"),
-            new("strong_modifier", "Strong attack modifier", "Combat", "Held with Attack", "Left Shift", null),
-            new("transform", "Transform weapon", "Combat", "", "C, Mouse3", "L1"),
-            new("firearm", "Firearm / parry", "Combat", "", "X, Mouse2", "L2"),
-            new("lock_on", "Lock on", "Combat", "Or reset the camera", "Q", "R3"),
-            new("blood_vial", "Blood Vial", "Items", "", "R", "Triangle"),
-            new("use_item", "Use item", "Items", "The selected quick item", "F", "Square"),
+            new("strong_attack", "Strong attack", "Combat", "Hold to charge", "Left Shift + Mouse1", "R2"),
+            new("strong_modifier", "Strong attack modifier", "Combat", "Held with Attack", "none", null),
+            new("transform", "Transform weapon", "Combat", "", "F", "L1"),
+            new("firearm", "Firearm / parry", "Combat", "", "Left Ctrl, Mouse3", "L2"),
+            new("lock_on", "Lock on", "Combat", "Or reset the camera", "Q, Mouse2", "R3"),
+            new("blood_vial", "Blood Vial", "Items", "", "C", "Triangle"),
+            new("use_item", "Use item", "Items", "The selected quick item", "R", "Square"),
             new("interact", "Interact", "Items", "Talk, examine, pick up, open", "E", "Cross"),
-            new("switch_item", "Switch item", "Items", "Cycle the quick items", "Down", "D-pad down"),
+            new("switch_item", "Next item", "Items", "Select the next equipped quick item", "Down, WheelDown", "D-pad down"),
+            new("previous_item", "Previous item", "Items", "Select the previous equipped quick item", "WheelUp", null),
             new("switch_right", "Switch right weapon", "Items", "", "Right", "D-pad right"),
             new("switch_left", "Switch left weapon", "Items", "", "Left", "D-pad left"),
-            new("dpad_up", "D-pad up", "Items", "", "Up", "D-pad up"),
+            new("dpad_up", "Blood Bullets", "Items", "Create Blood Bullets at the cost of health.", "T", "D-pad up"),
             new("gestures", "Gestures", "Menus", "", "G", "Touchpad (left)"),
-            new("personal_effects", "Personal effects", "Menus", "", "T", "Touchpad (right)"),
+            new("personal_effects", "Personal effects", "Menus", "", "Tab", "Touchpad (right)"),
             new("menu", "Menu", "Menus", "", "Escape", "Options"),
             new("confirm", "Confirm in menus", "Menus", "", "Return", null),
             new("back", "Back in menus", "Menus", "", "Backspace", null),
@@ -60,7 +61,8 @@ namespace BloodborneLauncher.Core
         public static bool IsMouse(string name) => MouseTokens.Contains(name, StringComparer.OrdinalIgnoreCase);
 
         /// <summary>A friendly name for a chip.</summary>
-        public static string Display(string name) => name.ToLowerInvariant() switch
+        public static string Display(string name) => BindingExpressions.IsChord(name)?string.Join(" + ",BindingExpressions.Atoms(name).Select(Display)):DisplaySingle(name);
+        private static string DisplaySingle(string name) => name.ToLowerInvariant() switch
         {
             "mouse1" => "Left click",
             // SDL numbering, as the engine reads it (input.cpp): 2 is the middle button, 3 the right.
@@ -158,8 +160,10 @@ namespace BloodborneLauncher.Core
         });
 
         /// <summary>A key or mouse name in the engine's spelling, or null if it is not one.</summary>
-        public static string? Canonical(string name)
+        public static string? Canonical(string name)=>BindingExpressions.IsChord(name)?BindingExpressions.Normalize(name,CanonicalSingle):CanonicalSingle(name);
+        public static string? CanonicalSingle(string name)
         {
+            if(name=="Comma"||name=="Keypad Comma"||name=="Keypad Plus")return name;
             name = name.Trim();
             if (MouseTokens.FirstOrDefault(t => t.Equals(name, StringComparison.OrdinalIgnoreCase)) is { } mouse) return mouse;
             return KeyNames.Value.FirstOrDefault(k => k.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -183,6 +187,7 @@ namespace BloodborneLauncher.Core
         public static void Set(IniFile ini, ControlDef c, IEnumerable<string> names)
         {
             var list = names.ToList();
+            if(list.LastOrDefault(BindingExpressions.IsChord) is {} chord){ini.Set(IniKey(c),chord);return;}
             var key = list.LastOrDefault(n => !InputMap.IsMouse(n));
             var mouse = list.LastOrDefault(InputMap.IsMouse);
             var value = InputMap.Join(new[] { key, mouse }.Where(n => n != null)!);
@@ -192,7 +197,7 @@ namespace BloodborneLauncher.Core
         /// <summary>A new input for an action: replaces the one of the same kind (key or mouse), or all.</summary>
         public static void Assign(IniFile ini, ControlDef c, string name, bool keepOtherKind)
         {
-            var current = keepOtherKind ? Get(ini, c).Where(n => InputMap.IsMouse(n) != InputMap.IsMouse(name)) : Enumerable.Empty<string>();
+            var current = keepOtherKind && !BindingExpressions.IsChord(name) ? Get(ini, c).Where(n => !BindingExpressions.IsChord(n)&&InputMap.IsMouse(n) != InputMap.IsMouse(name)) : Enumerable.Empty<string>();
             Set(ini, c, current.Append(name));
         }
 

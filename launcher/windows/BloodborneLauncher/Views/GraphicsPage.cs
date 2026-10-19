@@ -15,6 +15,12 @@ namespace BloodborneLauncher.Views
         public GraphicsPage() : base("Graphics",
             "Stored in bbport.ini; the upscaler can also be changed in game (Insert or L3 + R3).")
         {
+            var adapters=new[]{new Choice(PcText.Get("Automatic"),"-1")}.Concat(GpuAdapters.All().Select(g=>new Choice(g.Label,g.Index.ToString()))).ToArray();
+            ComboRow(SymbolRegular.DeveloperBoard24,PcText.Get("Rendering GPU"),PcText.Get("Select the graphics card used by Vulkan"),adapters,
+                ()=>GpuAdapters.SelectedIndex(Ini).ToString(),v=>{
+                    Ini.Set("gpu_id",v);Ini.Set("gpu_name",GpuAdapters.All().FirstOrDefault(g=>g.Index.ToString()==v)?.Name??"");
+                    Hardware.Reset();
+                });
             Add(Card(SymbolRegular.Gauge24, "Best settings for this PC", Hardware.Detect().Summary,
                 SmallButton("Recommend…", SymbolRegular.Sparkle24, (_, _) => MainWindow.Instance!.OfferBestSettings(firstRun: false)), out _));
 
@@ -39,23 +45,6 @@ namespace BloodborneLauncher.Views
             _sharpnessCard = (SettingRow)Body.Children[^1];
 
             IniToggle(SymbolRegular.ArrowMove24, "Object motion vectors", "Less ghosting on characters; costs about 10% FPS", "object_motion");
-            IniToggle(SymbolRegular.DataUsage24, "Show FPS", null, "show_fps");
-            // What the counter shows (on unless turned off).
-            foreach (var (icon, key, title) in new[]
-                     {
-                         (SymbolRegular.TopSpeed24, "show_fps_rate", "Frame rate"),
-                         (SymbolRegular.Timer24, "show_fps_frame_time", "Frame time"),
-                         (SymbolRegular.ResizeLarge24, "show_fps_upscaler", "Upscaler"),
-                         (SymbolRegular.DeveloperBoard24, "show_fps_cpu", "CPU usage"),
-                         (SymbolRegular.Gauge24, "show_fps_gpu", "GPU usage"),
-                     })
-            {
-                // CPU and GPU use are off unless chosen (the engine's defaults, bbport_settings.h).
-                var fallback = key is "show_fps_cpu" or "show_fps_gpu" ? "0" : "1";
-                ToggleRow(icon, title, "Shown in the FPS counter", () => Ini.Get(key, fallback) == "1", v => Ini.Set(key, v ? "1" : "0"));
-                ((System.Windows.FrameworkElement)Body.Children[^1]).Margin = new System.Windows.Thickness(24, 0, 0, 4);
-            }
-
             Add(Card(SymbolRegular.DeveloperBoard24, "DLSS", "", null, out _dlssHint));
 
             // The engine's picture and camera controls (bbport_settings.cpp clamps the same ranges).

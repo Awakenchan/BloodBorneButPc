@@ -1,0 +1,119 @@
+diff --git a/gpu/shim/bbport_settings.cpp b/gpu/shim/bbport_settings.cpp
+--- a/gpu/shim/bbport_settings.cpp
++++ b/gpu/shim/bbport_settings.cpp
+@@ -380,6 +380,11 @@
+         std::fclose(file);
+         std::printf("Settings: %s\n", Path());
+     }
++    // The launcher's text selection also owns the overlay language. Ignore an old
++    // overlay-only preference when the new full-game text selector is supplied.
++    if(std::getenv("BB_TEXT_LANGUAGE")) {
++        if(const char* lang=std::getenv("BB_MENU_LANGUAGE"))v.menu_language=LanguageOfLocale(lang);
++    }
+     // Environment overrides (scripts, A/B tests).
+     if (const char* env = std::getenv("BB_UPSCALER")) {
+         v.upscaler = UpscalerOff;
+diff --git a/gpu/shim/bbport_settings.h b/gpu/shim/bbport_settings.h
+--- a/gpu/shim/bbport_settings.h
++++ b/gpu/shim/bbport_settings.h
+@@ -136,8 +136,8 @@
+     std::atomic<bool> widescreen{true},pc_controls{true},mouse_camera{true},mouse_menu{true};
+     std::atomic<bool> mouse_invert_x{false},mouse_invert_y{false},mouse_auto_rotation{false};
+     std::atomic<int> mouse_sensitivity{5};
+-    std::atomic<int> stick_turn_rate{900},stick_release_delay_ms{60};
+-    std::atomic<bool> stick_circular{false};
++    std::atomic<int> stick_turn_rate{1200},stick_release_delay_ms{60};
++    std::atomic<bool> stick_circular{true};
+     std::atomic<int> button_prompts{PromptsAuto}; ///< ButtonPrompts; live
+     std::atomic<int> pad_icons{PadIconsAuto}; ///< PadIcons; live
+     std::atomic<bool> change_appearance{false}, rebirth{false}; // next launch, engine features
+diff --git a/gpu/shim/engine/change_appearance.cpp b/gpu/shim/engine/change_appearance.cpp
+--- a/gpu/shim/engine/change_appearance.cpp
++++ b/gpu/shim/engine/change_appearance.cpp
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-3.0-or-later
+ // The editor controller/refcount lifecycle is adapted from bbhost, not the GPU renderer.
+ #include "engine_hooks.h"
++#include "game_language.h"
+ #include "camera.h"
+ #include "widescreen.h"
+ #include "../input/input.h"
+@@ -179,6 +180,13 @@
+     if (!identity || std::strcmp(identity, "071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a")) {
+         Log("mirror disabled: executable identity was not verified"); return;
+     }
++    if(const char* voice=std::getenv("BB_VOICE_LANGUAGE")) {
++        const int language=GameLanguage::Parse(voice);
++        const bool installed=GameLanguage::Apply(image,size,language,
++            [](void* at,const void* bytes,std::size_t n){return WriteCode(at,bytes,n);});
++        Log(installed ? "Voice language: independent selection %d installed" :
++            "Voice language: override unavailable; using the game's original selection",language);
++    }
+     constexpr const char* guest = "/app0/dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx";
+     const char* original = std::getenv("BB_GAME_DIR");
+     char resolved[512]{};
+diff --git a/gpu/shim/engine/game_language.h b/gpu/shim/engine/game_language.h
+new file mode 100644
+--- /dev/null
++++ b/gpu/shim/engine/game_language.h
+@@ -0,0 +1,44 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <cstdlib>
++namespace GameLanguage {
++struct Site {std::size_t at;std::array<std::uint8_t,5> expected;};
++// Both reads of Localize.VoiceLang: boot localization and the property accessor.
++// Their integer result goes through the game's original region/voice-track mapping.
++inline constexpr Site sites[] = {
++    {0x1fb6ee4,{0xe8,0x17,0x4b,0x13,0x00}},
++    {0x2001b85,{0xe8,0x76,0x9e,0x0e,0x00}},
++};
++inline int Parse(const char* text) {
++    if(!text||!*text)return -1;
++    char* end=nullptr;const long value=std::strtol(text,&end,10);
++    if(*end)return -1;
++    switch(value){case 0:case 1:case 2:case 3:case 4:case 5:case 17:return int(value);default:return -1;}
++}
++template<class Writer>
++bool Apply(std::uint8_t* image,std::size_t size,int language,Writer write) {
++    if(language<0)return false;
++    for(const auto& site:sites) {
++        if(site.at>size||site.expected.size()>size-site.at||
++           std::memcmp(image+site.at,site.expected.data(),site.expected.size()))return false;
++    }
++    // mov eax, language replaces only the property read. Text, subtitles and
++    // item descriptions continue to use the independent platform text language.
++    const std::array<std::uint8_t,5> replacement={0xb8,std::uint8_t(language),0,0,0};
++    std::size_t committed=0;
++    for(const auto& site:sites) {
++        if(!write(image+site.at,replacement.data(),replacement.size())) {
++            // Restore every attempted site, including a writer's partial failure.
++            for(std::size_t i=0;i<=committed;++i)
++                write(image+sites[i].at,sites[i].expected.data(),sites[i].expected.size());
++            return false;
++        }
++        ++committed;
++    }
++    return true;
++}
++}
+diff --git a/gpu/shim/input/mouse_camera_step.h b/gpu/shim/input/mouse_camera_step.h
+--- a/gpu/shim/input/mouse_camera_step.h
++++ b/gpu/shim/input/mouse_camera_step.h
+@@ -45,10 +45,10 @@
+ }
+ 
+ // Keep the DS3 sensitivity curve with a lower raw-count gain for this port.
+-// Sensitivity 5 is 0.15 degrees/count; controller camera speed is unaffected.
++// Sensitivity 5 is 0.10 degrees/count; controller camera speed is unaffected.
+ inline float degrees_per_count(int sensitivity) {
+     const float s = static_cast<float>(sensitivity < 0 ? 0 : sensitivity > 10 ? 10 : sensitivity);
+-    return ((s * 0.1f) * 1.5f + 0.5f) * 0.12f;
++    return ((s * 0.1f) * 1.5f + 0.5f) * 0.08f;
+ }
+ 
+ // The window's relative motion while the mouse turns the camera, since the

@@ -1,0 +1,120 @@
+diff --git a/scripts/menu_layout.py b/scripts/menu_layout.py
+--- a/scripts/menu_layout.py
++++ b/scripts/menu_layout.py
+@@ -6,6 +6,16 @@
+ import struct
+ import hud_layout as swf
+ import quit_menu as quit
++
++
++def stretch_y(matrix, ratio, anchor):
++    """Scale a placement vertically around a parent-space anchor, including flips."""
++    scale, rotate, (x, y) = matrix
++    sx, sy = scale or (65536, 65536)
++    # SWF RotateSkew0 contributes to the Y coordinate; RotateSkew1 to X.
++    if rotate is not None:
++        rotate = (round(rotate[0]*ratio), rotate[1])
++    return ((sx, round(sy*ratio)), rotate, (x, round(anchor+(y-anchor)*ratio)))
+ 
+ 
+ def expand_panel(data, name, growth):
+@@ -23,29 +33,50 @@
+     frame_timeline = sprites[frame_place[3]]
+     frame = quit.placements_in(data, *frame_timeline)
+     # Verified Controls frame: background, lower corner/lines, vertical fill.
+-    required = (1, 14, 25, 33, 41, 49)
++    required = (1, 11, 14, 25, 33, 41, 49)
+     if not all(depth in frame for depth in required):
+         raise ValueError(f'Unexpected settings frame decorations: {name}')
+     edits = {}
+-    for depth in (14, 25, 33, 49):
++    for depth in (25, 33, 49):
+         quit.shift_depth(data, frame_timeline, depth, growth, edits)
++    # The interior is a pair of identical texture clips: one top-left and
++    # one mirrored bottom-right. Moving the mirrored clip alone separates
++    # the two textures. Apply one vertical transform to BOTH placements.
++    texture = frame[11]
++    if texture[3] != frame[14][3]:
++        raise ValueError(f'Unexpected mirrored settings textures: {name}')
++    top, bottom = quit.swf_shape_y(data, texture[3])
++    texture_scale = texture[4][0] or (65536, 65536)
++    texture_height = (bottom-top)*texture_scale[1]/65536
++    texture_top = texture[4][2][1] + top*texture_scale[1]/65536
++    if texture_height <= 0 or texture_height+growth <= 0:
++        raise ValueError('Invalid settings texture height')
++    ratio = (texture_height+growth)/texture_height
++    for code, _, body, _ in swf.tags(data, *frame_timeline):
++        if code not in (26, 70) or quit.depth_of(data, body, code) not in (11, 14):
++            continue
++        _, span, _ = swf.place_fields(data, body, code)
++        if span:
++            edits[body] = stretch_y(swf.read_matrix(data, span[0])[0], ratio, texture_top)
++    # Grow the opaque backing and central fill while keeping their local
++    # top edges fixed. Keep each animation frame's own scale/translation.
+     for depth in (1, 41):
+-        code, body, _, character, matrix = frame[depth]
++        _, _, _, character, matrix = frame[depth]
+         top, bottom = quit.swf_shape_y(data, character)
+-        scale, rotate, (x, y) = matrix
+-        sx, sy = scale or (65536, 65536)
+-        if bottom <= top or sy <= 0:
++        scale = matrix[0] or (65536, 65536)
++        height = (bottom-top)*scale[1]/65536
++        if height <= 0 or height+growth <= 0:
+             raise ValueError('Invalid settings frame bounds')
+-        new_sy = round(sy + growth * 65536 / (bottom - top))
+-        adjusted = ((sx, new_sy), rotate, (x, round(y + top * (sy-new_sy)/65536)))
+-        for tag, _, at, _ in swf.tags(data, *frame_timeline):
+-            if tag in (26, 70) and quit.depth_of(data, at, tag) == depth:
+-                _, span, _ = swf.place_fields(data, at, tag)
+-                if span:
+-                    # Keep each animation frame's own translation.
+-                    old_matrix = swf.read_matrix(data, span[0])[0]
+-                    ox, oy = old_matrix[2]
+-                    edits[at] = (adjusted[0], old_matrix[1], (ox, oy + adjusted[2][1]-y))
++        ratio = (height+growth)/height
++        for code, _, body, _ in swf.tags(data, *frame_timeline):
++            if code not in (26, 70) or quit.depth_of(data, body, code) != depth:
++                continue
++            _, span, _ = swf.place_fields(data, body, code)
++            if span:
++                current = swf.read_matrix(data, span[0])[0]
++                local_scale = current[0] or (65536, 65536)
++                anchor = current[2][1] + top*local_scale[1]/65536
++                edits[body] = stretch_y(current, ratio, anchor)
+     # Clone the frame. Other sections still reference the untouched original.
+     shapes, sprites, bitmaps = swf.definitions(data)
+     new_id = max(set(shapes)|set(sprites)|set(bitmaps))+1
+@@ -96,5 +127,7 @@
+ 
+ 
+ def expand_option_panels(data):
+-    data = expand_panel(data, 'ControllSetting', 2400)
+-    return expand_panel(data, 'PCGraphics', 1600)
++    for name, growth in (('ControllSetting', 2400), ('PCGraphics', 1600),
++                         ('PCKeys', 2400), ('PCEffects', -1100), ('PCColour', -1100)):
++        data = expand_panel(data, name, growth)
++    return data
+diff --git a/tools/engine/menu_assets.cpp b/tools/engine/menu_assets.cpp
+--- a/tools/engine/menu_assets.cpp
++++ b/tools/engine/menu_assets.cpp
+@@ -31,7 +31,7 @@
+ 
+ // Bumped whenever a generator or the recipe changes, so installs remake their
+ // assets instead of keeping the last generation.
+-constexpr int kGeneratorVersion = 10;  // Native Graphics links and expanded Controls layout.
++constexpr int kGeneratorVersion = 11;  // Key Bindings spacing matches the expanded Controls layout.
+ 
+ const char kMessagesTsv[] =
+ #include "pc_option_messages.inc"
+@@ -854,8 +854,8 @@
+  auto sp=find_sprite(b,cid);if(!sp)throw Fail{"missing PCKeys"};
+  std::map<int,std::int64_t> delta;std::map<int,Place2> rows;
+  for(const auto& t:tags(b,sp->s+4,sp->e))if(t.code==kPlace2){auto p=parse_place2(b,t.s,t.e);if(p.name&&starts_with(*p.name,"Item_")&&p.mat)rows[std::atoi(p.name->substr(5).c_str())]=p;}
+- for(int i=0;i<7;++i)delta[rows.at(i).depth]=rows.at(0).mat->ty+i*1100-rows.at(i).mat->ty;
+- delta[rows.at(7).depth]=400; // Apply the same 400-twip offset to Defaults in every animation frame.
++ for(int i=0;i<7;++i)delta[rows.at(i).depth]=rows.at(0).mat->ty+i*1260-rows.at(i).mat->ty;
++ delta[rows.at(7).depth]=2800; // Match the taller Controls frame, including every animation frame.
+  Bytes body(b.begin()+sp->s,b.begin()+sp->s+4);
+  for(const auto& t:tags(b,sp->s+4,sp->e)){
+   if(t.code==kPlace2){auto p=parse_place2(b,t.s,t.e);auto m=p.mat;if(m&&delta.count(p.depth))m->ty+=delta[p.depth];app(body,tag_bytes(kPlace2,build_place2(p,p.depth,m,p.name)));}
