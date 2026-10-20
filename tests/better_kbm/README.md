@@ -94,3 +94,18 @@ grace, expiry, reversals during grace, immediate sprint release, circular range,
 and zero-rate instant turns. It also compiles the production settings reader/
 writer and checks defaults, save/reload, bounds and preserved bindings. Launcher
 cache behavior and UI responsiveness need an interactive Windows WPF check.
+
+## Shared camera ownership and regional text
+
+The normal runner checks the production shared-camera helpers: a stack-local
+factory record is rejected, all 88 valid menu/serialized layouts agree, and
+unchanged parent menu snapshots cannot replay older settings. Individual edits
+and native Defaults changes are tracked per field. The optional game-signature
+check verifies the live options pointer and both callers of the record copier.
+
+The actual guest file-open/read/stat suite also mounts synthetic Spanish text
+bundles and verifies Latin American and Spain selections independently of voice
+selection, including exact localized menu mounts. The localization suite checks
+Spanish Image labels/help and the requested Bloom / Motion Blur names for both
+Spanish locales. These fixtures do not establish differences in the original
+game's regional wording and do not replace a Windows gameplay test.

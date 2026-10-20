@@ -1730,6 +1730,15 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
  #include <chrono>
  #include "bbport_platform.h"
  #include "bbport_settings.h"
+@@ -21,7 +28,7 @@
+ #include <cstring>
+ #include <filesystem>
+ #include <vector>
+-extern "C" int runtime_file_translate(const char*,char*,std::size_t);
++extern "C" int runtime_file_translate_exact(const char*,char*,std::size_t);
+ extern "C" int runtime_file_mount(const char*,const char*);
+ extern "C" void runtime_file_unmount(const char*);
+ namespace BbEngine::Options {
 @@ -263,9 +270,8 @@
  
  constexpr std::uint32_t kKeysPageRow=119000,kKeysFirstRow=119001;
@@ -2051,7 +2060,7 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
  }
  GUEST_ABI std::int64_t OpenGraphics(void* root,void* params) {
      return open_named(root,params,"PCGraphics",reinterpret_cast<void*>(&GraphicsHandler),4);
-@@ -720,62 +621,216 @@
+@@ -720,62 +621,233 @@
      hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;
  }
  
@@ -2086,6 +2095,9 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
 + std::uint64_t child=0,root_data=0,hidden_rows[16]{};int hidden_count=0;bool visibility_logged=false;
 +};
 +VanillaScreen vanilla_controls,vanilla_graphics;
++SharedCamera::RecordChanges camera_menu_changes,camera_live_changes;
++std::uint8_t* camera_menu_record=nullptr;
++std::uint64_t camera_live_record=0;
 +void graphics_screen(void* dialog){
 + vanilla_graphics=VanillaScreen{};vanilla_graphics.dialog=static_cast<std::uint8_t*>(dialog);
 + vanilla_graphics.anchor_row=6;vanilla_graphics.widget=dialog_widget(dialog,6);
@@ -2103,15 +2115,27 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
 + if(!begin||v.anchor_row<0||end<begin+std::uint64_t(v.anchor_row+1)*kItemStride)return false;
 + return BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(begin+v.anchor_row*kItemStride+kItemWidget),&found,8)&&found==reinterpret_cast<std::uint64_t>(v.widget);
 +}
-+bool sync_camera(const SharedCamera::Values& v){
-+ auto& cfg=BbSettings::Get();bool changed=cfg.mouse_sensitivity!=v.sensitivity||cfg.mouse_invert_x!=v.invert_x||cfg.mouse_invert_y!=v.invert_y||cfg.mouse_auto_rotation!=v.auto_adjust;
-+ cfg.mouse_sensitivity=v.sensitivity;cfg.mouse_invert_x=v.invert_x;cfg.mouse_invert_y=v.invert_y;cfg.mouse_auto_rotation=v.auto_adjust;
++bool sync_camera(const SharedCamera::Values& v,unsigned fields=SharedCamera::All){
++ auto& cfg=BbSettings::Get();bool changed=false;
++ if(fields&SharedCamera::Sensitivity){changed|=cfg.mouse_sensitivity!=v.sensitivity;cfg.mouse_sensitivity=v.sensitivity;}
++ if(fields&SharedCamera::InvertX){changed|=cfg.mouse_invert_x!=v.invert_x;cfg.mouse_invert_x=v.invert_x;}
++ if(fields&SharedCamera::InvertY){changed|=cfg.mouse_invert_y!=v.invert_y;cfg.mouse_invert_y=v.invert_y;}
++ if(fields&SharedCamera::AutoAdjust){changed|=cfg.mouse_auto_rotation!=v.auto_adjust;cfg.mouse_auto_rotation=v.auto_adjust;}
 + return changed;
 +}
 +void sync_controls(){
 + if(!screen_alive(vanilla_controls))return;
 + std::uint8_t b[16];SharedCamera::Values v;
-+ if(BbPlatform::ReadProcessMemory(vanilla_controls.dialog+0xeb0,b,sizeof b)&&SharedCamera::DecodeMenu(b,v)&&sync_camera(v))g_keys_save=true;
++ if(camera_menu_record&&BbPlatform::ReadProcessMemory(camera_menu_record,b,sizeof b)&&SharedCamera::DecodeMenu(b,v)&&sync_camera(v,camera_menu_changes.Observe(v)))g_keys_save=true;
++}
++void sync_live_camera(){
++ const auto source=SharedCamera::LiveSource(g_slide,[](std::uint64_t p,void* out,std::size_t n){return BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(p),out,n);});
++ if(!source)return;
++ if(source!=camera_live_record){camera_live_record=source;camera_live_changes={};}
++ std::uint8_t b[16];SharedCamera::Values v;
++ // Follow saved native settings even before Controls is first opened. Changes
++ // only: an uncommitted menu edit must not be reverted by an old live snapshot.
++ if(BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(source),b,sizeof b)&&SharedCamera::DecodeGame(b,v)&&sync_camera(v,camera_live_changes.Observe(v)))g_keys_save=true;
 +}
 +GUEST_ABI std::int64_t OpenKeys(void* root,void* params) {return open_named(root,params,"PCKeys",reinterpret_cast<void*>(&pc_keys_handler),-1);}
 +bool nested_active(const VanillaScreen& screen){
@@ -2214,6 +2238,7 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
 +}
 +GUEST_ABI void VanillaControlsHandler(void* dialog,void* params){
 + detect_language();device_caption();vanilla_controls=VanillaScreen{};vanilla_controls.dialog=static_cast<std::uint8_t*>(dialog);
++ camera_menu_record=static_cast<std::uint8_t*>(params);camera_menu_changes={};
 + alignas(16) std::uint8_t scratch[0x100]{};hle_call_guest<std::int64_t>(guest_fn(kScratchInit),scratch);
 + add_text_row(dialog,&vanilla_controls.value,126000,device_label,device_help,device_text);
 + hle_call_guest<std::int64_t>(reinterpret_cast<void*>(g_slide+0x1b211a0),dialog,params);
@@ -2237,6 +2262,7 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
 + return 1; // Native reset of dummy choice values is not a binding reset.
 +}
 +std::int64_t GUEST_ABI LoadCameraHook(std::uint64_t,const std::uint64_t* saved) noexcept {
++ if(!SharedCamera::IsLiveSource(saved[5],g_slide,[](std::uint64_t p,void* out,std::size_t n){return BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(p),out,n);}))return 0;
 + std::uint8_t b[16];SharedCamera::Values v;
 + if(BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(saved[5]),b,sizeof b)&&SharedCamera::DecodeGame(b,v)&&sync_camera(v))g_keys_save=true;
 + return 0;
@@ -2312,11 +2338,10 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
      constexpr std::uint8_t expected[]={0x90,0x66,0x66,0x66,0x66,0x66,0x66,0x2e,0x0f,0x1f,0x84,0,0,0,0,0};
      if (size<table+16 || size<imm+1 || size<call+5 || size<pad+16) return false;
      std::uint64_t zeros[2]{}; std::int32_t rel=0;
-@@ -784,6 +839,17 @@
-         static_cast<std::int64_t>(call+5)+rel!=0x1bea630 || std::memcmp(image+pad,expected,16) ||
+@@ -785,6 +857,17 @@
          !MenuMemory::Compatible(image,size)) {
          host_log("pc-options disabled: System bytes differ from verified 1.09"); return false;
-+    }
+     }
 +
 +    constexpr std::uint8_t command_bytes[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec,0x88,0x01,0,0};
 +    constexpr std::uint8_t open_bytes[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x81,0xec,0xa8,0x02,0,0};
@@ -2327,10 +2352,18 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
 +       !Prepare(menu_hooks[2],image,size,0x1b1a2d0,reset_bytes,ConfirmedKeysResetHook)||!Prepare(menu_hooks[3],image,size,0x1acb760,visible_bytes,VisibilityHook)||!Prepare(menu_hooks[4],image,size,0x1b4e2a0,command_bytes,SystemRowHook)){
 +     host_log("pc-options rejected: vanilla section/camera/reset/visibility signatures differ");return false;
 +    }
-     }
++    }
      namespace fs=std::filesystem;
      std::vector<std::pair<std::string,std::string>> mounts;
-@@ -799,12 +865,16 @@
+     try {
+@@ -793,18 +876,22 @@
+             const auto prepared=root/relative;
+             const auto path="/app0/"+relative.generic_string();
+             char resolved[512]{}; std::error_code ec;
+-            if (!fs::is_regular_file(prepared) || runtime_file_translate(path.c_str(),resolved,sizeof resolved) ||
++            if (!fs::is_regular_file(prepared) || runtime_file_translate_exact(path.c_str(),resolved,sizeof resolved) ||
+                 !fs::equivalent(fs::u8path(resolved),original/relative,ec) || ec)
+                 return false; // A player's own file wins; never bind a foreign movie.
              mounts.emplace_back(path,prepared.string()); return true;
          };
          if (!add("dvdroot_ps4/menu/optionsetting.gfx")) return false;
@@ -2348,7 +2381,7 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
      } catch (const std::exception& e) { host_log("pc-options disabled: %s",e.what()); return false; }
      unsigned installed=0;
      for (const auto& [path,file]:mounts) {
-@@ -814,14 +884,12 @@
+@@ -814,14 +901,12 @@
          }
          ++installed;
      }
@@ -2366,7 +2399,7 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
      graphics_page=Graphics::Enabled();
      graphics_toggles[0].setting=&settings.effects[4];graphics_toggles[1].setting=&settings.effects[3];
      graphics_sliders[0].setting=&settings.graphics_ao_strength;graphics_sliders[1].setting=&settings.graphics_shadow_scale;
-@@ -830,10 +898,6 @@
+@@ -830,10 +915,6 @@
      effect_sliders[0].setting=&settings.graphics_bloom;fog_slider[0].setting=&settings.graphics_fog;
      color_sliders[0].setting=&settings.graphics_brightness;color_sliders[1].setting=&settings.graphics_contrast;
      color_sliders[2].setting=&settings.graphics_saturation;color_sliders[3].setting=&settings.graphics_hue;
@@ -2377,7 +2410,7 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
      camera[0].setting=&settings.camera_fov_scale;
      camera[1].setting=&settings.camera_distance_scale;
      camera[2].setting=&settings.camera_height_scale;
-@@ -843,20 +907,25 @@
+@@ -843,20 +924,25 @@
      const auto target=reinterpret_cast<std::uint64_t>(&SystemFinalize);
      std::memcpy(p,&target,8); p+=8; *p++=0x41; *p++=0xff; *p=0xe3;
      const std::int32_t to_pad=pad-(call+5); std::memcpy(image+call+1,&to_pad,4);
@@ -2407,11 +2440,12 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
      defaults_view_update(c, focused);
      if (!g_keys.dialog) {
          return;
-@@ -882,18 +951,14 @@
+@@ -882,18 +968,15 @@
  
  void Tick() {
      if (!g_installed) return;
 -    bool changed=false;
++    sync_live_camera();
 +    bool changed=g_keys_save.exchange(false);
 +    update_parent(vanilla_controls);update_parent(vanilla_graphics);
      for (auto& s:camera) {
@@ -2429,7 +2463,7 @@ diff --git a/gpu/shim/engine/option_menu.cpp b/gpu/shim/engine/option_menu.cpp
          changed=true;
      }
      auto push_sliders=[&](auto& rows,bool active) {
-@@ -908,19 +973,13 @@
+@@ -908,19 +991,13 @@
          for (auto& t:rows) if (t.value!=t.last) { t.last=t.value;*t.setting=t.value!=0;changed=moved=true; }
          return moved;
      };
@@ -2486,13 +2520,39 @@ diff --git a/gpu/shim/engine/shared_camera_settings.h b/gpu/shim/engine/shared_c
 new file mode 100644
 --- /dev/null
 +++ b/gpu/shim/engine/shared_camera_settings.h
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,44 @@
 +// SPDX-License-Identifier: GPL-3.0-or-later
 +#pragma once
 +#include <algorithm>
 +#include <cstdint>
 +namespace SharedCamera {
 +struct Values {int sensitivity;bool invert_x,invert_y,auto_adjust;};
++enum Field : unsigned {Sensitivity=1,InvertX=2,InvertY=4,AutoAdjust=8,All=15};
++// A closed parent dialog can outlive a newer loaded record. Only publish fields
++// actually edited in that dialog, rather than replaying its entire old snapshot.
++struct RecordChanges {
++ Values previous{};bool initialized=false;
++ unsigned Observe(const Values& v){
++  unsigned changed=All;
++  if(initialized)changed=(v.sensitivity!=previous.sensitivity?Sensitivity:0)|
++   (v.invert_x!=previous.invert_x?InvertX:0)|(v.invert_y!=previous.invert_y?InvertY:0)|
++   (v.auto_adjust!=previous.auto_adjust?AutoAdjust:0);
++  previous=v;initialized=true;return changed;
++ }
++};
++// The record copier also receives stack-local factory defaults. Those records
++// must never replace the live camera settings used by mouse input.
++template<class Reader>
++std::uint64_t LiveSource(std::uint64_t slide,Reader read){
++ std::uint64_t manager=0,options=0;
++ if(!read(slide+0x553b130,&manager,sizeof manager)||!manager||
++  !read(manager+0x48,&options,sizeof options))return 0;
++ return options;
++}
++template<class Reader>
++bool IsLiveSource(std::uint64_t source,std::uint64_t slide,Reader read){
++ return source&&source==LiveSource(slide,read);
++}
 +// Verified original menu record: sensitivity +0, X +9, Y +10,
 +// auto-target +11, auto-adjust +12. Axis choice 1=normal, 0=inverted.
 +inline bool DecodeMenu(const std::uint8_t* b,Values& v){
@@ -6662,20 +6722,20 @@ new file mode 100644
 +Formats adapted from upstream engine/menu_assets.cpp; no GUI textures touched.
 +"""
 +import struct
-+VERSION = 'awaken-eight-languages-3'
++VERSION = 'awaken-eight-languages-4'
 +SPANISH = {
 +110006:('Ajustes de PC','Opciones añadidas para PC.'),110007:('Gráficos de PC','Opciones gráficas para PC.'),110008:('Controles de PC','Ratón: cámara, sensibilidad y puntero.'),110009:('Asignación de teclas','Asignaciones de teclado y ratón.'),110010:('Efectos de PC','Desenfoque, brillo, viñeta y otros efectos.'),110011:('Ajustes de cámara','Campo de visión, distancia y altura de la cámara.'),110012:('Steam Deck','Rendimiento y detalle para Steam Deck.'),110013:('Mejoras de PC','Activa el espejo, el renacimiento y la cámara de PC. Requiere reiniciar.'),
 +116000:('Sincronización vertical','Sincroniza la imagen con la pantalla.'),116001:('Pantalla completa','Sin bordes, a la resolución del escritorio.'),116002:('Ratón en los menús','Mueve el ratón y haz clic para seleccionar.'),116003:('Mostrar puntero','Muestra el puntero del ratón.'),116004:('Omitir logotipos','Omite los logotipos y el aviso inicial. Se aplica al reiniciar.'),116005:('Límite de FPS','30 es el ritmo original; 60 o más ejecuta el juego a 60. Más de 60 solo limita la presentación. Reinicia para aplicar.'),116007:('Mostrar FPS','Fotogramas presentados por segundo, en la esquina superior derecha.'),116020:('Ajustes de PC',''),116035:('Sin límite',''),
-+117000:('Oclusión ambiental','Oclusión ambiental en el espacio de pantalla.'),117001:('Suavizado de bordes','Suavizado de bordes original del juego.'),117002:('Profundidad de campo','Desenfoca la lejanía. Requiere reiniciar.'),117003:('Aberración cromática','Bordes de color en los extremos de la imagen. Requiere reiniciar.'),117004:('Resolución de salida','Resolución del escalador. Requiere reiniciar si la resolución en tiempo real está desactivada.'),117005:('Desenfoque de movimiento','Desenfoque al mover la cámara y el personaje. Requiere reiniciar.'),117006:('Distancia de sombras','Alcance de las sombras del sol y la luna. 0 es el original.'),117007:('Intensidad de oclusión','Oscuridad en esquinas y contactos. 5 es el original.'),117008:('Niebla','Densidad de la bruma lejana. 10 es el original.'),117020:('Gráficos de PC',''),
++117000:('Oclusión ambiental','Oclusión ambiental en el espacio de pantalla.'),117001:('Suavizado de bordes','Suavizado de bordes original del juego.'),117002:('Profundidad de campo','Desenfoca la lejanía. Requiere reiniciar.'),117003:('Aberración cromática','Bordes de color en los extremos de la imagen. Requiere reiniciar.'),117004:('Resolución de salida','Resolución del escalador. Requiere reiniciar si la resolución en tiempo real está desactivada.'),117005:('Motion Blur','Desenfoque al mover la cámara y el personaje. Requiere reiniciar.'),117006:('Distancia de sombras','Alcance de las sombras del sol y la luna. 0 es el original.'),117007:('Intensidad de oclusión','Oscuridad en esquinas y contactos. 5 es el original.'),117008:('Niebla','Densidad de la bruma lejana. 10 es el original.'),117020:('Gráficos de PC',''),
 +118000:('Cámara con el ratón','El ratón gira la cámara fuera de los menús.'),118001:('Sensibilidad de cámara','Velocidad de giro con el ratón.'),118002:('Eje X del ratón','Dirección horizontal de la cámara con el ratón.'),118003:('Eje Y del ratón','Dirección vertical de la cámara con el ratón.'),118004:('Campo de visión','0 es el original; cada paso amplía el campo un 5 %.'),118005:('Giro automático de cámara','Permite el giro automático de la cámara al usar el ratón.'),118020:('Controles de PC',''),
 +119000:('Página','Izquierda y derecha cambian el grupo de acciones.'),119020:('Asignación de teclas',''),
-+120000:('Resplandor','Brillo alrededor de las luces. 10 es el original.'),120001:('Viñeta','Oscurecimiento de los bordes de la imagen.'),120002:('Saturación','Intensidad del color. 5 es el original; 0 es blanco y negro.'),120020:('Efectos de PC',''),
++120000:('Bloom','Brillo alrededor de las luces. 10 es el original.'),120001:('Viñeta','Oscurecimiento de los bordes de la imagen.'),120002:('Saturación','Intensidad del color. 5 es el original; 0 es blanco y negro.'),120020:('Efectos de PC',''),
 +121000:('Distancia de cámara','Distancia entre la cámara y el personaje. 5 es la original.'),121001:('Altura de cámara','Altura de la cámara sobre el personaje. 5 es la original.'),121020:('Ajustes de cámara',''),122000:('Salir del juego','Cierra el juego y vuelve al escritorio.'),
 +123000:('Tasa de fotogramas','30 FPS: 1280x800. 60 FPS: 960x600 escalado con FSR 1 y detalle bajo. Requiere reiniciar.'),123001:('Detalle de modelos','Normal conserva el detalle original. Bajo reduce antes el detalle para mejorar el rendimiento.'),123020:('Steam Deck',''),123040:('Completo',''),123041:('Normal',''),123042:('Bajo',''),123043:('Mínimo',''),
 +124020:('Mejoras de PC',''),124001:('Espejo del Sueño del Cazador','El espejo del Sueño abre el editor de apariencia. Requiere reiniciar.'),124002:('Renacer en el altar','Con la Piedra de Yharnam, el Altar de la Desesperación restablece el nivel y los atributos. Requiere reiniciar.'),124003:('Cinco jugadores','Dos invasores en Mensis, Mergo, la Frontera y el DLC. Todos necesitan este ajuste. Requiere reiniciar.'),124004:('Controles de cámara de PC','Añade la cámara de PC al menú Sistema. Requiere reiniciar.'),
 +920000:('¿Conservar esta resolución?\nSe restablecerá en 10 segundos si no eliges SÍ.',''),920001:('¿Salir del juego y volver al escritorio?',''),14000332:('Renacer en la pesadilla',''),14000333:('El altar permanece en silencio.\nEspera a quien porte una reliquia sagrada,\nuna consciencia que solo está dormida.',''),14000334:('Tienes demasiados ecos de sangre para renacer.\nGasta algunos y vuelve al altar.',''),14000335:('Aceptar renacimiento',''),14000336:('Deshacer renacimiento',''),
 +}
-+SPANISH.update({126003:('Asignación de teclas','Asigna teclas y botones del ratón o consulta las asignaciones del mando.'),126004:('Ajustes de cámara','Ajusta el campo de visión, la distancia y la altura de la cámara.'),126000:('Jugar con','Usar Mando o Teclado y ratón'),126001:('Asigna teclas y botones del ratón o consulta las asignaciones del mando.',''),126002:('Ajusta el campo de visión, la distancia y la altura de la cámara.','')})
++SPANISH.update({125000:('Brillo','Ajusta el brillo de la imagen. 5 es el valor original.'),125001:('Contraste','Ajusta la diferencia entre las zonas claras y oscuras. 5 es el valor original.'),125002:('Saturación','Ajusta la intensidad de los colores. 5 es el valor original; 0 muestra la imagen en blanco y negro.'),125003:('Tono','Desplaza el tono de todos los colores. 5 es el valor original.'),126003:('Asignación de teclas','Asigna teclas y botones del ratón o consulta las asignaciones del mando.'),126004:('Ajustes de cámara','Ajusta el campo de visión, la distancia y la altura de la cámara.'),126000:('Jugar con','Usar Mando o Teclado y ratón'),126001:('Asigna teclas y botones del ratón o consulta las asignaciones del mando.',''),126002:('Ajusta el campo de visión, la distancia y la altura de la cámara.','')})
 +for i in range(119001,119008): SPANISH[i]=('Acción','')
 +TRANSLATIONS = {
 +  "Move Forward": [
@@ -9865,35 +9925,69 @@ diff --git a/src/runtime.h b/src/runtime.h
  #define ABI __attribute__((sysv_abi))
  typedef void (ABI *GuestCallback)(void);
  void runtime_start(uint64_t capabilities);
+@@ -84,6 +87,8 @@
+ int runtime_file_mount(const char *guest, const char *host);
+ void runtime_file_unmount(const char *guest);
+ int runtime_file_translate(const char *guest, char *out, size_t size);
++/* Exact mount lookup for host-side asset validation, without locale redirects. */
++int runtime_file_translate_exact(const char *guest, char *out, size_t size);
+ int64_t runtime_file_open(const char *path, int flags, int mode);
+ int64_t runtime_file_close(int fd);
+ int64_t runtime_file_read(int fd, void *buffer, uint64_t size);
 diff --git a/src/runtime_file.c b/src/runtime_file.c
 --- a/src/runtime_file.c
 +++ b/src/runtime_file.c
-@@ -5,6 +5,7 @@
+@@ -5,6 +5,8 @@
   * Paths containing ".." components are rejected rather than normalized. */
  #define _GNU_SOURCE
  #include "runtime.h"
 +#include "runtime_voice_banks.h"
++#include "runtime_text_locale.h"
  #include <stdio.h>
  #include <stdlib.h>
  #include <string.h>
-@@ -99,6 +100,16 @@
+@@ -91,7 +93,7 @@
+     }
+ }
+ /* Resolve a guest path to a host path; returns 0 or a host errno. */
+-static int translate(const char *guest,char *out,size_t size) {
++static int translate_impl(const char *guest,char *out,size_t size,int localized) {
+     if (!guest || !*guest) return ENOENT;
+     char buffer[1024];
+     if (guest[0]!='/') snprintf(buffer,sizeof(buffer),"/app0/%s",guest);
+@@ -99,6 +101,23 @@
  
      for (const char *p=buffer;(p=strstr(p,".."));p+=2)
          if ((p==buffer || p[-1]=='/') && (p[2]==0 || p[2]=='/')) return EACCES;
 +    /* Saved sound settings can reload another language after localization boot.
 +     * Enforce the explicit launcher selection at every localized bank lookup. */
 +    char selected_bank[sizeof buffer];
-+    const int voice=runtime_voice_bank_path(buffer,getenv("BB_VOICE_LANGUAGE"),selected_bank,sizeof selected_bank);
++    const int voice=localized?runtime_voice_bank_path(buffer,getenv("BB_VOICE_LANGUAGE"),selected_bank,sizeof selected_bank):0;
 +    if (voice<0) return ENAMETOOLONG;
 +    if (voice>0) {
 +        const char *trace=getenv("BB_AUDIO_TRACE");
 +        if (trace && trace[0]=='1') printf("Voice bank override: %s -> %s\n",buffer,selected_bank);
 +        memcpy(buffer,selected_bank,strlen(selected_bank)+1);
 +    }
++    const int text=localized?runtime_text_locale_path(buffer,getenv("BB_TEXT_LANGUAGE"),selected_bank,sizeof selected_bank):0;
++    if (text<0) return ENAMETOOLONG;
++    if (text>0) {
++        const char *trace=getenv("BB_MOD_TRACE");
++        if (trace && trace[0]=='1') printf("Text locale override: %s -> %s\n",buffer,selected_bank);
++        memcpy(buffer,selected_bank,strlen(selected_bank)+1);
++    }
      host_lock(&lock);
      size_t best=0; const Mount *m=NULL;
      for (size_t i=0;i<mount_count;++i) {
-@@ -200,6 +211,7 @@
+@@ -112,6 +131,7 @@
+     if (result==ENOENT) fprintf(stderr,"Runtime: no mount for guest path %s\n",guest);
+     return result;
+ }
++static int translate(const char *guest,char *out,size_t size) { return translate_impl(guest,out,size,1); }
+ static int host_flags(int flags) {
+     int r;
+     switch (flags&3) { case 0: r=O_RDONLY; break; case 1: r=O_WRONLY; break; default: r=O_RDWR; }
+@@ -200,6 +220,7 @@
  }
  /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
  static int64_t do_open(const char *guest,int flags,int mode) {
@@ -9901,6 +9995,15 @@ diff --git a/src/runtime_file.c b/src/runtime_file.c
      if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
      char path[1024];
      int e=translate(guest,path,sizeof(path));
+@@ -510,6 +531,8 @@
+ int64_t runtime_file_fstat(int fd,void *s) { return do_fstat(fd,s); }
+ int64_t runtime_file_getdents(int fd,char *b,uint64_t n,int64_t *base) { return do_getdents(fd,b,n,base); }
+ int runtime_file_translate(const char *guest,char *out,size_t size) { return translate(guest,out,size); }
++/* Asset verification checks every installed locale, independently of selection. */
++int runtime_file_translate_exact(const char *guest,char *out,size_t size) { return translate_impl(guest,out,size,0); }
+ void runtime_file_report(void) {
+     printf("Runtime: files opened=%zu, reads=%zu (%llu bytes), writes=%zu, not found=%zu\n",
+            opens,reads,(unsigned long long)bytes_read,writes,missing);
 diff --git a/src/runtime_pad.c b/src/runtime_pad.c
 --- a/src/runtime_pad.c
 +++ b/src/runtime_pad.c
@@ -11405,6 +11508,36 @@ diff --git a/src/runtime_services.c b/src/runtime_services.c
 +    }
 +    return RUNTIME_LOOKUP(exports,name);
 +}
+diff --git a/src/runtime_text_locale.h b/src/runtime_text_locale.h
+new file mode 100644
+--- /dev/null
++++ b/src/runtime_text_locale.h
+@@ -0,0 +1,25 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef BB_RUNTIME_TEXT_LOCALE_H
++#define BB_RUNTIME_TEXT_LOCALE_H
++#include <stddef.h>
++#include <string.h>
++/* Preserve an explicit Spanish region if native saved/regional settings request
++ * the other Spanish bundle. Do not substitute translations or touch audio. */
++static inline int runtime_text_locale_path(const char *path,const char *language,char *out,size_t capacity) {
++    if (!path||!language) return 0;
++    const char *locale=!strcmp(language,"20")?"spaar":!strcmp(language,"3")?"spaes":NULL;
++    if (!locale) return 0;
++    const char *prefix="/app0/dvdroot_ps4/msg/";
++    size_t offset=strlen(prefix);
++    if (strncmp(path,prefix,offset)) {
++        prefix="/hostapp/dvdroot_ps4/msg/";offset=strlen(prefix);
++        if(strncmp(path,prefix,offset))return 0;
++    }
++    const char *current=path+offset;
++    if(strncmp(current,"spaes/",6)&&strncmp(current,"spaar/",6))return 0;
++    if(!strncmp(current,locale,5))return 0;
++    const size_t n=strlen(path);
++    if(n>=capacity)return -1;
++    memcpy(out,path,n+1);memcpy(out+offset,locale,5);return 1;
++}
++#endif
 diff --git a/src/runtime_voice_banks.h b/src/runtime_voice_banks.h
 new file mode 100644
 --- /dev/null
@@ -11447,6 +11580,17 @@ new file mode 100644
 +    return 1;
 +}
 +#endif
+diff --git a/tests/test_gpu_runtime_stubs.cpp b/tests/test_gpu_runtime_stubs.cpp
+--- a/tests/test_gpu_runtime_stubs.cpp
++++ b/tests/test_gpu_runtime_stubs.cpp
+@@ -23,6 +23,7 @@
+ uint64_t runtime_experiment_bits = 0;
+ uint64_t runtime_tsc_frequency() { return 1000000000; }
+ int runtime_file_translate(const char*, char*, size_t) { std::abort(); }
++int runtime_file_translate_exact(const char*, char*, size_t) { std::abort(); }
+ uint64_t runtime_memory_clamp(uintptr_t, uint64_t) { std::abort(); }
+ uint64_t runtime_process_time_us() { return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+ int runtime_memory_region(uintptr_t, uintptr_t*, uintptr_t*, int*) { std::abort(); }
 diff --git a/tests/test_pc_input.cpp b/tests/test_pc_input.cpp
 --- a/tests/test_pc_input.cpp
 +++ b/tests/test_pc_input.cpp

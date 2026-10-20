@@ -1,6 +1,6 @@
 {
   "integration": "better-kbm-expanded",
-  "version": 14,
+  "version": 15,
   "launcher_source_revision": "2d2664961f565f496a7cf9c5b3d1176e10fb0755",
   "engine_base_tag": "v0.4.0-darkizuku-preview.1",
   "files": {
@@ -46,7 +46,7 @@
     },
     "gpu/shim/engine/option_menu.cpp": {
       "before": "331e333bc438b171be2e8e4797d70923bbef6e28410ab7da6b483519b52c23fd",
-      "after": "230afbff745a1a6d7acf07627adb987858c1af10b83bb135e6ac4e2cc7511c1c"
+      "after": "277553d76207e72d378c005f185963778237cd5d588660330a8bb3cd75a41521"
     },
     "gpu/shim/engine/option_menu.h": {
       "before": "198da25181a1cdf8635a8894d987671f0c2bf194c4107acbb5cad36756ea76e3",
@@ -58,7 +58,7 @@
     },
     "gpu/shim/engine/shared_camera_settings.h": {
       "before": null,
-      "after": "b835458d82b6492de622499e5175258d88f7263f35717474c2b1fc055cd1fdb7"
+      "after": "0175fdb6f0a622d574e54d7f453c8f3d9193f4943db1532b93d675a28ecb859e"
     },
     "gpu/shim/input/bindings.cpp": {
       "before": "23cc6c0d6d60cd2ce1585c977dc7c66ca80599b086bdf6b7e3a91b7dd0b5e96f",
@@ -138,7 +138,7 @@
     },
     "scripts/pc_localization.py": {
       "before": null,
-      "after": "5645ea09f995d92f525f5674dae4607bd9e3c42e61634ee0d8b7cb2fb6cb01e6"
+      "after": "5fb47e91f5453eed10ec1160af83945e9f9fc284f83b234e6db38151ec7f9730"
     },
     "scripts/quit_menu.py": {
       "before": null,
@@ -154,11 +154,11 @@
     },
     "src/runtime.h": {
       "before": "db88c487c2cd866f9d4101b302c119613b9b54364abec5c79f0a26fee067f4d7",
-      "after": "a837ebc541b4ada71d87c53d4eb96e29d2ea62c792bd344f35cd4618170813b5"
+      "after": "a870eae026af7a344ea2931a03b05afe122a7b9379a3692fbd83409be0343871"
     },
     "src/runtime_file.c": {
       "before": "e56b358d5190114f89fbc007f9dd578bb549a7918dfcf372389f5a75c5b013a4",
-      "after": "56e71dd20d73f15c2c9cb06b8320dc8027cd976b5e126d1520bc02b0c2dab25c"
+      "after": "16314e24ce5081b4098227d26b607f85dc753375ed5e9f60e8223a36d41077e0"
     },
     "src/runtime_pad.c": {
       "before": "c8019f8885e3fc8ed792e8456ce221e9cff2ebc5ecc02f33b0592b13c724f164",
@@ -172,9 +172,17 @@
       "before": "a857bb7dedf512c9828222794689fce6e3b40c5c8bee263cbd9b2bce18fb8a4f",
       "after": "03fd25ee1b2da473d323fbc307987b640a0cf2768af9fdb51b42e7b9d4af41a5"
     },
+    "src/runtime_text_locale.h": {
+      "before": null,
+      "after": "94393e69640ef5e9d79d528958e990c9b0895b094bdb99c0e334374ca55c0489"
+    },
     "src/runtime_voice_banks.h": {
       "before": null,
       "after": "1e68b11df2d32fe1a7f93590aca3c5bb4ae2e344b3e6d4cf810cc0e79507f709"
+    },
+    "tests/test_gpu_runtime_stubs.cpp": {
+      "before": "a68eee6b9fffd856b9f995c272f8f98c280f5195e317f60956fa2382d2a0553e",
+      "after": "8df83f9932f9893ff497ae24aa9bdce04459944f279ed1f1c6116d7a248fbeb6"
     },
     "tests/test_pc_input.cpp": {
       "before": "fe3895f7348837e281a2da35075853fd438b5917fc2818f1073d57ac8cb89111",

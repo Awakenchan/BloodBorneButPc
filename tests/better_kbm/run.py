@@ -46,6 +46,9 @@ def main():
   camera=root/('camera-stub.exe' if os.name=='nt' else 'camera-stub')
   run([a.cxx,'-std=c++23','-O2','-mavx','-I'+str(engine/'gpu/shim/input'),str(here/'test_camera_stub.cpp'),str(engine/'gpu/shim/input/mouse_camera_stubs.cpp'),'-o',str(camera)])
   run([str(camera)])
+  shared=root/('shared-camera.exe' if os.name=='nt' else 'shared-camera')
+  run([a.cxx,'-std=c++23','-O2','-I'+str(engine/'gpu/shim/engine'),str(here/'test_shared_camera.cpp'),'-o',str(shared)])
+  run([str(shared)])
   run([sys.executable,str(here/'test_asset_cache.py'),str(engine)])
   if a.sdk:
    # Compile the real serialization, not a duplicate of its layout calculations.

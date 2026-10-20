@@ -36,7 +36,8 @@ elif git -C "$engine_target" apply --check --ignore-space-change "$patch" 2>/dev
 else
     # Try recognized prior releases without resetting settings or local sources.
     upgraded=0
-    latest="$root/engine/better-kbm-voice-bank-update.patch"
+    latest="$root/engine/better-kbm-settings-sync-update.patch"
+    banks="$root/engine/better-kbm-voice-bank-update.patch"
     voice="$root/engine/better-kbm-voice-track-update.patch"
     latino="$root/engine/better-kbm-latino-update.patch"
     language="$root/engine/better-kbm-language-update.patch"
@@ -47,12 +48,12 @@ else
     motion="$root/engine/better-kbm-motion-update.patch"
     popup="$root/engine/better-kbm-popup-input-update.patch"
     previous="$root/engine/better-kbm-image-camera-update.patch"
-    for upgrade in "$latest" "$voice" "$latino" "$language" "$wheel" "$device" "$tuning" "$sprint" "$motion" "$popup" "$previous" "$root/engine/better-kbm-panel-update.patch" "$root/engine/better-kbm-menu-update.patch"; do
+    for upgrade in "$latest" "$banks" "$voice" "$latino" "$language" "$wheel" "$device" "$tuning" "$sprint" "$motion" "$popup" "$previous" "$root/engine/better-kbm-panel-update.patch" "$root/engine/better-kbm-menu-update.patch"; do
         [[ -f "$upgrade" ]] || continue
         git -C "$engine_target" apply --check --ignore-space-change "$upgrade" 2>/dev/null || continue
         git -C "$engine_target" apply --whitespace=nowarn --ignore-space-change "$upgrade"
         applied=("$upgrade")
-        for followup in "$previous" "$popup" "$motion" "$sprint" "$tuning" "$device" "$wheel" "$language" "$latino" "$voice" "$latest"; do
+        for followup in "$previous" "$popup" "$motion" "$sprint" "$tuning" "$device" "$wheel" "$language" "$latino" "$voice" "$banks" "$latest"; do
             if git -C "$engine_target" apply --reverse --check --ignore-space-change "$patch" 2>/dev/null; then break; fi
             if [[ "$followup" != "$upgrade" && -f "$followup" ]] &&
                git -C "$engine_target" apply --check --ignore-space-change "$followup" 2>/dev/null; then
@@ -101,7 +102,7 @@ python3 "$root/tools/deploy-runtime-dlls.py" "$engine_target/out" --dll-dir /cla
 python3 - "$engine_target/out/better-kbm-build.json" <<'PY'
 from pathlib import Path
 import json,sys
-Path(sys.argv[1]).write_text(json.dumps({'integration':'better-kbm-expanded','version':14}),encoding='utf-8')
+Path(sys.argv[1]).write_text(json.dumps({'integration':'better-kbm-expanded','version':15}),encoding='utf-8')
 PY
 # ZIP extraction can preserve dates older than existing WPF build outputs.
 # Clean first so a successful publish cannot silently reuse the previous UI.

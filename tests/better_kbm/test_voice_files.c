@@ -15,11 +15,14 @@ static void make(const char *root,const char *name,const char *content){
     char path[1024];snprintf(path,sizeof path,"%s/%s",root,name);
     FILE *f=fopen(path,"wb");assert(f);assert(fwrite(content,1,strlen(content),f)==strlen(content));assert(!fclose(f));
 }
-static void check(const char *name,const char *expected){
-    char path[1024],value[64]={0};snprintf(path,sizeof path,"/app0/dvdroot_ps4/sound/%s",name);
+static void check_path(const char *path,const char *expected){
+    char value[64]={0};
     int fd=do_open(path,0,0);assert(fd>=3);assert(do_read(fd,value,sizeof value-1)==(int64_t)strlen(expected));
     assert(!strcmp(value,expected));assert(!do_close(fd));
     GuestStat info;assert(!do_stat(path,&info)&&info.size==(int64_t)strlen(expected));
+}
+static void check(const char *name,const char *expected){
+    char path[1024];snprintf(path,sizeof path,"/app0/dvdroot_ps4/sound/%s",name);check_path(path,expected);
 }
 int main(int argc,char **argv){
     assert(argc==2);const char *root=argv[1];
@@ -41,5 +44,18 @@ int main(int argc,char **argv){
     make(root,"sprj_sm25_ese.fsb","WRONG VOICE");
     assert(do_open("/app0/dvdroot_ps4/sound/sprj_sm25_ese.fsb",0,0)==-ENOENT);
     assert(do_open("/app0/dvdroot_ps4/sound/../sprj_sm24_ese.fsb",0,0)==-EACCES);
+    make(root,"latin-text.dcx","LATIN TEXT");make(root,"spain-text.dcx","SPAIN TEXT");
+    char latin[1024],spain[1024];snprintf(latin,sizeof latin,"%s/latin-text.dcx",root);snprintf(spain,sizeof spain,"%s/spain-text.dcx",root);
+    assert(!runtime_file_mount("/app0/dvdroot_ps4/msg/spaar/menu.msgbnd.dcx",latin));
+    assert(!runtime_file_mount("/app0/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx",spain));
+    setenv("BB_TEXT_LANGUAGE","20",1);setenv("BB_VOICE_LANGUAGE","3",1);
+    /* Preparing all locale mounts must verify their exact original paths. */
+    char exact[1024];assert(!runtime_file_translate_exact("/app0/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx",exact,sizeof exact));assert(!strcmp(exact,spain));
+    assert(!runtime_file_translate("/app0/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx",exact,sizeof exact));assert(!strcmp(exact,latin));
+    check_path("/app0/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx","LATIN TEXT");check("sprj_sm24_esa.fsb","SPAIN NPC AUDIO");
+    setenv("BB_TEXT_LANGUAGE","3",1);setenv("BB_VOICE_LANGUAGE","20",1);
+    check_path("/app0/dvdroot_ps4/msg/spaar/menu.msgbnd.dcx","SPAIN TEXT");check("sprj_sm24_ese.fsb","LATIN NPC");
+    unsetenv("BB_TEXT_LANGUAGE");check_path("/app0/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx","SPAIN TEXT");
+    puts("PASS: actual guest text open/read/stat preserves explicit Spanish regions independently of voices and respects exact localized menu mounts.");
     puts("PASS: actual guest open/read/stat honors Latin selection after Spain reload, respects selected-language mod mounts, preserves effects and never silently falls back to Spain when Latin is missing.");
 }

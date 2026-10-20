@@ -14,6 +14,14 @@ for va,expected in [(0x1b21203,'4d8d6f09'),(0x1b2132f,'4d8d6f0a'),(0x1b2163f,'4d
 for va,expected in [(0x1b24924,'498d5d18'),(0x1b24928,'498b4540'),(0x1b24958,'49894d40')]:assert read(va,len(bytes.fromhex(expected)))==bytes.fromhex(expected),hex(va)
 print('PASS: original section hooks, Controls/Environment handlers, shared camera fields, dialog identity and native child-stack layout match supplied game.')
 
+# The same copier handles the live options and stack-local factory defaults.
+# Only the former is authoritative for host mouse-camera synchronization.
+assert read(0x1bda773,17)==bytes.fromhex('488d05b6099603488b00488b78484c89fe')
+for call,target in [(0x1bda784,0x14ef730),(0x1c8b105,0x14eea90),(0x1c8b110,0x14ef730)]:
+ op=read(call,5);assert op[0]==0xe8 and call+5+struct.unpack_from('<i',op,1)[0]==target
+assert read(0x1b20b5c,3)==bytes.fromhex('4889de') # Handler receives the copied compact record.
+print('PASS: live options pointer, shared copy callers and factory-default initialization verified.')
+
 for va,expected in [(0x1b290f0,'554889e54157415641554154534881ec38010000'),(0x1bdb270,'488b47084889f74889d6ffe0')]:assert read(va,len(bytes.fromhex(expected)))==bytes.fromhex(expected),hex(va)
 print('PASS: original Defaults action builder and function-pointer invoker verified.')
 

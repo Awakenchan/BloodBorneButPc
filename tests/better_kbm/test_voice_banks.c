@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "runtime_voice_banks.h"
+#include "runtime_text_locale.h"
 #include <assert.h>
 int main(void) {
     char path[256];
@@ -19,4 +20,13 @@ int main(void) {
     assert(!runtime_voice_bank_path("/app0/dvdroot_ps4/sound/sprj_main_ese.fsb","invalid",path,sizeof path));
     assert(runtime_voice_bank_path("/app0/dvdroot_ps4/sound/sprj_main_ese.fsb","20",path,8)==-1);
     puts("PASS: all 64 localized voice-bank selections, main/NPC banks, hostapp, unchanged effects/text/save paths and buffer bounds.");
+    assert(runtime_text_locale_path("/app0/dvdroot_ps4/msg/spaes/item.msgbnd.dcx","20",path,sizeof path)==1);
+    assert(!strcmp(path,"/app0/dvdroot_ps4/msg/spaar/item.msgbnd.dcx"));
+    assert(runtime_text_locale_path("/hostapp/dvdroot_ps4/msg/spaar/menu.msgbnd.dcx","3",path,sizeof path)==1);
+    assert(!strcmp(path,"/hostapp/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx"));
+    for(const char **p=(const char*[]){"/app0/dvdroot_ps4/sound/sprj_main_ese.fsb","/app0/dvdroot_ps4/msg/engus/menu.msgbnd.dcx","/app0/dvdroot_ps4/msg/spaes-extra/file","/data/msg/spaes/file","/app0/dvdroot_ps4/msg/spaes",NULL};*p;++p)
+        assert(!runtime_text_locale_path(*p,"20",path,sizeof path));
+    assert(!runtime_text_locale_path("/app0/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx","3",path,sizeof path));
+    assert(!runtime_text_locale_path("/app0/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx","1",path,sizeof path));
+    assert(runtime_text_locale_path("/app0/dvdroot_ps4/msg/spaes/menu.msgbnd.dcx","20",path,8)==-1);
 }
