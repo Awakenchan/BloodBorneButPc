@@ -44,63 +44,63 @@ namespace BloodborneLauncher.Views
         private List<ControlProfiles.Profile> _profiles = new();
         private bool _fillingProfiles;
 
-        public ControlsPage() : base("Controls",
-            "Keyboard and mouse for every action, the mouse camera, and shareable profiles. Gamepads work as on PS4.")
+        public ControlsPage() : base(L.T("Controls"),
+            L.T("Keyboard and mouse for every action, the mouse camera, and shareable profiles. Gamepads work as on PS4."))
         {
             // ==================== PC controls & mouse ====================
-            Group("Keyboard & mouse");
-            var pc = ToggleRow(SymbolRegular.Keyboard24, "PC controls", "The keyboard and mouse layout below; off keeps the gamepad-style keys",
+            Group(L.T("Keyboard & mouse"));
+            var pc = ToggleRow(SymbolRegular.Keyboard24, L.T("PC controls"), L.T("The keyboard and mouse layout below; off keeps the gamepad-style keys"),
                 () => Ini.Get("pc_controls", "1") != "0", v => Ini.Set("pc_controls", v ? "1" : "0"));
             var mouse = new StackPanel();
-            ToggleRow(SymbolRegular.CursorClick24, "Mouse camera", "The mouse turns the game's own camera by raw counts, at any frame rate",
+            ToggleRow(SymbolRegular.CursorClick24, L.T("Mouse camera"), L.T("The mouse turns the game's own camera by raw counts, at any frame rate"),
                 () => Ini.Get("mouse_camera", "1") != "0", v => Ini.Set("mouse_camera", v ? "1" : "0"), mouse);
-            ToggleRow(SymbolRegular.CursorHover24, "Mouse in menus", "The mouse becomes a pointer in the game's menus: hover and click items",
+            ToggleRow(SymbolRegular.CursorHover24, L.T("Mouse in menus"), L.T("The mouse becomes a pointer in the game's menus: hover and click items"),
                 () => Ini.Get("mouse_menu", "1") != "0", v => Ini.Set("mouse_menu", v ? "1" : "0"), mouse);
-            SliderRow(SymbolRegular.Gauge24, "Mouse sensitivity", "5 is the default", 0, 10, 1,
+            SliderRow(SymbolRegular.Gauge24, L.T("Mouse sensitivity"), L.T("5 is the default"), 0, 10, 1,
                 () => ParseDouble(Ini.Get("mouse_sensitivity", "5"), 5), v => Ini.Set("mouse_sensitivity", ((int)v).ToString()), "0", mouse);
-            IniToggle(SymbolRegular.ArrowSwap24, "Invert horizontal", null, "mouse_invert_x", mouse);
-            IniToggle(SymbolRegular.ArrowSortDown24, "Invert vertical", null, "mouse_invert_y", mouse);
-            IniToggle(SymbolRegular.ArrowRotateClockwise24, "Camera auto-rotation", "Let the camera turn by itself with movement, as with a gamepad",
+            IniToggle(SymbolRegular.ArrowSwap24, L.T("Invert horizontal"), null, "mouse_invert_x", mouse);
+            IniToggle(SymbolRegular.ArrowSortDown24, L.T("Invert vertical"), null, "mouse_invert_y", mouse);
+            IniToggle(SymbolRegular.ArrowRotateClockwise24, L.T("Camera auto-rotation"), L.T("Let the camera turn by itself with movement, as with a gamepad"),
                 "mouse_auto_rotation", mouse);
-            ComboRow(SymbolRegular.KeyboardShift24, "Button prompts",
-                "The button icons in the game's menus and prompts. Automatic shows your keys while the keyboard or mouse is in use, and the controller's buttons with a controller; also in-game under System › PC Controls",
+            ComboRow(SymbolRegular.KeyboardShift24, L.T("Button prompts"),
+                L.T("The button icons in the game's menus and prompts. Automatic shows your keys while the keyboard or mouse is in use, and the controller's buttons with a controller; also in-game under System › PC Controls"),
                 Choices.ButtonPrompts, () => Ini.Get("button_prompts", "auto"), v => Ini.Set("button_prompts", v), mouse);
             Body.Children.Add(mouse);
-            ToggleRow(SymbolRegular.CursorHoverOff24, "Hide mouse cursor", "Hidden 2 seconds after the mouse stops moving; moving it brings it back",
+            ToggleRow(SymbolRegular.CursorHoverOff24, L.T("Hide mouse cursor"), L.T("Hidden 2 seconds after the mouse stops moving; moving it brings it back"),
                 () => Ini.Get("hide_cursor", "1") != "0", v => Ini.Set("hide_cursor", v ? "1" : "0"));
             void Enable() => mouse.IsEnabled = pc.IsChecked == true;
             pc.Click += (_, _) => { Enable(); Rebuild(); };
             Enable();
 
             // ==================== Profiles ====================
-            Group("Profiles");
+            Group(L.T("Profiles"));
             _profileBox = new ComboBox { Width = 260, VerticalAlignment = VerticalAlignment.Center };
             ComboSearch.Attach(_profileBox);
             _profileBox.SelectionChanged += (_, _) => ProfileChosen();
-            _deleteProfile = IconButton(SymbolRegular.Delete24, "Delete this profile", (_, _) => DeleteProfile());
-            Add(Card(SymbolRegular.PeopleCommunity24, "Profile", "", Row(_profileBox, _deleteProfile), out _profileHint));
-            Add(Card(SymbolRegular.Share24, "Save and share", "Profiles are small JSON files. Copy one and paste it on any paste site " +
-                "(Pastebin, GitHub Gist, Rentry, hastebin…) to share it; others import it from the link.", null, out _));
+            _deleteProfile = IconButton(SymbolRegular.Delete24, L.T("Delete this profile"), (_, _) => DeleteProfile());
+            Add(Card(SymbolRegular.PeopleCommunity24, L.T("Profile"), "", Row(_profileBox, _deleteProfile), out _profileHint));
+            Add(Card(SymbolRegular.Share24, L.T("Save and share"), L.T("Profiles are small JSON files. Copy one and paste it on any paste site ") +
+                L.T("(Pastebin, GitHub Gist, Rentry, hastebin…) to share it; others import it from the link."), null, out _));
             var share = new WrapPanel { Margin = new Thickness(46, -4, 0, 12) };
-            share.Children.Add(SmallButton("Save as…", SymbolRegular.Save24, (_, _) => SaveProfile()));
-            share.Children.Add(SmallButton("Copy JSON", SymbolRegular.Copy24, (_, _) => CopyProfile()));
-            share.Children.Add(SmallButton("Export file…", SymbolRegular.ArrowExportUp24, (_, _) => ExportProfile()));
-            share.Children.Add(SmallButton("Import file…", SymbolRegular.DocumentArrowDown20, (_, _) => ImportFile()));
-            share.Children.Add(SmallButton("Import from link…", SymbolRegular.Link24, async (_, _) => await ImportLinkAsync()));
+            share.Children.Add(SmallButton(L.T("Save as…"), SymbolRegular.Save24, (_, _) => SaveProfile()));
+            share.Children.Add(SmallButton(L.T("Copy JSON"), SymbolRegular.Copy24, (_, _) => CopyProfile()));
+            share.Children.Add(SmallButton(L.T("Export file…"), SymbolRegular.ArrowExportUp24, (_, _) => ExportProfile()));
+            share.Children.Add(SmallButton(L.T("Import file…"), SymbolRegular.DocumentArrowDown20, (_, _) => ImportFile()));
+            share.Children.Add(SmallButton(L.T("Import from link…"), SymbolRegular.Link24, async (_, _) => await ImportLinkAsync()));
             foreach (FrameworkElement b in share.Children) b.Margin = new Thickness(0, 4, 6, 0);
             Body.Children.Add(share);
 
-            Group("Gamepad");
-            Add(Card(SymbolRegular.XboxController24, "Controller", "", null, out _padStatus));
-            ComboRow(SymbolRegular.Games24, "Controller icons",
-                "The controller's buttons in the game's menus and prompts. Automatic shows PlayStation buttons with a PlayStation controller " +
-                "and Xbox buttons (A, B, X, Y, LB, RT…) with any other; rebound buttons show as bound. Also in-game under System › PC Controls",
+            Group(L.T("Gamepad"));
+            Add(Card(SymbolRegular.XboxController24, L.T("Controller"), "", null, out _padStatus));
+            ComboRow(SymbolRegular.Games24, L.T("Controller icons"),
+                L.T("The controller's buttons in the game's menus and prompts. Automatic shows PlayStation buttons with a PlayStation controller ") +
+                L.T("and Xbox buttons (A, B, X, Y, LB, RT…) with any other; rebound buttons show as bound. Also in-game under System › PC Controls"),
                 Choices.PadIcons, () => Ini.Get("pad_icons", "auto"), v => Ini.Set("pad_icons", v));
-            IniToggle(SymbolRegular.ArrowSwap24, "Swap sticks", "Move with the right stick and look with the left", "pad_swap_sticks", changed: () => Rebuild());
-            IniToggle(SymbolRegular.ArrowBidirectionalLeftRight24, "Invert camera left / right", "The camera stick's horizontal direction", "pad_invert_look_x");
-            IniToggle(SymbolRegular.ArrowBidirectionalUpDown24, "Invert camera up / down", "The camera stick's vertical direction", "pad_invert_look_y");
-            SliderRow(SymbolRegular.CircleSmall24, "Stick dead zone",
-                "Ignores small stick movement, for sticks that drift. 0 = off (the game's own)", 0, 30, 1,
+            IniToggle(SymbolRegular.ArrowSwap24, L.T("Swap sticks"), L.T("Move with the right stick and look with the left"), "pad_swap_sticks", changed: () => Rebuild());
+            IniToggle(SymbolRegular.ArrowBidirectionalLeftRight24, L.T("Invert camera left / right"), L.T("The camera stick's horizontal direction"), "pad_invert_look_x");
+            IniToggle(SymbolRegular.ArrowBidirectionalUpDown24, L.T("Invert camera up / down"), L.T("The camera stick's vertical direction"), "pad_invert_look_y");
+            SliderRow(SymbolRegular.CircleSmall24, L.T("Stick dead zone"),
+                L.T("Ignores small stick movement, for sticks that drift. 0 = off (the game's own)"), 0, 30, 1,
                 () => double.TryParse(Ini.Get("pad_deadzone", "0"), out var v) ? v : 0,
                 v => Ini.Set("pad_deadzone", ((int)Math.Round(v)).ToString()), format: "0'%'");
 
@@ -108,26 +108,26 @@ namespace BloodborneLauncher.Views
             var header = new Grid { Margin = new Thickness(2, 24, 0, 8) };
             header.ColumnDefinitions.Add(new ColumnDefinition());
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var title = Text("Actions", "GroupHeader");
+            var title = Text(L.T("Actions"), "GroupHeader");
             title.Margin = new Thickness(0);
             title.VerticalAlignment = VerticalAlignment.Center;
             header.Children.Add(title);
-            _search = new TextBox { PlaceholderText = "Filter actions or keys", PlaceholderEnabled = true, Width = 210, Icon = Icon(SymbolRegular.Search24) };
+            _search = new TextBox { PlaceholderText = L.T("Filter actions or keys"), PlaceholderEnabled = true, Width = 210, Icon = Icon(SymbolRegular.Search24) };
             _search.TextChanged += (_, _) => Rebuild();
-            var tools = Row(_search, SmallButton("Reset all", SymbolRegular.ArrowUndo24, (_, _) =>
+            var tools = Row(_search, SmallButton(L.T("Reset all"), SymbolRegular.ArrowUndo24, (_, _) =>
             {
                 Bindings.ResetAll(Ini);
                 PadMap.ResetAll(Ini);
-                Ws.Log("Key and controller bindings reset to the defaults.", LogLevel.Step);
+                Ws.Log(L.T("Key and controller bindings reset to the defaults."), LogLevel.Step);
                 Changed();
             }));
             Grid.SetColumn(tools, 1);
             header.Children.Add(tools);
             Body.Children.Add(header);
 
-            var help = Text("Click an action and press a key, click a mouse button or turn the wheel. Each action takes one key and one " +
-                            "mouse input. × removes one, right-click unbinds the action. In the Controller column, pick the button for an " +
-                            "action: one already in use swaps over.", "Faint");
+            var help = Text(L.T("Click an action and press a key, click a mouse button or turn the wheel. Each action takes one key and one ") +
+                            L.T("mouse input. × removes one, right-click unbinds the action. In the Controller column, pick the button for an ") +
+                            L.T("action: one already in use swaps over."), "Faint");
             help.Margin = new Thickness(2, 0, 0, 8);
             Body.Children.Add(help);
 
@@ -182,8 +182,8 @@ namespace BloodborneLauncher.Views
             _padTimer.Tick += (_, _) => PollPad();
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
-            buttons.Children.Add(SmallButton("Unbind", SymbolRegular.Dismiss24, (_, _) => { if (_padInput != null) CommitPad(""); else Commit(null); }));
-            buttons.Children.Add(SmallButton("Cancel", SymbolRegular.ArrowExit20, (_, _) => EndCapture()));
+            buttons.Children.Add(SmallButton(L.T("Unbind"), SymbolRegular.Dismiss24, (_, _) => { if (_padInput != null) CommitPad(""); else Commit(null); }));
+            buttons.Children.Add(SmallButton(L.T("Cancel"), SymbolRegular.ArrowExit20, (_, _) => EndCapture()));
 
             var dialog = new StackPanel();
             dialog.Children.Add(_captureTitle);
@@ -255,27 +255,27 @@ namespace BloodborneLauncher.Views
             {
                 if (devices.Count == 0)
                 {
-                    SetHint(_padStatus, "No controller connected. Plug one in or pair it over Bluetooth: it shows here right away. " +
-                        "DualShock 4, DualSense, Xbox, Switch Pro and many generic pads work without extra tools.");
+                    SetHint(_padStatus, L.T("No controller connected. Plug one in or pair it over Bluetooth: it shows here right away. ") +
+                        L.T("DualShock 4, DualSense, Xbox, Switch Pro and many generic pads work without extra tools."));
                     return;
                 }
                 // A pad behind a 2.4 GHz receiver can show as two: one line per name.
                 devices = devices.GroupBy(d => (d.Name, d.Supported)).Select(g => g.First()).ToList();
                 var lines = devices.Select(d => d.Supported
                     ? $"● {d.Name}"
-                    : $"● {d.Name}: connected, but the game has no button layout for it. Switch the pad to its XInput / PC mode if it has one, or use Steam Input");
+                    : L.F($"● {d.Name}: connected, but the game has no button layout for it. Switch the pad to its XInput / PC mode if it has one, or use Steam Input"));
                 var responding = _padSeen != null && DateTime.Now - _padSeen < TimeSpan.FromMinutes(2);
                 SetHint(_padStatus, string.Join("\n", lines) + (devices.Any(d => d.Supported)
-                    ? responding ? "\nResponding: ready to play. The game uses the pad you press."
-                    : "\nDetected. Wireless pads show here while only the receiver is plugged in: press any button to check the pad is on."
+                    ? responding ? L.T("\nResponding: ready to play. The game uses the pad you press.")
+                    : L.T("\nDetected. Wireless pads show here while only the receiver is plugged in: press any button to check the pad is on.")
                     : ""));
                 return;
             }
             var pads = Gamepads.Detect();
             SetHint(_padStatus, pads.Count == 0
-                ? "No controller connected. Plug one in or pair it over Bluetooth: it shows here right away."
-                : "● " + string.Join("   ● ", pads.Select(p => p.Name + (p.Bluetooth ? " (Bluetooth)" : ""))) +
-                  (Ws.Game.Running ? "\nIn use by the game." : "\nConnected."));        }
+                ? L.T("No controller connected. Plug one in or pair it over Bluetooth: it shows here right away.")
+                : "● " + string.Join("   ● ", pads.Select(p => p.Name + (p.Bluetooth ? L.T(" (Bluetooth)") : ""))) +
+                  (Ws.Game.Running ? L.T("\nIn use by the game.") : L.T("\nConnected.")));        }
 
         // ---------------------------------------------------------------- the table
 
@@ -299,7 +299,7 @@ namespace BloodborneLauncher.Views
             var usage = Usage();
             var filter = _search.Text.Trim();
 
-            _table.Children.Add(TableRow(Header("Action"), Header("Keyboard & mouse"), Header("Controller"), new FrameworkElement(), header: true));
+            _table.Children.Add(TableRow(Header(L.T("Action")), Header(L.T("Keyboard & mouse")), Header(L.T("Controller")), new FrameworkElement(), header: true));
 
             foreach (var group in InputMap.Controls.GroupBy(c => c.Group))
             {
@@ -323,7 +323,7 @@ namespace BloodborneLauncher.Views
                         Icon = Icon(SymbolRegular.ArrowUndo24),
                         Appearance = ControlAppearance.Transparent,
                         Padding = new Thickness(6),
-                        ToolTip = $"Back to the default ({Show(control.Default)})",
+                        ToolTip = L.F($"Back to the default ({Show(control.Default)})"),
                         VerticalAlignment = VerticalAlignment.Center,
                         Visibility = Bindings.IsDefault(Ini, control) && (PadMap.InputFor(control) is not { } padInput || PadMap.IsDefault(Ini, padInput))
                             ? Visibility.Hidden : Visibility.Visible,
@@ -343,15 +343,15 @@ namespace BloodborneLauncher.Views
             var shared = usage.Where(u => u.Value.Count > 1).Select(u => $"{InputMap.Display(u.Key)} ({string.Join(", ", u.Value.Select(c => c.Label))})").ToList();
             var reserved = usage.Keys.Where(InputMap.Reserved.ContainsKey).Select(k => InputMap.Reserved[k]).ToList();
             var lines = new List<string>();
-            if (shared.Count > 0) lines.Add("Used by more than one action: " + string.Join("; ", shared));
-            if (reserved.Count > 0) lines.Add("Also used by the port: " + string.Join("; ", reserved));
+            if (shared.Count > 0) lines.Add(L.T("Used by more than one action: ") + string.Join("; ", shared));
+            if (reserved.Count > 0) lines.Add(L.T("Also used by the port: ") + string.Join("; ", reserved));
             _conflicts.IsOpen = lines.Count > 0;
-            _conflicts.Title = shared.Count > 0 ? "Shared inputs" : "Reserved keys";
+            _conflicts.Title = shared.Count > 0 ? L.T("Shared inputs") : L.T("Reserved keys");
             _conflicts.Message = string.Join("\n", lines);
         }
 
         private static string Show(string value) =>
-            InputMap.Split(value) is { Count: > 0 } names ? string.Join(", ", names.Select(InputMap.Display)) : "not bound";
+            InputMap.Split(value) is { Count: > 0 } names ? string.Join(", ", names.Select(InputMap.Display)) : L.T("not bound");
 
         private bool Matches(ControlDef control, string filter)
         {
@@ -414,7 +414,7 @@ namespace BloodborneLauncher.Views
                     Content = new SymbolIcon { Symbol = SymbolRegular.Dismiss16, FontSize = 10 },
                     Margin = new Thickness(6, 0, -3, 0),
                     Padding = new Thickness(2),
-                    ToolTip = "Remove",
+                    ToolTip = L.T("Remove"),
                 };
                 remove.SetResourceReference(StyleProperty, "BareButton");
                 var n = name;
@@ -431,7 +431,7 @@ namespace BloodborneLauncher.Views
                     label.SetResourceReference(TextBlock.ForegroundProperty, "WarningTextBrush");
                     chip.ToolTip = string.Join("\n", new[]
                     {
-                        others.Count > 0 ? "Also bound to: " + string.Join(", ", others.Select(c => c.Label)) : null,
+                        others.Count > 0 ? L.T("Also bound to: ") + string.Join(", ", others.Select(c => c.Label)) : null,
                         reserved,
                     }.Where(t => t != null));
                 }
@@ -440,7 +440,7 @@ namespace BloodborneLauncher.Views
 
             if (names.Count == 0)
             {
-                var none = Text("Not bound", "Faint");
+                var none = Text(L.T("Not bound"), "Faint");
                 none.FontStyle = FontStyles.Italic;
                 none.Margin = new Thickness(2, 0, 8, 0);
                 none.VerticalAlignment = VerticalAlignment.Center;
@@ -449,7 +449,7 @@ namespace BloodborneLauncher.Views
 
             if (!Bindings.IsDefault(Ini, control))
             {
-                var dot = new System.Windows.Shapes.Ellipse { Width = 5, Height = 5, Margin = new Thickness(6, 0, 0, 0), ToolTip = "Changed from the default" };
+                var dot = new System.Windows.Shapes.Ellipse { Width = 5, Height = 5, Margin = new Thickness(6, 0, 0, 0), ToolTip = L.T("Changed from the default") };
                 dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "AccentTextFillColorPrimaryBrush");
                 chips.Children.Add(dot);
             }
@@ -459,7 +459,7 @@ namespace BloodborneLauncher.Views
                 Content = chips,
                 Padding = new Thickness(6, 2, 6, 2),
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                ToolTip = $"Click to set a key or mouse input for {control.Label}. Right-click to unbind.",
+                ToolTip = L.F($"Click to set a key or mouse input for {control.Label}. Right-click to unbind."),
             };
             cell.SetResourceReference(StyleProperty, "BareButton");
             cell.Click += (_, _) => BeginCapture(control);
@@ -480,7 +480,7 @@ namespace BloodborneLauncher.Views
             {
                 var label = control.Pad ?? "—";
                 if (Ini.Flag("pad_swap_sticks"))
-                    label = label == "Left stick" ? "Right stick" : label == "Right stick" ? "Left stick" : label;
+                    label = label == "Left stick" ? L.T("Right stick") : label == "Right stick" ? L.T("Left stick") : label;
                 var text = Text(label, "Faint");
                 text.VerticalAlignment = VerticalAlignment.Center;
                 return text;
@@ -490,13 +490,13 @@ namespace BloodborneLauncher.Views
             var current = PadMap.Main(Ini, input);
             var chip = new Wpf.Ui.Controls.Button
             {
-                Content = current.Length > 0 ? PadMap.Label(current) : "Not bound",
+                Content = current.Length > 0 ? PadMap.Label(current) : L.T("Not bound"),
                 Icon = Icon(SymbolRegular.XboxController24),
                 Padding = new Thickness(8, 3, 10, 3),
                 FontSize = 12.5,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Left,
-                ToolTip = $"The controller button for this action (the game's {control.Pad}). Click, then press a button on the pad.",
+                ToolTip = L.F($"The controller button for this action (the game's {control.Pad}). Click, then press a button on the pad."),
             };
             if (!PadMap.IsDefault(Ini, input)) chip.FontWeight = FontWeights.SemiBold;
             chip.Click += (_, _) => BeginPadCapture(control, input);
@@ -522,9 +522,9 @@ namespace BloodborneLauncher.Views
         {
             _target = control;
             _padInput = null;
-            _captureTitle.Text = $"Bind {control.Label}";
-            _captureHelp.Text = "Press a key, or click / scroll inside the box. Esc cancels.";
-            _captureBoxText.Text = "Click or scroll here";
+            _captureTitle.Text = L.F($"Bind {control.Label}");
+            _captureHelp.Text = L.T("Press a key, or click / scroll inside the box. Esc cancels.");
+            _captureBoxText.Text = L.T("Click or scroll here");
             _padChoices.Visibility = Visibility.Collapsed;
             _captureFeedback.Text = "";
             _overlay.Visibility = Visibility.Visible;
@@ -546,13 +546,13 @@ namespace BloodborneLauncher.Views
             _target = null;
             _padControl = control;
             _padInput = input;
-            _captureTitle.Text = $"Controller button for {control.Label}";
+            _captureTitle.Text = L.F($"Controller button for {control.Label}");
             var live = !Ws.Game.Running && SdlPad.Available;
             _captureHelp.Text = live
-                ? "Press the button on your controller, or pick one below. Esc cancels. A button another action uses swaps over."
-                : Ws.Game.Running ? "Pick a button below (pressing one works while the game is closed)."
-                : "Pick a button below.";
-            _captureBoxText.Text = live ? "Waiting for a button…" : "Controller input is not available right now";
+                ? L.T("Press the button on your controller, or pick one below. Esc cancels. A button another action uses swaps over.")
+                : Ws.Game.Running ? L.T("Pick a button below (pressing one works while the game is closed).")
+                : L.T("Pick a button below.");
+            _captureBoxText.Text = live ? L.T("Waiting for a button…") : L.T("Controller input is not available right now");
             _padChoices.Visibility = Visibility.Visible;
             _captureFeedback.Text = "";
             _overlay.Visibility = Visibility.Visible;
@@ -583,7 +583,7 @@ namespace BloodborneLauncher.Views
             EndCapture();
             PadMap.Assign(Ini, input, button);
             Changed();
-            Ws.Log($"Controller: {control.Label} on {(button.Length > 0 ? PadMap.Label(button) : "nothing")}.", LogLevel.Step);
+            Ws.Log(L.F($"Controller: {control.Label} on {(button.Length > 0 ? PadMap.Label(button) : "nothing")}."), LogLevel.Step);
         }
 
         /// <summary>name: the captured input (it replaces the one of its kind), or null to unbind.</summary>
@@ -618,7 +618,7 @@ namespace BloodborneLauncher.Views
             var name = InputMap.SdlKeyName(key);
             if (name == null)
             {
-                _captureFeedback.Text = $"{key} cannot be bound; try another key.";
+                _captureFeedback.Text = L.F($"{key} cannot be bound; try another key.");
                 return;
             }
             Commit(name);
@@ -649,13 +649,13 @@ namespace BloodborneLauncher.Views
             _profileBox.Items.Clear();
             var match = Matching();
             if (match == null)
-                _profileBox.Items.Add(new ComboBoxItem { Content = "Custom (not saved)", Tag = null });
+                _profileBox.Items.Add(new ComboBoxItem { Content = L.T("Custom (not saved)"), Tag = null });
             foreach (var p in _profiles)
-                _profileBox.Items.Add(new ComboBoxItem { Content = p.BuiltIn ? $"{p.Name} (built in)" : p.Name, Tag = p });
+                _profileBox.Items.Add(new ComboBoxItem { Content = p.BuiltIn ? L.F($"{p.Name} (built in)") : p.Name, Tag = p });
             _profileBox.SelectedItem = _profileBox.Items.OfType<ComboBoxItem>().First(i => ReferenceEquals(i.Tag, match));
             SetHint(_profileHint, match == null
-                ? "Your current bindings are not saved in a profile. Use Save as… to keep them"
-                : string.Join("  ·  ", new[] { match.Description, match.Author.Length > 0 ? "by " + match.Author : "" }.Where(t => t.Length > 0)));
+                ? L.T("Your current bindings are not saved in a profile. Use Save as… to keep them")
+                : string.Join("  ·  ", new[] { match.Description, match.Author.Length > 0 ? L.T("by ") + match.Author : "" }.Where(t => t.Length > 0)));
             _deleteProfile.IsEnabled = match is { BuiltIn: false };
             _fillingProfiles = false;
         }
@@ -663,14 +663,14 @@ namespace BloodborneLauncher.Views
         private void ProfileChosen()
         {
             if (_fillingProfiles || _profileBox.SelectedItem is not ComboBoxItem { Tag: ControlProfiles.Profile profile }) return;
-            if (Matching() == null && !Prompt.Confirm("Replace your bindings?",
-                    $"Your current bindings are not saved in a profile. Using \"{profile.Name}\" replaces them.", "Use profile"))
+            if (Matching() == null && !Prompt.Confirm(L.T("Replace your bindings?"),
+                    L.F($"Your current bindings are not saved in a profile. Using \"{profile.Name}\" replaces them."), L.T("Use profile")))
             {
                 FillProfiles();
                 return;
             }
             ControlProfiles.Apply(S, Ini, profile);
-            Ws.Log($"Control profile: {profile.Name}", LogLevel.Step);
+            Ws.Log(L.F($"Control profile: {profile.Name}"), LogLevel.Step);
             Changed();
         }
 
@@ -678,7 +678,7 @@ namespace BloodborneLauncher.Views
         {
             var match = Matching();
             return new ControlProfiles.Profile(
-                match?.Name ?? (S.Str("controls_profile") is { Length: > 0 } n ? n : "My controls"),
+                match?.Name ?? (S.Str("controls_profile") is { Length: > 0 } n ? n : L.T("My controls")),
                 match?.Author ?? S.Str("profile_author"),
                 match?.Description ?? "",
                 ControlProfiles.Current(Ini), Pad: PadMap.Current(Ini));
@@ -687,21 +687,21 @@ namespace BloodborneLauncher.Views
         private void SaveProfile()
         {
             var current = CurrentAsProfile();
-            var values = Prompt.Ask("Save profile", "Saves your current bindings so you can switch back to them or share them.",
-                new Prompt.Field("Name", current.BuiltIn ? "" : current.Name, "My controls"),
-                new Prompt.Field("Author", S.Str("profile_author"), "Optional"),
-                new Prompt.Field("Description", current.Description, "What the layout is good for (optional)", Multiline: true));
+            var values = Prompt.Ask(L.T("Save profile"), L.T("Saves your current bindings so you can switch back to them or share them."),
+                new Prompt.Field(L.T("Name"), current.BuiltIn ? "" : current.Name, L.T("My controls")),
+                new Prompt.Field(L.T("Author"), S.Str("profile_author"), L.T("Optional")),
+                new Prompt.Field(L.T("Description"), current.Description, L.T("What the layout is good for (optional)"), Multiline: true));
             if (values == null) return;
 
             var name = values[0].Trim();
-            if (name.Length == 0) name = "My controls";
+            if (name.Length == 0) name = L.T("My controls");
             if (ControlProfiles.BuiltIns.Any(b => b.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
             {
-                Prompt.Tell("Choose another name", $"\"{name}\" is a built-in profile.");
+                Prompt.Tell(L.T("Choose another name"), L.F($"\"{name}\" is a built-in profile."));
                 return;
             }
             if (_profiles.Any(p => !p.BuiltIn && p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) &&
-                !Prompt.Confirm("Replace the profile?", $"A profile called \"{name}\" already exists.", "Replace"))
+                !Prompt.Confirm(L.T("Replace the profile?"), L.F($"A profile called \"{name}\" already exists."), L.T("Replace")))
                 return;
 
             S.Set("profile_author", values[1].Trim());
@@ -711,11 +711,11 @@ namespace BloodborneLauncher.Views
                 ControlProfiles.Save(profile);
                 S.Set("controls_profile", name);
                 Ws.SaveSoon();
-                Ws.Log($"Saved control profile \"{name}\".", LogLevel.Good);
+                Ws.Log(L.F($"Saved control profile \"{name}\"."), LogLevel.Good);
             }
             catch (Exception e)
             {
-                Ws.Log("Could not save the profile: " + e.Message, LogLevel.Bad);
+                Ws.Log(L.T("Could not save the profile: ") + e.Message, LogLevel.Bad);
             }
             FillProfiles();
         }
@@ -723,16 +723,16 @@ namespace BloodborneLauncher.Views
         private void DeleteProfile()
         {
             if (_profileBox.SelectedItem is not ComboBoxItem { Tag: ControlProfiles.Profile { BuiltIn: false } profile }) return;
-            if (!Prompt.Confirm("Delete the profile?", $"\"{profile.Name}\" is removed from this PC. Your current bindings stay as they are.", "Delete"))
+            if (!Prompt.Confirm(L.T("Delete the profile?"), L.F($"\"{profile.Name}\" is removed from this PC. Your current bindings stay as they are."), L.T("Delete")))
                 return;
             try
             {
                 ControlProfiles.Delete(profile);
-                Ws.Log($"Deleted control profile \"{profile.Name}\".", LogLevel.Step);
+                Ws.Log(L.F($"Deleted control profile \"{profile.Name}\"."), LogLevel.Step);
             }
             catch (Exception e)
             {
-                Ws.Log("Could not delete the profile: " + e.Message, LogLevel.Bad);
+                Ws.Log(L.T("Could not delete the profile: ") + e.Message, LogLevel.Bad);
             }
             FillProfiles();
         }
@@ -740,30 +740,30 @@ namespace BloodborneLauncher.Views
         private void CopyProfile()
         {
             if (ClipboardText.Set(ControlProfiles.ToJson(CurrentAsProfile())))
-                Ws.Log("Profile JSON copied. Paste it on any paste site and share the link.", LogLevel.Good);
+                Ws.Log(L.T("Profile JSON copied. Paste it on any paste site and share the link."), LogLevel.Good);
             else
-                Ws.Log("Could not copy: another program is using the clipboard. Try again.", LogLevel.Warn);
+                Ws.Log(L.T("Could not copy: another program is using the clipboard. Try again."), LogLevel.Warn);
         }
 
         private void ExportProfile()
         {
             var profile = CurrentAsProfile();
-            var dialog = new Microsoft.Win32.SaveFileDialog { Title = "Export control profile", FileName = profile.Name + ".json", Filter = "Control profile|*.json" };
+            var dialog = new Microsoft.Win32.SaveFileDialog { Title = L.T("Export control profile"), FileName = profile.Name + ".json", Filter = L.T("Control profile|*.json") };
             if (dialog.ShowDialog() != true) return;
             try
             {
                 System.IO.File.WriteAllText(dialog.FileName, ControlProfiles.ToJson(profile));
-                Ws.Log("Profile exported: " + dialog.FileName, LogLevel.Good);
+                Ws.Log(L.T("Profile exported: ") + dialog.FileName, LogLevel.Good);
             }
             catch (Exception e)
             {
-                Ws.Log("Could not export the profile: " + e.Message, LogLevel.Bad);
+                Ws.Log(L.T("Could not export the profile: ") + e.Message, LogLevel.Bad);
             }
         }
 
         private void ImportFile()
         {
-            var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Import control profile", Filter = "Control profile|*.json|All files|*.*" };
+            var dialog = new Microsoft.Win32.OpenFileDialog { Title = L.T("Import control profile"), Filter = L.T("Control profile|*.json|All files|*.*") };
             if (dialog.ShowDialog() != true) return;
             try
             {
@@ -771,25 +771,25 @@ namespace BloodborneLauncher.Views
             }
             catch (Exception e)
             {
-                Prompt.Tell("Could not import", e.Message);
+                Prompt.Tell(L.T("Could not import"), e.Message);
             }
         }
 
         private async Task ImportLinkAsync()
         {
-            var values = Prompt.Ask("Import from a link",
-                "Paste a link to a shared profile: a Pastebin, GitHub Gist or file, Rentry, hastebin, paste.rs, pastes.dev or dpaste link, " +
-                "or any link that shows the raw JSON.",
-                new Prompt.Field("Link", "", "https://pastebin.com/…"));
+            var values = Prompt.Ask(L.T("Import from a link"),
+                L.T("Paste a link to a shared profile: a Pastebin, GitHub Gist or file, Rentry, hastebin, paste.rs, pastes.dev or dpaste link, ") +
+                L.T("or any link that shows the raw JSON."),
+                new Prompt.Field(L.T("Link"), "", "https://pastebin.com/…"));
             if (values == null || values[0].Trim().Length == 0) return;
             try
             {
-                Ws.Log("Downloading the profile…", LogLevel.Step);
+                Ws.Log(L.T("Downloading the profile…"), LogLevel.Step);
                 Offer(await ControlProfiles.DownloadAsync(values[0]));
             }
             catch (Exception e)
             {
-                Prompt.Tell("Could not import", e is FormatException ? e.Message : "The link could not be read: " + e.GetBaseException().Message);
+                Prompt.Tell(L.T("Could not import"), e is FormatException ? e.Message : L.T("The link could not be read: ") + e.GetBaseException().Message);
             }
         }
 
@@ -804,15 +804,15 @@ namespace BloodborneLauncher.Views
                 .ToList();
 
             var text = new List<string>();
-            if (profile.Author.Length > 0) text.Add("by " + profile.Author);
+            if (profile.Author.Length > 0) text.Add(L.T("by ") + profile.Author);
             if (profile.Description.Length > 0) text.Add(profile.Description);
             text.Add(changes.Count == 0
-                ? "It is the same as your current bindings."
-                : $"Changes {changes.Count} of {InputMap.Controls.Length} actions:\n" + string.Join("\n", changes.Take(12)) + (changes.Count > 12 ? "\n  …" : ""));
+                ? L.T("It is the same as your current bindings.")
+                : L.F($"Changes {changes.Count} of {InputMap.Controls.Length} actions:\n") + string.Join("\n", changes.Take(12)) + (changes.Count > 12 ? "\n  …" : ""));
             if (parsed.Notes.Count > 0)
-                text.Add("Notes:\n  " + string.Join("\n  ", parsed.Notes.Take(6)));
+                text.Add(L.T("Notes:\n  ") + string.Join("\n  ", parsed.Notes.Take(6)));
 
-            if (!Prompt.Confirm($"Import \"{profile.Name}\"?", string.Join("\n\n", text), "Save and use"))
+            if (!Prompt.Confirm(L.F($"Import \"{profile.Name}\"?"), string.Join("\n\n", text), L.T("Save and use")))
                 return;
 
             var name = profile.Name;
@@ -825,10 +825,10 @@ namespace BloodborneLauncher.Views
             }
             catch (Exception e)
             {
-                Ws.Log("Could not save the imported profile: " + e.Message, LogLevel.Bad);
+                Ws.Log(L.T("Could not save the imported profile: ") + e.Message, LogLevel.Bad);
             }
             ControlProfiles.Apply(S, Ini, profile);
-            Ws.Log($"Imported control profile \"{name}\".", LogLevel.Good);
+            Ws.Log(L.F($"Imported control profile \"{name}\"."), LogLevel.Good);
             Changed();
         }
     }

@@ -52,7 +52,7 @@ namespace BloodborneLauncher.Views
             row.Children.Add(picture);
             row.Children.Add(text);
             var body = new StackPanel();
-            body.Children.Add(new TextBlock { Text = "Playing", Foreground = Muted, FontSize = 12, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
+            body.Children.Add(new TextBlock { Text = L.T("Playing"), Foreground = Muted, FontSize = 12, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
             body.Children.Add(row);
             body.Children.Add(_buttons);
             Child = body;

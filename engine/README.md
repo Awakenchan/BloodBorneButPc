@@ -32,7 +32,7 @@ at tag `v0.4.0-darkizuku-preview.1`.
 | The previous display buffer is released before the game learns of the flip, so its next frame's label is no longer cleared (no 20 ms wait at the flip) | |
 | Every retail serial (CUSA03179 included) accepted by the save sound fix, third-party patch files and mod folders | |
 | Working profile-guided builds with clang (`BB_PGO=generate`, then `use`) | |
-| In-game menu in Spanish, Portuguese (Brazil), French, German, Italian, Polish, Turkish | `menu_language` |
+| In-game menu in Spanish, Portuguese (Brazil), French, German, Italian, Polish, Turkish, Simplified Chinese | `menu_language` (`zh_CN` for Simplified Chinese) |
 | Controller: the pad in use takes over; swap sticks, invert camera, dead zone | `pad_swap_sticks`, `pad_invert_look_x/y`, `pad_deadzone` |
 | Controller: Cross/Circle in the name entry, held buttons ignored after menus | |
 | No 12-second minimum loading time after death | `BB_RESPAWN_DELAY_FIX=0` off |
@@ -93,11 +93,17 @@ git clone --branch v0.4.0-darkizuku-preview.1 --recurse-submodules https://githu
 cd bloodborne_pc
 git apply /path/to/engine/bbhost-changes.patch
 cp /path/to/engine/win_compat.h gpu/
+cp /path/to/engine/fonts/LanternMenuSC.ttf gpu/third_party/fonts/
+cp /path/to/engine/fonts/OFL.txt gpu/third_party/fonts/LICENSE-LanternMenuSC.txt
 CFLAGS="-Wno-error=unused-but-set-global" CXXFLAGS="-include $PWD/gpu/win_compat.h" bash build.sh
 ```
 
 `win_compat.h` supplies headers the bundled FSR 3 SDK expects transitively, which newer libc++
 no longer includes. The result is `out/bb-probe.exe`; the package's `out/` holds it with the
 CLANG64 DLLs it loads.
+
+The Chinese menu uses the redistributable Noto Sans SC subset in `fonts/`; see
+`fonts/README.md` for its source and license. Include its OFL license in binary
+packages alongside the existing font licenses.
 
 GPL-3.0-or-later, like the engine.

@@ -68,7 +68,7 @@ namespace BloodborneLauncher.Core
         /// gets through, with the address other players see.</summary>
         private static async Task<Result> CheckStunAsync()
         {
-            var address = $"{Host}:{StunPort} (UDP)";
+            var address = L.F($"{Host}:{StunPort} (UDP)");
             try
             {
                 var ip = (await Dns.GetHostAddressesAsync(Host)).First(a => a.AddressFamily == AddressFamily.InterNetwork);
@@ -97,7 +97,7 @@ namespace BloodborneLauncher.Core
                             var port = (b[at + 6] << 8 | b[at + 7]) ^ (xor ? 0x2112 : 0);
                             var ipBytes = new byte[4];
                             for (var k = 0; k < 4; ++k) ipBytes[k] = (byte)(b[at + 8 + k] ^ (xor ? request[4 + k] : 0));
-                            return new Result("Co-op relay", address, true, $"the server sees you at {new IPAddress(ipBytes)}:{port}");
+                            return new Result("Co-op relay", address, true, L.F($"the server sees you at {new IPAddress(ipBytes)}:{port}"));
                         }
                         return new Result("Co-op relay", address, true, "");
                     }
@@ -126,15 +126,15 @@ namespace BloodborneLauncher.Core
                 var body = await http.GetStringAsync(uri.Uri);
                 var xml = Encoding.UTF8.GetString(Convert.FromBase64String(body.Trim()));
                 var ok = xml.Contains("<api_", StringComparison.Ordinal);
-                return new Result("Game server", gameServer, ok, ok ? "" : "not a Bloodborne game server");
+                return new Result(L.T("Game server"), gameServer, ok, ok ? "" : L.T("not a Bloodborne game server"));
             }
             catch (FormatException)
             {
-                return new Result("Game server", gameServer, false, "not a Bloodborne game server");
+                return new Result(L.T("Game server"), gameServer, false, L.T("not a Bloodborne game server"));
             }
             catch (Exception e)
             {
-                return new Result("Game server", gameServer, false, e.GetBaseException().Message);
+                return new Result(L.T("Game server"), gameServer, false, e.GetBaseException().Message);
             }
         }
     }

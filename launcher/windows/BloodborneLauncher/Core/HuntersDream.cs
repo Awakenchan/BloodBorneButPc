@@ -35,7 +35,7 @@ namespace BloodborneLauncher.Core
             JsonObject? reply = null;
             try { reply = JsonNode.Parse(text) as JsonObject; } catch (Exception) { }
             if (reply?["ResKind"] is null)
-                throw new InvalidOperationException($"The Hunter's Dream answered HTTP {(int)response.StatusCode} without an account reply");
+                throw new InvalidOperationException(L.F($"The Hunter's Dream answered HTTP {(int)response.StatusCode} without an account reply"));
             if (reply["ResKind"]!.GetValue<int>() != 0)
                 throw new InvalidOperationException(reply["Message"]?.GetValue<string>() ?? "refused");
             return reply;
@@ -48,7 +48,7 @@ namespace BloodborneLauncher.Core
             var link = new Link(reply["DeviceCode"]?.GetValue<string>() ?? "", reply["UserCode"]?.GetValue<string>() ?? "",
                 reply["VerificationUri"]?.GetValue<string>() ?? Server + "/link",
                 Math.Max(1, reply["Interval"]?.GetValue<int>() ?? 5), reply["ExpiresIn"]?.GetValue<int>() ?? 600);
-            if (link.DeviceCode.Length == 0 || link.UserCode.Length == 0) throw new InvalidOperationException("no code in the reply");
+            if (link.DeviceCode.Length == 0 || link.UserCode.Length == 0) throw new InvalidOperationException(L.T("no code in the reply"));
             return link;
         }
 
@@ -66,18 +66,18 @@ namespace BloodborneLauncher.Core
                     case "approved":
                         var token = reply["Token"]?.GetValue<string>() ?? "";
                         var name = reply["OnlineId"]?.GetValue<string>() ?? "";
-                        if (token.Length == 0 || name.Length == 0) throw new InvalidOperationException("no token in the reply");
+                        if (token.Length == 0 || name.Length == 0) throw new InvalidOperationException(L.T("no token in the reply"));
                         return (name, token);
                     case "slow_down":
                         interval += 5;
                         break;
                     case "denied":
-                        throw new InvalidOperationException("the link was denied on the website");
+                        throw new InvalidOperationException(L.T("the link was denied on the website"));
                     case "expired":
-                        throw new InvalidOperationException("the code expired: start again");
+                        throw new InvalidOperationException(L.T("the code expired: start again"));
                 }
             }
-            throw new InvalidOperationException("the code expired: start again");
+            throw new InvalidOperationException(L.T("the code expired: start again"));
         }
 
         /// <summary>An account held by this PC, without Discord: the name becomes the online name.
@@ -100,7 +100,7 @@ namespace BloodborneLauncher.Core
         {
             var token = reply["Token"]?.GetValue<string>() ?? "";
             var name = reply["OnlineId"]?.GetValue<string>() ?? "";
-            if (token.Length == 0 || name.Length == 0) throw new InvalidOperationException("no token in the reply");
+            if (token.Length == 0 || name.Length == 0) throw new InvalidOperationException(L.T("no token in the reply"));
             return (name, token, reply["RecoveryCode"]?.GetValue<string>() ?? "");
         }
 

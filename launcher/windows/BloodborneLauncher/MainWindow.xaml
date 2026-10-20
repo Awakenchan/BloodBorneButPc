@@ -1,5 +1,6 @@
 <ui:FluentWindow x:Class="BloodborneLauncher.MainWindow"
                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:loc="clr-namespace:BloodborneLauncher.Core"
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
@@ -145,7 +146,7 @@
                                 </Grid.ColumnDefinitions>
                                 <ui:SymbolIcon Symbol="Search24" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"
                                                Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                                <TextBlock x:Name="Placeholder" Grid.Column="1" Text="Search settings" VerticalAlignment="Center"
+                                <TextBlock x:Name="Placeholder" Grid.Column="1" Text="{loc:Tr &#x27;Search settings&#x27;}" VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}" IsHitTestVisible="False"
                                            TextTrimming="CharacterEllipsis" Visibility="Collapsed" />
                                 <!-- Room on the right for the clear button, which sits over the box. -->
@@ -310,21 +311,21 @@
             <Grid>
                 <StackPanel x:Name="MacButtons" Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left"
                             Background="Transparent" shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Button Style="{StaticResource TrafficLight}" Background="#FFFF5F57" ToolTip="Close"
+                    <Button Style="{StaticResource TrafficLight}" Background="#FFFF5F57" ToolTip="{loc:Tr &#x27;Close&#x27;}"
                             Tag="M 3.5,3.5 L 8.5,8.5 M 8.5,3.5 L 3.5,8.5" Click="CloseWindow_Click" />
-                    <Button Style="{StaticResource TrafficLight}" Background="#FFFEBC2E" ToolTip="Minimize"
+                    <Button Style="{StaticResource TrafficLight}" Background="#FFFEBC2E" ToolTip="{loc:Tr &#x27;Minimize&#x27;}"
                             Tag="M 3,6 L 9,6" Click="MinimizeWindow_Click" />
-                    <Button Style="{StaticResource TrafficLight}" Background="#FF28C840" ToolTip="Maximize"
+                    <Button Style="{StaticResource TrafficLight}" Background="#FF28C840" ToolTip="{loc:Tr &#x27;Maximize&#x27;}"
                             Tag="M 3,6 L 9,6 M 6,3 L 6,9" Click="MaximizeWindow_Click" />
                 </StackPanel>
 
                 <StackPanel x:Name="WinButtons" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,1"
                             Visibility="Collapsed" shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Button x:Name="WinMinimize" Style="{StaticResource CaptionButton}" ToolTip="Minimize"
+                    <Button x:Name="WinMinimize" Style="{StaticResource CaptionButton}" ToolTip="{loc:Tr &#x27;Minimize&#x27;}"
                             Tag="M 0,0.5 L 10,0.5" Click="MinimizeWindow_Click" />
-                    <Button x:Name="WinMaximize" Style="{StaticResource CaptionButton}" ToolTip="Maximize"
+                    <Button x:Name="WinMaximize" Style="{StaticResource CaptionButton}" ToolTip="{loc:Tr &#x27;Maximize&#x27;}"
                             Tag="M 0.5,0.5 L 9.5,0.5 L 9.5,9.5 L 0.5,9.5 Z" Click="MaximizeWindow_Click" />
-                    <Button x:Name="WinClose" Style="{StaticResource CaptionClose}" ToolTip="Close"
+                    <Button x:Name="WinClose" Style="{StaticResource CaptionClose}" ToolTip="{loc:Tr &#x27;Close&#x27;}"
                             Tag="M 0,0 L 10,10 M 10,0 L 0,10" Click="CloseWindow_Click" />
                 </StackPanel>
 
@@ -347,26 +348,26 @@
                 <StackPanel x:Name="TitleTools" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
                     <Button x:Name="TitleUpdate" Style="{StaticResource TitleIcon}" Click="TitleUpdate_Click" Margin="0,0,6,0"
                             Visibility="Collapsed" BorderBrush="{DynamicResource GoodTextBrush}" BorderThickness="1"
-                            ToolTip="A new launcher version is available">
+                            ToolTip="{loc:Tr &#x27;A new launcher version is available&#x27;}">
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="ArrowDownload24" FontSize="13" Margin="0,0,5,0"
                                            Foreground="{DynamicResource GoodTextBrush}" />
-                            <TextBlock x:Name="TitleUpdateText" Text="Update" FontSize="11.5" VerticalAlignment="Center"
+                            <TextBlock x:Name="TitleUpdateText" Text="{loc:Tr &#x27;Update&#x27;}" FontSize="11.5" VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                         </StackPanel>
                     </Button>
                     <Button x:Name="TitlePlay" Style="{StaticResource TitleIcon}" Click="TitlePlay_Click" Margin="0,0,6,0"
                             Background="{DynamicResource ControlFillColorSecondaryBrush}"
                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1"
-                            ToolTip="Start the game">
+                            ToolTip="{loc:Tr &#x27;Start the game&#x27;}">
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon x:Name="TitlePlayIcon" Symbol="Play24" FontSize="13" Margin="0,0,5,0"
                                            Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
-                            <TextBlock x:Name="TitlePlayText" Text="Play" FontSize="11.5" VerticalAlignment="Center"
+                            <TextBlock x:Name="TitlePlayText" Text="{loc:Tr &#x27;Play&#x27;}" FontSize="11.5" VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
                         </StackPanel>
                     </Button>
-                    <Button Style="{StaticResource TitleIcon}" Click="ToggleLog_Click" ToolTip="Activity">
+                    <Button Style="{StaticResource TitleIcon}" Click="ToggleLog_Click" ToolTip="{loc:Tr &#x27;Activity&#x27;}">
                         <ui:SymbolIcon Symbol="Pulse24" FontSize="14"
                                        Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                     </Button>
@@ -394,80 +395,80 @@
                                  Tag="{x:Type views:SettingsPage}" Checked="SidebarItem_Checked">
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="Settings24" Style="{StaticResource SidebarIcon}" />
-                            <TextBlock Text="Settings" />
+                            <TextBlock Text="{loc:Tr &#x27;Settings&#x27;}" />
                         </StackPanel>
                     </RadioButton>
                     <StackPanel>
-                        <TextBlock Text="GAME" Style="{StaticResource SidebarHeader}" />
+                        <TextBlock Text="{loc:Tr &#x27;GAME&#x27;}" Style="{StaticResource SidebarHeader}" />
                         <RadioButton x:Name="ClassicPlay" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:PlayPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="Play24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Play" />
+                                <TextBlock Text="{loc:Tr &#x27;Play&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:DisplayPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="Desktop24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Display" />
+                                <TextBlock Text="{loc:Tr &#x27;Display&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:GraphicsPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="Sparkle24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Graphics" />
+                                <TextBlock Text="{loc:Tr &#x27;Graphics&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="ClassicControls" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:ControlsPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="XboxController24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Controls" />
+                                <TextBlock Text="{loc:Tr &#x27;Controls&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:TrophiesPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="Trophy24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Trophies" />
+                                <TextBlock Text="{loc:Tr &#x27;Trophies&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="ClassicMods" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:ModsPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="PuzzlePiece24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Mods &amp; patches" />
+                                <TextBlock Text="{loc:Tr &#x27;Mods &amp; patches&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="ClassicOnline" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:OnlinePage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="Globe24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Online" />
+                                <TextBlock Text="{loc:Tr &#x27;Online&#x27;}" />
                             </StackPanel>
                         </RadioButton>
-                        <TextBlock Text="SYSTEM" Style="{StaticResource SidebarHeader}" Margin="18,18,0,6" />
+                        <TextBlock Text="{loc:Tr &#x27;SYSTEM&#x27;}" Style="{StaticResource SidebarHeader}" Margin="18,18,0,6" />
                         <RadioButton x:Name="ClassicSettings" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:SettingsPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="Settings24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Settings" />
+                                <TextBlock Text="{loc:Tr &#x27;Settings&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="ClassicEngine" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:EnginePage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="Wrench24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Engine switches" />
+                                <TextBlock Text="{loc:Tr &#x27;Engine switches&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="ClassicOutput" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:OutputPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="WindowConsole20" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="Game output" />
+                                <TextBlock Text="{loc:Tr &#x27;Game output&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                     </StackPanel>
@@ -478,21 +479,21 @@
             <Border x:Name="TabStrip" Grid.Column="1" Grid.Row="0" HorizontalAlignment="Center" Margin="0,12,0,4" Padding="4" CornerRadius="20"
                     Background="{DynamicResource PillTrackBrush}" BorderBrush="{DynamicResource GlassPaneStrokeBrush}" BorderThickness="1">
                 <StackPanel Orientation="Horizontal">
-                    <RadioButton x:Name="PlayItem" Style="{StaticResource TabItem}" Content="Play"
+                    <RadioButton x:Name="PlayItem" Style="{StaticResource TabItem}" Content="{loc:Tr &#x27;Play&#x27;}"
                                  Tag="{x:Type views:PlayPage}" Checked="SidebarItem_Checked" />
-                    <RadioButton Style="{StaticResource TabItem}" Content="Display"
+                    <RadioButton Style="{StaticResource TabItem}" Content="{loc:Tr &#x27;Display&#x27;}"
                                  Tag="{x:Type views:DisplayPage}" Checked="SidebarItem_Checked" />
-                    <RadioButton Style="{StaticResource TabItem}" Content="Graphics"
+                    <RadioButton Style="{StaticResource TabItem}" Content="{loc:Tr &#x27;Graphics&#x27;}"
                                  Tag="{x:Type views:GraphicsPage}" Checked="SidebarItem_Checked" />
-                    <RadioButton x:Name="ControlsItem" Style="{StaticResource TabItem}" Content="Controls"
+                    <RadioButton x:Name="ControlsItem" Style="{StaticResource TabItem}" Content="{loc:Tr &#x27;Controls&#x27;}"
                                  Tag="{x:Type views:ControlsPage}" Checked="SidebarItem_Checked" />
-                    <RadioButton Style="{StaticResource TabItem}" Content="Trophies"
+                    <RadioButton Style="{StaticResource TabItem}" Content="{loc:Tr &#x27;Trophies&#x27;}"
                                  Tag="{x:Type views:TrophiesPage}" Checked="SidebarItem_Checked" />
-                    <RadioButton x:Name="OnlineItem" Style="{StaticResource TabItem}" Content="Online"
+                    <RadioButton x:Name="OnlineItem" Style="{StaticResource TabItem}" Content="{loc:Tr &#x27;Online&#x27;}"
                                  Tag="{x:Type views:OnlinePage}" Checked="SidebarItem_Checked" />
-                    <RadioButton x:Name="SettingsItem" Style="{StaticResource TabItem}" Content="Settings"
+                    <RadioButton x:Name="SettingsItem" Style="{StaticResource TabItem}" Content="{loc:Tr &#x27;Settings&#x27;}"
                                  Tag="{x:Type views:SettingsPage}" Checked="SidebarItem_Checked" />
-                    <RadioButton x:Name="MoreItem" Style="{StaticResource TabItem}" Content="More"
+                    <RadioButton x:Name="MoreItem" Style="{StaticResource TabItem}" Content="{loc:Tr &#x27;More&#x27;}"
                                  Tag="{x:Type views:MorePage}" Checked="SidebarItem_Checked" />
                 </StackPanel>
             </Border>
@@ -540,7 +541,7 @@
                 </ItemsControl>
 
                 <Button Style="{StaticResource TitleIcon}" HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Margin="0,6,14,0" Click="ClearLog_Click" ToolTip="Clear activity">
+                        Margin="0,6,14,0" Click="ClearLog_Click" ToolTip="{loc:Tr &#x27;Clear activity&#x27;}">
                     <ui:SymbolIcon Symbol="Broom24" FontSize="13"
                                    Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                 </Button>
@@ -551,11 +552,11 @@
         <Border Grid.Row="3" Height="24" Cursor="Hand" MouseLeftButtonUp="StatusBar_Click"
                 Background="{DynamicResource PillTrackBrush}"
                 BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0"
-                ToolTip="Show or hide activity">
+                ToolTip="{loc:Tr &#x27;Show or hide activity&#x27;}">
             <Grid Margin="12,0">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Ellipse x:Name="StatusDot" Width="5" Height="5" VerticalAlignment="Center" Fill="{DynamicResource StatusDotIdleBrush}" />
-                    <TextBlock x:Name="StatusText" Text="Ready" FontSize="10.5" Margin="8,0,0,0" VerticalAlignment="Center"
+                    <TextBlock x:Name="StatusText" Text="{loc:Tr &#x27;Ready&#x27;}" FontSize="10.5" Margin="8,0,0,0" VerticalAlignment="Center"
                                Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="620" />
                 </StackPanel>
 

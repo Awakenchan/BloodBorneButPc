@@ -65,14 +65,14 @@ namespace BloodborneLauncher.Core
         /// <summary>"1 h 12 min · 112 FPS average (lowest 98) · worst frame 107 ms · 3 stutters".</summary>
         public string Summary =>
             Duration(Length) + (HasFrameStats
-                ? $" · {AverageFps:0} FPS average (lowest {LowestFps:0}) · worst frame {WorstFrameMs:0} ms · " +
-                  (Stutters == 1 ? "1 stutter" : $"{Stutters} stutters")
+                ? L.F($" · {AverageFps:0} FPS average (lowest {LowestFps:0}) · worst frame {WorstFrameMs:0} ms · ") +
+                  (Stutters == 1 ? L.T("1 stutter") : L.F($"{Stutters} stutters"))
                 : " · turn on Frame statistics (Settings) for FPS and stutters") +
-            (RamEndMiB > 0 ? $" · RAM {RamStartMiB / 1024.0:0.0} → {RamEndMiB / 1024.0:0.0} GB" : "");
+            (RamEndMiB > 0 ? L.F($" · RAM {RamStartMiB / 1024.0:0.0} → {RamEndMiB / 1024.0:0.0} GB") : "");
 
         public static string Duration(TimeSpan time) =>
-            time.TotalHours >= 1 ? $"{(int)time.TotalHours} h {time.Minutes} min" :
-            time.TotalMinutes >= 1 ? $"{(int)time.TotalMinutes} min" : $"{Math.Max(0, (int)time.TotalSeconds)} s";
+            time.TotalHours >= 1 ? L.F($"{(int)time.TotalHours} h {time.Minutes} min") :
+            time.TotalMinutes >= 1 ? L.F($"{(int)time.TotalMinutes} min") : L.F($"{Math.Max(0, (int)time.TotalSeconds)} s");
 
         public static TimeSpan Playtime(LauncherSettings s, string profile) =>
             TimeSpan.FromSeconds(Math.Max(0, s.Int(Key(profile))));

@@ -116,7 +116,7 @@ namespace BloodborneLauncher.Views
 
             var earned = new TextBlock
             {
-                Text = "You have earned a trophy!",
+                Text = L.T("You have earned a trophy!"),
                 FontFamily = face,
                 FontSize = 13.5,
                 Foreground = new SolidColorBrush(Color.FromRgb(0xC9, 0xCB, 0xCF)),

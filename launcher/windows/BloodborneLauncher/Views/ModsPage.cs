@@ -15,42 +15,42 @@ namespace BloodborneLauncher.Views
         private List<Mods.Entry> _mods = new();
         private List<(Patches.Patch Patch, bool On)> _patches = new();
 
-        public ModsPage() : base("Mods & patches",
-            "Extract each mod into its own folder (with dvdroot_ps4, or straight chr/, parts/ and so on). Applied when the game starts.")
+        public ModsPage() : base(L.T("Mods & patches"),
+            L.T("Extract each mod into its own folder (with dvdroot_ps4, or straight chr/, parts/ and so on). Applied when the game starts."))
         {
-            Group("Mods");
-            SettingToggle(SymbolRegular.PuzzlePiece24, "Load mods", "When two mods replace the same file, the one lower in the list wins",
+            Group(L.T("Mods"));
+            SettingToggle(SymbolRegular.PuzzlePiece24, L.T("Load mods"), L.T("When two mods replace the same file, the one lower in the list wins"),
                 "mods_enabled");
-            Add(Card(SymbolRegular.Folder24, "Mods folder", "", Row(
-                SmallButton("Browse", SymbolRegular.FolderOpen24, (_, _) =>
+            Add(Card(SymbolRegular.Folder24, L.T("Mods folder"), "", Row(
+                SmallButton(L.T("Browse"), SymbolRegular.FolderOpen24, (_, _) =>
                 {
-                    if (PickFolder("Mods folder", GameEnvironment.ModsDir(S)) is { } path)
+                    if (PickFolder(L.T("Mods folder"), GameEnvironment.ModsDir(S)) is { } path)
                     {
                         S.Set("mods_dir", path);
                         Ws.SaveSoon();
                         RefreshMods();
                     }
                 }),
-                IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(GameEnvironment.ModsDir(S))),
-                IconButton(SymbolRegular.ArrowClockwise24, "Refresh the list", (_, _) => RefreshMods())), out _modsHint));
+                IconButton(SymbolRegular.Open24, L.T("Open in Explorer"), (_, _) => Paths.OpenFolder(GameEnvironment.ModsDir(S))),
+                IconButton(SymbolRegular.ArrowClockwise24, L.T("Refresh the list"), (_, _) => RefreshMods())), out _modsHint));
             Body.Children.Add(_modList);
 
-            Group("Third-party patches");
-            Body.Children.Add(Text("shadPS4-format XML patches for version 01.09 from the patches folder, and the port's built-in " +
-                                   "ones (Bloodborne.xml, off until you switch them on; frame rate, effects and resolution have their own " +
-                                   "settings). Put your own patches in a file of their own: Bloodborne.xml is replaced on every update.", "Faint"));
-            Add(Card(SymbolRegular.Folder24, "Patches folder", "", Row(
-                SmallButton("Browse", SymbolRegular.FolderOpen24, (_, _) =>
+            Group(L.T("Third-party patches"));
+            Body.Children.Add(Text(L.T("shadPS4-format XML patches for version 01.09 from the patches folder, and the port's built-in ") +
+                                   L.T("ones (Bloodborne.xml, off until you switch them on; frame rate, effects and resolution have their own ") +
+                                   L.T("settings). Put your own patches in a file of their own: Bloodborne.xml is replaced on every update."), "Faint"));
+            Add(Card(SymbolRegular.Folder24, L.T("Patches folder"), "", Row(
+                SmallButton(L.T("Browse"), SymbolRegular.FolderOpen24, (_, _) =>
                 {
-                    if (PickFolder("Patches folder", GameEnvironment.PatchesDir(S)) is { } path)
+                    if (PickFolder(L.T("Patches folder"), GameEnvironment.PatchesDir(S)) is { } path)
                     {
                         S.Set("patches_dir", path);
                         Ws.SaveSoon();
                         RefreshPatches();
                     }
                 }),
-                IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(GameEnvironment.PatchesDir(S))),
-                IconButton(SymbolRegular.ArrowClockwise24, "Refresh the list", (_, _) => RefreshPatches())), out _patchesHint));
+                IconButton(SymbolRegular.Open24, L.T("Open in Explorer"), (_, _) => Paths.OpenFolder(GameEnvironment.PatchesDir(S))),
+                IconButton(SymbolRegular.ArrowClockwise24, L.T("Refresh the list"), (_, _) => RefreshPatches())), out _patchesHint));
             Body.Children.Add(_patchList);
 
 
@@ -76,12 +76,12 @@ namespace BloodborneLauncher.Views
             try { mods = await Task.Run(() => Mods.Load(dir)); }
             catch (Exception e)
             {
-                Ws.Log("Could not read the mods folder: " + e.Message, LogLevel.Warn);
+                Ws.Log(L.T("Could not read the mods folder: ") + e.Message, LogLevel.Warn);
                 return;
             }
             if (read != _modReads) return;
             _mods = mods;
-            SetHint(_modsHint, _mods.Count == 0 ? $"{dir} — no mods" : $"{dir} — {_mods.Count} mod{(_mods.Count == 1 ? "" : "s")}");
+            SetHint(_modsHint, _mods.Count == 0 ? L.F($"{dir} — no mods") : L.F($"{dir} — {_mods.Count} mod{(_mods.Count == 1 ? "" : "s")}"));
             var shown = string.Join("|", _mods.Select(m => $"{m.Name}={m.Enabled}"));
             if (shown == _modsShown) return;
             DrawMods();
@@ -101,12 +101,12 @@ namespace BloodborneLauncher.Views
                     _mods[index] = mod with { Enabled = toggle.IsChecked == true };
                     SaveMods();
                 };
-                var up = IconButton(SymbolRegular.ArrowUp24, "Load earlier", (_, _) => Move(index, -1));
-                var down = IconButton(SymbolRegular.ArrowDown24, "Load later", (_, _) => Move(index, 1));
+                var up = IconButton(SymbolRegular.ArrowUp24, L.T("Load earlier"), (_, _) => Move(index, -1));
+                var down = IconButton(SymbolRegular.ArrowDown24, L.T("Load later"), (_, _) => Move(index, 1));
                 up.IsEnabled = i > 0;
                 down.IsEnabled = i < _mods.Count - 1;
 
-                var card = Card(SymbolRegular.Box24, mod.Name, $"Load order {i + 1}", Row(up, down, toggle), out _);
+                var card = Card(SymbolRegular.Box24, mod.Name, L.F($"Load order {i + 1}"), Row(up, down, toggle), out _);
                 card.Margin = new Thickness(24, 0, 0, 4);
                 _modList.Children.Add(card);
             }
@@ -129,7 +129,7 @@ namespace BloodborneLauncher.Views
             }
             catch (Exception e)
             {
-                Ws.Log("Could not save mods.json: " + e.Message, LogLevel.Bad);
+                Ws.Log(L.T("Could not save mods.json: ") + e.Message, LogLevel.Bad);
             }
         }
 
@@ -150,12 +150,12 @@ namespace BloodborneLauncher.Views
             }
             catch (Exception e)
             {
-                Ws.Log("Could not read the patches folder: " + e.Message, LogLevel.Warn);
+                Ws.Log(L.T("Could not read the patches folder: ") + e.Message, LogLevel.Warn);
                 return;
             }
             if (read != _patchReads) return;
             _patches = patches;
-            SetHint(_patchesHint, _patches.Count == 0 ? $"{dir} — no patches" : dir);
+            SetHint(_patchesHint, _patches.Count == 0 ? L.F($"{dir} — no patches") : dir);
             var shown = string.Join("\u0001", _patches.Select(p => $"{p.Patch.Key}|{p.Patch.Name}|{p.Patch.File}|{p.Patch.Author}|{p.Patch.Note}={p.On}"));
             if (shown == _patchesShown) return;
             _patchesShown = shown;
@@ -175,10 +175,10 @@ namespace BloodborneLauncher.Views
                     }
                     catch (Exception e)
                     {
-                        Ws.Log("Could not save patches.json: " + e.Message, LogLevel.Bad);
+                        Ws.Log(L.T("Could not save patches.json: ") + e.Message, LogLevel.Bad);
                     }
                 };
-                var hint = patch.File + (patch.Author.Length > 0 ? $" · by {patch.Author}" : "");
+                var hint = patch.File + (patch.Author.Length > 0 ? L.F($" · by {patch.Author}") : "");
                 var card = Card(SymbolRegular.DocumentText24, patch.Name, hint, toggle, out _);
                 card.Margin = new Thickness(24, 0, 0, 4);
                 if (patch.Note.Length > 0)

@@ -13,18 +13,18 @@ namespace BloodborneLauncher.Core
         /// <summary>The physical buttons, PlayStation name first, Xbox name after the slash.</summary>
         public static readonly Button[] Buttons =
         {
-            new("a", "Cross / A"), new("b", "Circle / B"), new("x", "Square / X"), new("y", "Triangle / Y"),
-            new("leftshoulder", "L1 / LB"), new("rightshoulder", "R1 / RB"),
-            new("lefttrigger", "L2 / LT"), new("righttrigger", "R2 / RT"),
-            new("leftstick", "L3 (left stick click)"), new("rightstick", "R3 (right stick click)"),
-            new("dpup", "D-pad up"), new("dpdown", "D-pad down"), new("dpleft", "D-pad left"), new("dpright", "D-pad right"),
-            new("start", "Options / Start"), new("back", "Share / Back"), new("touchpad", "Touchpad click"),
-            new("misc1", "Mute / Share (Xbox Series)"),
+            new("a", L.T("Cross / A")), new("b", L.T("Circle / B")), new("x", L.T("Square / X")), new("y", L.T("Triangle / Y")),
+            new("leftshoulder", L.T("L1 / LB")), new("rightshoulder", L.T("R1 / RB")),
+            new("lefttrigger", L.T("L2 / LT")), new("righttrigger", L.T("R2 / RT")),
+            new("leftstick", L.T("L3 (left stick click)")), new("rightstick", L.T("R3 (right stick click)")),
+            new("dpup", L.T("D-pad up")), new("dpdown", L.T("D-pad down")), new("dpleft", L.T("D-pad left")), new("dpright", L.T("D-pad right")),
+            new("start", L.T("Options / Start")), new("back", L.T("Share / Back")), new("touchpad", L.T("Touchpad click")),
+            new("misc1", L.T("Mute / Share (Xbox Series)")),
             new("paddle1", "Extra button 1 (Edge / Elite paddle, 8BitDo R4 or back button)"),
             new("paddle2", "Extra button 2 (Edge / Elite paddle, 8BitDo L4 or back button)"),
             new("paddle3", "Extra button 3 (Elite paddle, 8BitDo back button)"),
             new("paddle4", "Extra button 4 (Elite paddle, 8BitDo back button)"),
-            new("", "Not bound"),
+            new("", L.T("Not bound")),
         };
 
         /// <summary>The game's input behind each controller label in the actions table.</summary>

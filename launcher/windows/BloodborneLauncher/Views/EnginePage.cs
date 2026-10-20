@@ -17,18 +17,18 @@ namespace BloodborneLauncher.Views
         private readonly List<Action> _resets = new();
         private readonly TextBlock _changedHint;
 
-        public EnginePage() : base("Engine", "")
+        public EnginePage() : base(L.T("Engine"), "")
         {
-            var intro = Text("Each switch stays at the engine's default until you change it. Only changed ones are used.", "Faint");
-            intro.ToolTip = "Only the switches you change are passed to the game, when it starts; a start in safe mode (after a crash) " +
-                            "leaves them out. Settings › Diagnostics › Extra variables is still there for anything not listed, and wins over these.";
+            var intro = Text(L.T("Each switch stays at the engine's default until you change it. Only changed ones are used."), "Faint");
+            intro.ToolTip = L.T("Only the switches you change are passed to the game, when it starts; a start in safe mode (after a crash) ") +
+                            L.T("leaves them out. Settings › Diagnostics › Extra variables is still there for anything not listed, and wins over these.");
             Body.Children.Add(intro);
-            Add(Card(SymbolRegular.ArrowReset24, "Changed switches", "Every switch on this page that is not at its default",
-                SmallButton("Reset all", SymbolRegular.ArrowUndo24, (_, _) => ResetAll()), out _changedHint));
+            Add(Card(SymbolRegular.ArrowReset24, L.T("Changed switches"), L.T("Every switch on this page that is not at its default"),
+                SmallButton(L.T("Reset all"), SymbolRegular.ArrowUndo24, (_, _) => ResetAll()), out _changedHint));
 
             foreach (var group in EngineSwitches.Groups.Where(g => EngineSwitches.All.Any(x => x.Group == g)))
             {
-                Group(group);
+                Group(L.T(group));
                 foreach (var item in EngineSwitches.All.Where(x => x.Group == group))
                     AddSwitch(item);
             }
@@ -113,17 +113,17 @@ namespace BloodborneLauncher.Views
             var extra = GameEnvironment.ExtraVariables(S).Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
             var overridden = changed.Where(c => extra.Contains(c.Name)).Select(c => c.Name).ToList();
             var text = changed.Count == 0
-                ? "None: the engine runs with its own defaults"
-                : $"{changed.Count} passed to the game: " + string.Join(", ", changed.Select(c => $"{c.Name}={c.Value}"));
+                ? L.T("None: the engine runs with its own defaults")
+                : L.F($"{changed.Count} passed to the game: ") + string.Join(", ", changed.Select(c => $"{c.Name}={c.Value}"));
             if (overridden.Count > 0)
-                text += $"\nExtra variables also set {string.Join(", ", overridden)}: their value is used";
+                text += L.F($"\nExtra variables also set {string.Join(", ", overridden)}: their value is used");
             SetHint(_changedHint, text);
         }
 
         private void ResetAll()
         {
             if (!EngineSwitches.Changed(S).Any()) return;
-            if (!Prompt.Confirm("Reset engine switches", "Every switch on this page goes back to the engine's default.", "Reset all")) return;
+            if (!Prompt.Confirm(L.T("Reset engine switches"), L.T("Every switch on this page goes back to the engine's default."), L.T("Reset all"))) return;
             EngineSwitches.ResetAll(S);
             foreach (var reset in _resets)
                 reset();

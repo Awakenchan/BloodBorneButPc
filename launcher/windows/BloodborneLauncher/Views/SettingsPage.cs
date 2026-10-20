@@ -26,13 +26,20 @@ namespace BloodborneLauncher.Views
         private readonly StackPanel _themeColour = new(), _picture = new();
         private TextBlock _pictureHint = null!;
 
-        public SettingsPage() : base("Settings", "The Lantern Engine, how the game is started, and keeping this launcher up to date.")
+        public SettingsPage() : base(L.T("Settings"), L.T("The Lantern Engine, how the game is started, and keeping this launcher up to date."))
         {
-            Group("Appearance");
+            Group(L.T("Appearance"));
+            ComboRow(SymbolRegular.LocalLanguage24, L.T("Launcher language"), L.T("Restart the launcher to apply the language."),
+                new[] { new Choice("English", "en"), new Choice("简体中文", "zh-CN") },
+                () => S.Str("ui_language"), v => S.Set("ui_language", v), changed: () =>
+                {
+                    Ws.SaveNow();
+                    if (Prompt.Confirm(L.T("Change language"), L.T("Restart the launcher to apply the language."), L.T("Restart now"))) Restart();
+                });
             FrameworkElement layout = null!;
             var reverting = false;
-            layout = ComboRow(SymbolRegular.PanelLeft24, "Layout", "Modern: tabs and compact rows. Classic: the sidebar and one card per setting",
-                new[] { new Choice("Modern", "modern"), new Choice("Classic", "classic") },
+            layout = ComboRow(SymbolRegular.PanelLeft24, L.T("Layout"), L.T("Modern: tabs and compact rows. Classic: the sidebar and one card per setting"),
+                new[] { new Choice(L.T("Modern"), "modern"), new Choice(L.T("Classic"), "classic") },
                 () => S.Str("ui_layout") == "classic" ? "classic" : "modern", v => S.Set("ui_layout", v), changed: () =>
                 {
                     if (reverting || RestartForLayout()) return;
@@ -47,7 +54,7 @@ namespace BloodborneLauncher.Views
                     reverting = false;
                 });
 
-            SettingCombo(SymbolRegular.PaintBrush24, "Theme", "The accent colour, and a faint tint of it in the launcher's surfaces",
+            SettingCombo(SymbolRegular.PaintBrush24, L.T("Theme"), L.T("The accent colour, and a faint tint of it in the launcher's surfaces"),
                 LauncherTheme.Themes, "ui_theme", changed: () =>
                 {
                     ShowAppearance();
@@ -88,39 +95,39 @@ namespace BloodborneLauncher.Views
                 dot.MouseLeftButtonUp += (_, _) => colour.Text = preset;
                 presets.Children.Add(dot);
             }
-            Add(Card(SymbolRegular.ColorBackground24, "Theme colour",
-                "Pick a dot or type a colour as #RRGGBB", presets, out _), _themeColour);
+            Add(Card(SymbolRegular.ColorBackground24, L.T("Theme colour"),
+                L.T("Pick a dot or type a colour as #RRGGBB"), presets, out _), _themeColour);
             Body.Children.Add(_themeColour);
 
-            SettingCombo(SymbolRegular.ImageEdit24, "Background",
-                SettingRow.Classic ? "Shown in the Modern layout (Classic's panes are solid)" : "The picture behind the glass panes",
-                new[] { new Choice("Game artwork", "game"), new Choice("Your picture", "custom"), new Choice("None", "none") },
+            SettingCombo(SymbolRegular.ImageEdit24, L.T("Background"),
+                SettingRow.Classic ? L.T("Shown in the Modern layout (Classic's panes are solid)") : L.T("The picture behind the glass panes"),
+                new[] { new Choice(L.T("Game artwork"), "game"), new Choice(L.T("Your picture"), "custom"), new Choice(L.T("None"), "none") },
                 "ui_background", changed: () =>
                 {
                     ShowAppearance();
                     MainWindow.Instance?.ApplyBackdrop();
                 });
-            Add(Card(SymbolRegular.ImageEdit24, "Picture", "A PNG, JPG or BMP; it fills the window",
-                SmallButton("Choose", SymbolRegular.FolderOpen24, (_, _) => ChoosePicture()), out _pictureHint), _picture);
+            Add(Card(SymbolRegular.ImageEdit24, L.T("Picture"), L.T("A PNG, JPG or BMP; it fills the window"),
+                SmallButton(L.T("Choose"), SymbolRegular.FolderOpen24, (_, _) => ChoosePicture()), out _pictureHint), _picture);
             Body.Children.Add(_picture);
-            SettingCombo(SymbolRegular.Blur24, "Background blur", null,
-                new[] { new Choice("Strong", "strong"), new Choice("Light", "light"), new Choice("Off", "off") },
+            SettingCombo(SymbolRegular.Blur24, L.T("Background blur"), null,
+                new[] { new Choice(L.T("Strong"), "strong"), new Choice(L.T("Light"), "light"), new Choice(L.T("Off"), "off") },
                 "ui_background_blur", changed: () => MainWindow.Instance?.ApplyBackdrop());
-            SettingCombo(SymbolRegular.Image24, "App icon", "The launcher's and the game window's icon. The game window takes it at its next start",
+            SettingCombo(SymbolRegular.Image24, L.T("App icon"), L.T("The launcher's and the game window's icon. The game window takes it at its next start"),
                 AppIcon.Choices, "app_icon", changed: () => MainWindow.Instance?.ApplyIcon());
-            SettingCombo(SymbolRegular.Window24, "Window buttons", "macOS: the red, yellow and green dots. Windows: – □ ✕",
+            SettingCombo(SymbolRegular.Window24, L.T("Window buttons"), L.T("macOS: the red, yellow and green dots. Windows: – □ ✕"),
                 new[] { new Choice("macOS", "mac"), new Choice("Windows", "windows") },
                 "ui_window_buttons", changed: () => MainWindow.Instance?.ApplyWindowButtons());
-            SettingCombo(SymbolRegular.ArrowBidirectionalLeftRight24, "Window buttons side", null,
-                new[] { new Choice("Usual", "usual", "macOS on the left, Windows on the right"), new Choice("Left", "left"), new Choice("Right", "right") },
+            SettingCombo(SymbolRegular.ArrowBidirectionalLeftRight24, L.T("Window buttons side"), null,
+                new[] { new Choice(L.T("Usual"), "usual", L.T("macOS on the left, Windows on the right")), new Choice(L.T("Left"), "left"), new Choice(L.T("Right"), "right") },
                 "ui_window_buttons_side", changed: () => MainWindow.Instance?.ApplyWindowButtons());
             ShowAppearance();
 
             Group("Lantern Engine");
-            Add(Card(SymbolRegular.FolderLink24, "Engine folder", "", Row(
-                SmallButton("Browse", SymbolRegular.FolderOpen24, (_, _) => ChoosePort()),
-                IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(Paths.PortDir)),
-                IconButton(SymbolRegular.ArrowUndo24, "Detect automatically", (_, _) =>
+            Add(Card(SymbolRegular.FolderLink24, L.T("Engine folder"), "", Row(
+                SmallButton(L.T("Browse"), SymbolRegular.FolderOpen24, (_, _) => ChoosePort()),
+                IconButton(SymbolRegular.Open24, L.T("Open in Explorer"), (_, _) => Paths.OpenFolder(Paths.PortDir)),
+                IconButton(SymbolRegular.ArrowUndo24, L.T("Detect automatically"), (_, _) =>
                 {
                     S.Set("port_dir", "");
                     Ws.ResolvePort();
@@ -128,70 +135,70 @@ namespace BloodborneLauncher.Views
                     Refresh();
                 })), out _portHint));
 
-            Group("Launch");
-            SettingCombo(SymbolRegular.Rocket24, "Start the game with", null, Choices.LaunchMethods, "launch_method", changed: () => { ShowMethod(); Ws.SaveSoon(); });
+            Group(L.T("Launch"));
+            SettingCombo(SymbolRegular.Rocket24, L.T("Start the game with"), null, Choices.LaunchMethods, "launch_method", changed: () => { ShowMethod(); Ws.SaveSoon(); });
 
-            TextRow(SymbolRegular.Code24, "Command", "A program to run instead of Bloodborne.exe --run, with the settings as environment variables",
+            TextRow(SymbolRegular.Code24, L.T("Command"), L.T("A program to run instead of Bloodborne.exe --run, with the settings as environment variables"),
                 @"C:\path\to\game.exe", () => S.Str("custom_command"), v => S.Set("custom_command", v), _customRows, 380);
-            TextRow(SymbolRegular.TextDescription24, "Arguments", null, "Optional",
+            TextRow(SymbolRegular.TextDescription24, L.T("Arguments"), null, L.T("Optional"),
                 () => S.Str("custom_args"), v => S.Set("custom_args", v), _customRows, 380);
             Body.Children.Add(_customRows);
 
-            Group("Performance");
-            SettingCombo(SymbolRegular.Flow20, "Two-stage GPU pipeline", "20–30% faster; turn off if the game is unstable",
+            Group(L.T("Performance"));
+            SettingCombo(SymbolRegular.Flow20, L.T("Two-stage GPU pipeline"), L.T("20–30% faster; turn off if the game is unstable"),
                 Choices.DrawPipe, "draw_pipe");
-            SettingCombo(SymbolRegular.Speaker224, "Sound output",
-                "If the sound jitters or crackles, try DirectSound. The larger buffer is steadier but the sound comes a little later",
+            SettingCombo(SymbolRegular.Speaker224, L.T("Sound output"),
+                L.T("If the sound jitters or crackles, try DirectSound. The larger buffer is steadier but the sound comes a little later"),
                 Choices.SoundOutput, "sound_output");
             var perfMore = Advanced();
-            SettingCombo(SymbolRegular.ArrowSwap24, "CPU reads of GPU data", "Relaxed is the default", Choices.Readbacks, "readbacks", perfMore);
-            SettingToggle(SymbolRegular.Speaker224, "Sound threads first",
-                "For CPUs with many slower cores (older Xeons and similar): the game's sound runs before its other threads, against late or stuttering sound. Off by default",
+            SettingCombo(SymbolRegular.ArrowSwap24, L.T("CPU reads of GPU data"), L.T("Relaxed is the default"), Choices.Readbacks, "readbacks", perfMore);
+            SettingToggle(SymbolRegular.Speaker224, L.T("Sound threads first"),
+                L.T("For CPUs with many slower cores (older Xeons and similar): the game's sound runs before its other threads, against late or stuttering sound. Off by default"),
                 "audio_priority", perfMore);
 
-            Group("Diagnostics");
-            Add(Card(SymbolRegular.Wrench24, "Engine switches",
-                "The engine's other player-facing BB_ variables (GPU choice, texture filtering, memory, sound, fixes) as switches, sliders and lists at the engine's defaults: no typing needed",
-                SmallButton("Open", SymbolRegular.Open24, (_, _) => MainWindow.Instance?.Show("engine")), out _));
-            var logs = Advanced("Log, capture and extra variables");
-            SettingToggle(SymbolRegular.TextBulletListSquare24, "Frame statistics in the log", "BB_FRAME_STATS", "frame_stats", logs);
-            SettingToggle(SymbolRegular.DeveloperBoard24, "FSR 4 profile in the log", "BB_FSR4_PROFILE", "fsr_profile", logs);
-            SettingToggle(SymbolRegular.Speaker224, "Audio statistics in the log", "BB_AUDIO_STATS", "audio_stats", logs);
-            SettingToggle(SymbolRegular.HourglassHalf24, "Loading profile in the log",
-                "BB_SAMPLE_THREADS: where the game's main, render and file threads spend their time, every 5 seconds. For slow loading; costs a little speed", "load_profile", logs);
-            SettingToggle(SymbolRegular.Timer24, "Render stage timings in the log", "BB_SECTIONS: where each frame's CPU time goes (with frame statistics). It costs FPS, so it applies to the next game only", "section_stats", logs);
-            SettingToggle(SymbolRegular.Camera24, "Capture shaders",
+            Group(L.T("Diagnostics"));
+            Add(Card(SymbolRegular.Wrench24, L.T("Engine switches"),
+                L.T("The engine's other player-facing BB_ variables (GPU choice, texture filtering, memory, sound, fixes) as switches, sliders and lists at the engine's defaults: no typing needed"),
+                SmallButton(L.T("Open"), SymbolRegular.Open24, (_, _) => MainWindow.Instance?.Show("engine")), out _));
+            var logs = Advanced(L.T("Log, capture and extra variables"));
+            SettingToggle(SymbolRegular.TextBulletListSquare24, L.T("Frame statistics in the log"), "BB_FRAME_STATS", "frame_stats", logs);
+            SettingToggle(SymbolRegular.DeveloperBoard24, L.T("FSR 4 profile in the log"), "BB_FSR4_PROFILE", "fsr_profile", logs);
+            SettingToggle(SymbolRegular.Speaker224, L.T("Audio statistics in the log"), "BB_AUDIO_STATS", "audio_stats", logs);
+            SettingToggle(SymbolRegular.HourglassHalf24, L.T("Loading profile in the log"),
+                L.T("BB_SAMPLE_THREADS: where the game's main, render and file threads spend their time, every 5 seconds. For slow loading; costs a little speed"), "load_profile", logs);
+            SettingToggle(SymbolRegular.Timer24, L.T("Render stage timings in the log"), L.T("BB_SECTIONS: where each frame's CPU time goes (with frame statistics). It costs FPS, so it applies to the next game only"), "section_stats", logs);
+            SettingToggle(SymbolRegular.Camera24, L.T("Capture shaders"),
                 "BB_SHADER_CAPTURE: every shader the game uses is saved once to logs\\shaders (a few MB), for testing the new native shader compiler offline. Costs a little time the first time each shader is seen", "shader_capture", logs);
-            TextRow(SymbolRegular.Code24, "Extra variables",
-                "NAME=value pairs separated by spaces, passed to the game. For anything Engine switches doesn't list; a variable set here wins over its switch there",
+            TextRow(SymbolRegular.Code24, L.T("Extra variables"),
+                L.T("NAME=value pairs separated by spaces, passed to the game. For anything Engine switches doesn't list; a variable set here wins over its switch there"),
                 "BB_EXAMPLE=1", () => S.Str("extra_env"), v => S.Set("extra_env", v.Trim()), logs, width: 300);
 
-            Group("Files");
-            Add(Card(SymbolRegular.DocumentSettings20, "Launcher settings", Paths.ConfigFile,
-                IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(Paths.ConfigDir)), out _));
-            Add(Card(SymbolRegular.DocumentSettings20, "Port settings (bbport.ini)", Paths.IniPath,
-                IconButton(SymbolRegular.Open24, "Open in Explorer", (_, _) => Paths.OpenFolder(Path.GetDirectoryName(Paths.IniPath)!)), out _));
-            Add(Card(SymbolRegular.Broom24, "Shader cache",
-                "The game's compiled shaders, kept between starts (a new engine version clears them itself). Clear them if " +
-                "something draws wrong in every save, such as missing skin or hair; the next start compiles them again and stutters for a while",
-                SmallButton("Clear", SymbolRegular.Broom24, (_, _) => ClearShaderCache()), out _));
-            Add(Card(SymbolRegular.Share24, "Share shader cache",
-                "Save your compiled shaders as a file, or use someone else's: areas they have played don't stutter for you. " +
-                "It works between the same launcher version and the same kind of graphics card; using one replaces yours (kept as a backup)",
-                Row(SmallButton("Save as file", SymbolRegular.Save24, (_, _) => ExportShaderCache()),
-                    SmallButton("Use a file", SymbolRegular.FolderOpen24, (_, _) => ImportShaderCache())), out _));
+            Group(L.T("Files"));
+            Add(Card(SymbolRegular.DocumentSettings20, L.T("Launcher settings"), Paths.ConfigFile,
+                IconButton(SymbolRegular.Open24, L.T("Open in Explorer"), (_, _) => Paths.OpenFolder(Paths.ConfigDir)), out _));
+            Add(Card(SymbolRegular.DocumentSettings20, L.T("Port settings (bbport.ini)"), Paths.IniPath,
+                IconButton(SymbolRegular.Open24, L.T("Open in Explorer"), (_, _) => Paths.OpenFolder(Path.GetDirectoryName(Paths.IniPath)!)), out _));
+            Add(Card(SymbolRegular.Broom24, L.T("Shader cache"),
+                L.T("The game's compiled shaders, kept between starts (a new engine version clears them itself). Clear them if ") +
+                L.T("something draws wrong in every save, such as missing skin or hair; the next start compiles them again and stutters for a while"),
+                SmallButton(L.T("Clear"), SymbolRegular.Broom24, (_, _) => ClearShaderCache()), out _));
+            Add(Card(SymbolRegular.Share24, L.T("Share shader cache"),
+                L.T("Save your compiled shaders as a file, or use someone else's: areas they have played don't stutter for you. ") +
+                L.T("It works between the same launcher version and the same kind of graphics card; using one replaces yours (kept as a backup)"),
+                Row(SmallButton(L.T("Save as file"), SymbolRegular.Save24, (_, _) => ExportShaderCache()),
+                    SmallButton(L.T("Use a file"), SymbolRegular.FolderOpen24, (_, _) => ImportShaderCache())), out _));
 
-            Group("Share settings");
-            Add(Card(SymbolRegular.Share24, "Share your settings",
-                "Graphics, effects, camera, controls, cheats and engine options, as a code to paste in Discord or a file. " +
-                "Not included: display and HDR, the online account, folders and languages",
-                Row(SmallButton("Copy code", SymbolRegular.Copy24, (_, _) => CopySettingsCode()),
-                    SmallButton("Save as file", SymbolRegular.Save24, (_, _) => SaveSettingsFile())), out _));
-            Add(Card(SymbolRegular.ArrowImport24, "Import settings", "Someone's code or file. You see what changes before anything is applied",
-                Row(SmallButton("Paste code", SymbolRegular.ClipboardPaste24, (_, _) => ImportSettingsCode()),
-                    SmallButton("Open file", SymbolRegular.FolderOpen24, (_, _) => ImportSettingsFile())), out _));
+            Group(L.T("Share settings"));
+            Add(Card(SymbolRegular.Share24, L.T("Share your settings"),
+                L.T("Graphics, effects, camera, controls, cheats and engine options, as a code to paste in Discord or a file. ") +
+                L.T("Not included: display and HDR, the online account, folders and languages"),
+                Row(SmallButton(L.T("Copy code"), SymbolRegular.Copy24, (_, _) => CopySettingsCode()),
+                    SmallButton(L.T("Save as file"), SymbolRegular.Save24, (_, _) => SaveSettingsFile())), out _));
+            Add(Card(SymbolRegular.ArrowImport24, L.T("Import settings"), L.T("Someone's code or file. You see what changes before anything is applied"),
+                Row(SmallButton(L.T("Paste code"), SymbolRegular.ClipboardPaste24, (_, _) => ImportSettingsCode()),
+                    SmallButton(L.T("Open file"), SymbolRegular.FolderOpen24, (_, _) => ImportSettingsFile())), out _));
 
-            Group("Community");
+            Group(L.T("Community"));
             // Discord status: a preview of the card, and for Custom every part Discord lets a game set.
             var discordPreview = new DiscordPreview();
             var discordCustom = new StackPanel();
@@ -210,82 +217,82 @@ namespace BloodborneLauncher.Views
             Wpf.Ui.Controls.TextBox DiscordText(string title, string placeholder, string key, string? hint = null) =>
                 TextRow(SymbolRegular.TextDescription24, title, hint, placeholder, () => S.Str(key),
                     v => { S.Set(key, v); DiscordChanged(); }, discordCustom, 380);
-            SettingCombo(SymbolRegular.PeopleCommunity24, "Discord status",
-                "Shows that you're playing on your Discord profile while the game runs. Custom: your own lines, picture and buttons",
+            SettingCombo(SymbolRegular.PeopleCommunity24, L.T("Discord status"),
+                L.T("Shows that you're playing on your Discord profile while the game runs. Custom: your own lines, picture and buttons"),
                 Choices.DiscordStatus, "discord_status", changed: DiscordChanged);
             Body.Children.Add(discordPreview);
-            ComboRow(SymbolRegular.Rename24, "Name", "The name in bold is the Discord app's. My own Discord app: make one on discord.com/developers with any name and paste its Application ID",
+            ComboRow(SymbolRegular.Rename24, L.T("Name"), L.T("The name in bold is the Discord app's. My own Discord app: make one on discord.com/developers with any name and paste its Application ID"),
                 DiscordPresence.Names, () => S.Str("discord_app") is { Length: > 0 } v ? v : "lantern",
                 v => S.Set("discord_app", v), discordCustom, changed: DiscordChanged);
-            TextRow(SymbolRegular.Key24, "Application ID", "From your app's General Information page", "e.g. 1234567890123456789",
+            TextRow(SymbolRegular.Key24, L.T("Application ID"), L.T("From your app's General Information page"), L.T("e.g. 1234567890123456789"),
                 () => S.Str("discord_app_id"), v => { S.Set("discord_app_id", v); DiscordChanged(); }, discordOwn, 380);
-            TextRow(SymbolRegular.Rename24, "Your app's name", "Only for the preview: Discord shows the name you gave the app", "Bloodborne",
+            TextRow(SymbolRegular.Rename24, L.T("Your app's name"), L.T("Only for the preview: Discord shows the name you gave the app"), "Bloodborne",
                 () => S.Str("discord_app_name"), v => { S.Set("discord_app_name", v); DiscordChanged(); }, discordOwn, 380);
             discordCustom.Children.Add(discordOwn);
-            DiscordText("First line", "Hunting in Yharnam", "discord_details", "{version} shows the launcher's version");
-            DiscordText("Second line", "Optional", "discord_state");
-            ComboRow(SymbolRegular.Image24, "Picture", null, DiscordPresence.Pictures, () => S.Str("discord_picture") is { Length: > 0 } v ? v : "logo",
+            DiscordText(L.T("First line"), "Hunting in Yharnam", "discord_details", L.T("{version} shows the launcher's version"));
+            DiscordText(L.T("Second line"), L.T("Optional"), "discord_state");
+            ComboRow(SymbolRegular.Image24, L.T("Picture"), null, DiscordPresence.Pictures, () => S.Str("discord_picture") is { Length: > 0 } v ? v : "logo",
                 v => S.Set("discord_picture", v), discordCustom, changed: DiscordChanged);
-            TextRow(SymbolRegular.Link24, "Picture link", "An https link to a PNG, JPG or GIF: Discord downloads it, so a file on your PC can't be used",
+            TextRow(SymbolRegular.Link24, L.T("Picture link"), L.T("An https link to a PNG, JPG or GIF: Discord downloads it, so a file on your PC can't be used"),
                 "https://…", () => S.Str("discord_image_url"), v => { S.Set("discord_image_url", v); DiscordChanged(); }, discordLink, 380);
             discordCustom.Children.Add(discordLink);
-            DiscordText("Picture hover text", "Lantern Engine", "discord_image_text");
-            DiscordText("Small badge link", "Optional https link", "discord_badge_url", "A small round picture on the corner of the big one");
-            DiscordText("Badge hover text", "Optional", "discord_badge_text");
-            ToggleRow(SymbolRegular.Timer24, "Show play time", null, () => S.Bool("discord_timer"), v => S.Set("discord_timer", v), discordCustom, DiscordChanged);
-            DiscordText("Button 1 text", "Optional, e.g. Join my Discord", "discord_button1_label", "Other people see the buttons; Discord hides them on your own profile");
-            DiscordText("Button 1 link", "https://…", "discord_button1_url");
-            DiscordText("Button 2 text", "Optional", "discord_button2_label");
-            DiscordText("Button 2 link", "https://…", "discord_button2_url");
+            DiscordText(L.T("Picture hover text"), "Lantern Engine", "discord_image_text");
+            DiscordText(L.T("Small badge link"), L.T("Optional https link"), "discord_badge_url", L.T("A small round picture on the corner of the big one"));
+            DiscordText(L.T("Badge hover text"), L.T("Optional"), "discord_badge_text");
+            ToggleRow(SymbolRegular.Timer24, L.T("Show play time"), null, () => S.Bool("discord_timer"), v => S.Set("discord_timer", v), discordCustom, DiscordChanged);
+            DiscordText(L.T("Button 1 text"), L.T("Optional, e.g. Join my Discord"), "discord_button1_label", L.T("Other people see the buttons; Discord hides them on your own profile"));
+            DiscordText(L.T("Button 1 link"), "https://…", "discord_button1_url");
+            DiscordText(L.T("Button 2 text"), L.T("Optional"), "discord_button2_label");
+            DiscordText(L.T("Button 2 link"), "https://…", "discord_button2_url");
             Body.Children.Add(discordCustom);
             DiscordChanged();
-            Add(Card(SymbolRegular.PeopleCommunity24, "Discord", "Help, news, co-op partners and beta feedback",
-                SmallButton("Join", SymbolRegular.Open24, (_, _) =>
+            Add(Card(SymbolRegular.PeopleCommunity24, "Discord", L.T("Help, news, co-op partners and beta feedback"),
+                SmallButton(L.T("Join"), SymbolRegular.Open24, (_, _) =>
                     Process.Start(new ProcessStartInfo(LauncherSettings.Discord) { UseShellExecute = true })), out _));
 
-            Group("Updates");
-            _updateNow = SmallButton("Update now", SymbolRegular.ArrowDownload24, async (_, _) => await MainWindow.Instance!.InstallUpdateAsync(),
+            Group(L.T("Updates"));
+            _updateNow = SmallButton(L.T("Update now"), SymbolRegular.ArrowDownload24, async (_, _) => await MainWindow.Instance!.InstallUpdateAsync(),
                 ControlAppearance.Primary);
-            Add(Card(SymbolRegular.ArrowDownload24, "Launcher updates", "", Row(
-                SmallButton("Check now", SymbolRegular.ArrowClockwise24, async (_, _) => await Ws.CheckForUpdatesAsync(quiet: false)),
+            Add(Card(SymbolRegular.ArrowDownload24, L.T("Launcher updates"), "", Row(
+                SmallButton(L.T("Check now"), SymbolRegular.ArrowClockwise24, async (_, _) => await Ws.CheckForUpdatesAsync(quiet: false)),
                 _updateNow,
-                IconButton(SymbolRegular.Open24, "Open the releases page", (_, _) =>
+                IconButton(SymbolRegular.Open24, L.T("Open the releases page"), (_, _) =>
                     Process.Start(new ProcessStartInfo(Updater.ReleasesPage) { UseShellExecute = true }))), out _updateHint));
-            ComboRow(SymbolRegular.Branch24, "Update channel",
-                "Stable: releases that have been tested. Beta: every change as soon as it is done, before it is tested",
-                new[] { new Choice("Stable", "stable"), new Choice("Beta", "beta") },
+            ComboRow(SymbolRegular.Branch24, L.T("Update channel"),
+                L.T("Stable: releases that have been tested. Beta: every change as soon as it is done, before it is tested"),
+                new[] { new Choice(L.T("Stable"), "stable"), new Choice(L.T("Beta"), "beta") },
                 () => Updater.BetaChannel(S) ? "beta" : "stable",
                 v =>
                 {
                     if (v == (Updater.BetaChannel(S) ? "beta" : "stable")) return;
                     S.Set("update_channel", v);
                     Ws.SaveSoon();
-                    Ws.Log(v == "beta" ? "Update channel: beta." : "Update channel: stable.", LogLevel.Step);
+                    Ws.Log(v == "beta" ? L.T("Update channel: beta.") : L.T("Update channel: stable."), LogLevel.Step);
                     _ = Ws.CheckForUpdatesAsync(quiet: false);
                 });
-            SettingToggle(SymbolRegular.Alert24, "Check for updates at start", $"Looks at github.com/{Updater.Repository}/releases", "check_updates");
-            _installVersion = SmallButton("Install", SymbolRegular.ArrowDownload24, async (_, _) => await InstallChosenVersionAsync());
+            SettingToggle(SymbolRegular.Alert24, L.T("Check for updates at start"), L.F($"Looks at github.com/{Updater.Repository}/releases"), "check_updates");
+            _installVersion = SmallButton(L.T("Install"), SymbolRegular.ArrowDownload24, async (_, _) => await InstallChosenVersionAsync());
             _installVersion.IsEnabled = false;
             ComboSearch.Attach(_versions);
             _versions.SelectionChanged += (_, _) =>
                 _installVersion.IsEnabled = _versions.SelectedItem is ComboBoxItem { Tag: Updater.Release r } && !r.IsCurrent;
-            Add(Card(SymbolRegular.History24, "Version",
-                "Every published release, stable and beta, newest first. Install any of them, older ones too, to go back if a " +
-                "version gives you trouble. Your settings, saves, mods and profiles stay",
+            Add(Card(SymbolRegular.History24, L.T("Version"),
+                L.T("Every published release, stable and beta, newest first. Install any of them, older ones too, to go back if a ") +
+                L.T("version gives you trouble. Your settings, saves, mods and profiles stay"),
                 Row(_versions, _installVersion,
-                    IconButton(SymbolRegular.ArrowClockwise24, "Reload the list", async (_, _) => await LoadVersionsAsync(force: true))),
+                    IconButton(SymbolRegular.ArrowClockwise24, L.T("Reload the list"), async (_, _) => await LoadVersionsAsync(force: true))),
                 out _versionHint));
-            SetHint(_versionHint, $"You have {Updater.CurrentLabel}");
+            SetHint(_versionHint, L.F($"You have {Updater.CurrentLabel}"));
             Ws.UpdateStateChanged += UpdateUpdates;
             UpdateUpdates();
 
             // Only a copy built from the source checkout can rebuild itself.
-            var build = Card(SymbolRegular.ArrowSync24, "Build", "", Row(
-                SmallButton("Rebuild", SymbolRegular.ArrowClockwise24, (_, _) => Rebuild(force: false)),
-                SmallButton("Force rebuild", SymbolRegular.Wrench24, (_, _) => Rebuild(force: true))), out _buildHint);
+            var build = Card(SymbolRegular.ArrowSync24, L.T("Build"), "", Row(
+                SmallButton(L.T("Rebuild"), SymbolRegular.ArrowClockwise24, (_, _) => Rebuild(force: false)),
+                SmallButton(L.T("Force rebuild"), SymbolRegular.Wrench24, (_, _) => Rebuild(force: true))), out _buildHint);
             if (Paths.SourceRoot != null)
             {
-                Group("Build from source");
+                Group(L.T("Build from source"));
                 Add(build);
             }
 
@@ -307,7 +314,7 @@ namespace BloodborneLauncher.Views
             _versions.IsEnabled = false;
             _installVersion.IsEnabled = false;
             _versions.Items.Clear();
-            _versions.Items.Add(new ComboBoxItem { Content = "Loading…" });
+            _versions.Items.Add(new ComboBoxItem { Content = L.T("Loading…") });
             _versions.SelectedIndex = 0;
             try
             {
@@ -317,8 +324,8 @@ namespace BloodborneLauncher.Views
                 foreach (var release in _releases)
                 {
                     var label = Updater.Label(release.Version, release.Beta) +
-                                (release.Beta > 0 ? "" : "  · stable") +
-                                (release.IsCurrent ? "  (installed)" : "");
+                                (release.Beta > 0 ? "" : L.T("  · stable")) +
+                                (release.IsCurrent ? L.T("  (installed)") : "");
                     var item = new ComboBoxItem { Content = label, Tag = release };
                     _versions.Items.Add(item);
                     if (release.IsCurrent) current = item;
@@ -326,14 +333,14 @@ namespace BloodborneLauncher.Views
                 _versions.SelectedItem = current ?? (_versions.Items.Count > 0 ? _versions.Items[0] : null);
                 _versions.IsEnabled = _versions.Items.Count > 0;
                 SetHint(_versionHint, _releases.Count == 0
-                    ? $"You have {Updater.CurrentLabel}; no release is published yet"
-                    : $"You have {Updater.CurrentLabel}. {_releases.Count} versions to choose from");
+                    ? L.F($"You have {Updater.CurrentLabel}; no release is published yet")
+                    : L.F($"You have {Updater.CurrentLabel}. {_releases.Count} versions to choose from"));
             }
             catch (Exception e)
             {
                 _releases = null;
                 _versions.Items.Clear();
-                SetHint(_versionHint, $"You have {Updater.CurrentLabel}. The list could not be loaded: {e.GetBaseException().Message}");
+                SetHint(_versionHint, L.F($"You have {Updater.CurrentLabel}. The list could not be loaded: {e.GetBaseException().Message}"));
             }
             finally
             {
@@ -350,8 +357,8 @@ namespace BloodborneLauncher.Views
         private void Refresh()
         {
             SetHint(_portHint, Paths.IsPortDir(Paths.PortDir)
-                ? Paths.PortDir + (Paths.DetectPortDir() == Paths.PortDir ? "  ·  the package this launcher is in" : "") + "\nThe engine that runs your game: out\\bb-probe.exe, its scripts and Python. Your game files stay where they are"
-                : "Not found. It is normally the folder this launcher is in (with bin\\bb-probe.exe and run.py)");
+                ? Paths.PortDir + (Paths.DetectPortDir() == Paths.PortDir ? L.T("  ·  the package this launcher is in") : "") + L.T("\nThe engine that runs your game: out\\bb-probe.exe, its scripts and Python. Your game files stay where they are")
+                : L.T("Not found. It is normally the folder this launcher is in (with bin\\bb-probe.exe and run.py)"));
             SetHint(_buildHint, BuildStatus());
         }
 
@@ -361,11 +368,11 @@ namespace BloodborneLauncher.Views
             var latest = Ws.Latest;
             _updateNow.Visibility = update != null ? Visibility.Visible : Visibility.Collapsed;
             SetHint(_updateHint,
-                update != null ? $"{update.Name} is available (you have {Updater.CurrentLabel})" +
-                                 (update.IsNewerThan(Updater.Current, Updater.CurrentBeta) ? "" : ": back to stable")
-                : Ws.CheckedAt == null ? $"You have {Updater.CurrentLabel}"
-                : latest == null ? $"You have {Updater.CurrentLabel}; no release is published yet"
-                : $"You have {Updater.CurrentLabel}, the latest ({latest.Tag})");
+                update != null ? L.F($"{update.Name} is available (you have {Updater.CurrentLabel})") +
+                                 (update.IsNewerThan(Updater.Current, Updater.CurrentBeta) ? "" : L.T(": back to stable"))
+                : Ws.CheckedAt == null ? L.F($"You have {Updater.CurrentLabel}")
+                : latest == null ? L.F($"You have {Updater.CurrentLabel}; no release is published yet")
+                : L.F($"You have {Updater.CurrentLabel}, the latest ({latest.Tag})"));
         }
 
         /// <summary>Shows the rows that belong to the chosen theme and background.</summary>
@@ -374,16 +381,16 @@ namespace BloodborneLauncher.Views
             _themeColour.Visibility = S.Str("ui_theme") == "custom" ? Visibility.Visible : Visibility.Collapsed;
             _picture.Visibility = S.Str("ui_background") == "custom" ? Visibility.Visible : Visibility.Collapsed;
             var own = S.Str("ui_background_image");
-            SetHint(_pictureHint, own.Length == 0 ? "None chosen yet: the game artwork shows"
-                : File.Exists(own) ? own : $"{own} is missing: the game artwork shows");
+            SetHint(_pictureHint, own.Length == 0 ? L.T("None chosen yet: the game artwork shows")
+                : File.Exists(own) ? own : L.F($"{own} is missing: the game artwork shows"));
         }
 
         private void ChoosePicture()
         {
             var dialog = new Microsoft.Win32.OpenFileDialog
             {
-                Title = "Background picture",
-                Filter = "Pictures|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff|All files|*.*",
+                Title = L.T("Background picture"),
+                Filter = L.T("Pictures|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff|All files|*.*"),
             };
             if (dialog.ShowDialog() != true) return;
             S.Set("ui_background_image", dialog.FileName);
@@ -395,7 +402,7 @@ namespace BloodborneLauncher.Views
         /// <summary>Restarts into the chosen layout; false if the player cancelled.</summary>
         private static bool RestartForLayout()
         {
-            if (!Prompt.Confirm("Switch layout", "The launcher restarts to change its layout.", "Restart now")) return false;
+            if (!Prompt.Confirm(L.T("Switch layout"), L.T("The launcher restarts to change its layout."), L.T("Restart now"))) return false;
             Restart();
             return true;
         }
@@ -414,7 +421,7 @@ namespace BloodborneLauncher.Views
         {
             if (Process.GetProcessesByName("bb-probe").Length > 0)
             {
-                Prompt.Tell("Shader cache", "Close the game first: it is using the cache.");
+                Prompt.Tell(L.T("Shader cache"), L.T("Close the game first: it is using the cache."));
                 return;
             }
             var cache = Path.Combine(Paths.PortDir, "user", "cache");
@@ -437,8 +444,8 @@ namespace BloodborneLauncher.Views
                 }
                 return failures;
             });
-            Ws.Log(failed == 0 ? "Shader cache cleared: the next start compiles the shaders again."
-                               : $"Shader cache: {failed} entries could not be removed ({cache}).",
+            Ws.Log(failed == 0 ? L.T("Shader cache cleared: the next start compiles the shaders again.")
+                               : L.F($"Shader cache: {failed} entries could not be removed ({cache})."),
                    failed == 0 ? LogLevel.Good : LogLevel.Warn);
         }
 
@@ -446,18 +453,18 @@ namespace BloodborneLauncher.Views
         {
             var dialog = new Microsoft.Win32.SaveFileDialog
             {
-                Title = "Save shader cache", Filter = "Shader cache|*.zip",
+                Title = L.T("Save shader cache"), Filter = L.T("Shader cache|*.zip"),
                 FileName = $"Lantern Engine shaders {Updater.EngineId}.zip",
             };
             if (dialog.ShowDialog() != true) return;
             try
             {
                 var count = ShaderCacheShare.Export(dialog.FileName);
-                Ws.Log($"Shader cache saved: {count} pipelines in {dialog.FileName}", LogLevel.Good);
+                Ws.Log(L.F($"Shader cache saved: {count} pipelines in {dialog.FileName}"), LogLevel.Good);
             }
             catch (Exception e)
             {
-                Ws.Log("Could not save the shader cache: " + e.Message, LogLevel.Bad);
+                Ws.Log(L.T("Could not save the shader cache: ") + e.Message, LogLevel.Bad);
             }
         }
 
@@ -465,23 +472,23 @@ namespace BloodborneLauncher.Views
         {
             if (Process.GetProcessesByName("bb-probe").Length > 0)
             {
-                Prompt.Tell("Shader cache", "Close the game first: it is using the cache.");
+                Prompt.Tell(L.T("Shader cache"), L.T("Close the game first: it is using the cache."));
                 return;
             }
-            var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Use a shader cache", Filter = "Shader cache|*.zip|All files|*.*" };
+            var dialog = new Microsoft.Win32.OpenFileDialog { Title = L.T("Use a shader cache"), Filter = L.T("Shader cache|*.zip|All files|*.*") };
             if (dialog.ShowDialog() != true) return;
             var mine = ShaderCacheShare.Pipelines(Path.Combine(ShaderCacheShare.CacheDir, "CUSA03173"));
-            if (mine > 0 && !Prompt.Confirm("Replace your shader cache?",
-                    $"Yours has {mine} pipelines; it is kept as a backup (user\\cache\\CUSA03173.bak).", "Replace"))
+            if (mine > 0 && !Prompt.Confirm(L.T("Replace your shader cache?"),
+                    L.F($"Yours has {mine} pipelines; it is kept as a backup (user\\cache\\CUSA03173.bak)."), L.T("Replace")))
                 return;
             try
             {
                 var count = ShaderCacheShare.Import(dialog.FileName);
-                Ws.Log($"Shader cache: {count} pipelines taken; the game loads them at the next start.", LogLevel.Good);
+                Ws.Log(L.F($"Shader cache: {count} pipelines taken; the game loads them at the next start."), LogLevel.Good);
             }
             catch (Exception e)
             {
-                Prompt.Tell("Shader cache not used", "This file doesn't fit: " + e.Message + ".");
+                Prompt.Tell(L.T("Shader cache not used"), L.T("This file doesn't fit: ") + e.Message + ".");
             }
         }
 
@@ -491,25 +498,25 @@ namespace BloodborneLauncher.Views
         {
             if (!ClipboardText.Set(SharedSettings.ToCode(SharedSettings.Take(Ini, S))))
             {
-                Ws.Log("Could not copy: another program is using the clipboard. Try again, or use Save settings file.", LogLevel.Warn);
+                Ws.Log(L.T("Could not copy: another program is using the clipboard. Try again, or use Save settings file."), LogLevel.Warn);
                 return;
             }
-            Ws.Log("Settings code copied. Paste it in Discord; others import it in Settings › Share settings.", LogLevel.Good);
-            Prompt.Tell("Settings code copied", "Paste it in Discord or anywhere else. Others use Import settings › Paste code.");
+            Ws.Log(L.T("Settings code copied. Paste it in Discord; others import it in Settings › Share settings."), LogLevel.Good);
+            Prompt.Tell(L.T("Settings code copied"), L.T("Paste it in Discord or anywhere else. Others use Import settings › Paste code."));
         }
 
         private void SaveSettingsFile()
         {
-            var dialog = new Microsoft.Win32.SaveFileDialog { Title = "Save settings", FileName = "Lantern Engine settings.json", Filter = "Settings|*.json" };
+            var dialog = new Microsoft.Win32.SaveFileDialog { Title = L.T("Save settings"), FileName = "Lantern Engine settings.json", Filter = L.T("Settings|*.json") };
             if (dialog.ShowDialog() != true) return;
             try
             {
                 File.WriteAllText(dialog.FileName, SharedSettings.ToJson(SharedSettings.Take(Ini, S)));
-                Ws.Log("Settings saved: " + dialog.FileName, LogLevel.Good);
+                Ws.Log(L.T("Settings saved: ") + dialog.FileName, LogLevel.Good);
             }
             catch (Exception e)
             {
-                Ws.Log("Could not save the settings: " + e.Message, LogLevel.Bad);
+                Ws.Log(L.T("Could not save the settings: ") + e.Message, LogLevel.Bad);
             }
         }
 
@@ -518,8 +525,8 @@ namespace BloodborneLauncher.Views
             string clipboard;
             try { clipboard = Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
             catch (System.Runtime.InteropServices.ExternalException) { clipboard = ""; }
-            var values = Prompt.Ask("Import settings", $"Paste the code someone shared (it starts with {SharedSettings.CodePrefix}).",
-                new Prompt.Field("Code", clipboard.Contains(SharedSettings.CodePrefix, StringComparison.OrdinalIgnoreCase) ? clipboard.Trim() : "",
+            var values = Prompt.Ask(L.T("Import settings"), L.F($"Paste the code someone shared (it starts with {SharedSettings.CodePrefix})."),
+                new Prompt.Field(L.T("Code"), clipboard.Contains(SharedSettings.CodePrefix, StringComparison.OrdinalIgnoreCase) ? clipboard.Trim() : "",
                     SharedSettings.CodePrefix + "…", Multiline: true));
             if (values == null || values[0].Trim().Length == 0) return;
             OfferSettings(values[0]);
@@ -527,17 +534,17 @@ namespace BloodborneLauncher.Views
 
         private void ImportSettingsFile()
         {
-            var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Import settings", Filter = "Settings|*.json;*.txt|All files|*.*" };
+            var dialog = new Microsoft.Win32.OpenFileDialog { Title = L.T("Import settings"), Filter = L.T("Settings|*.json;*.txt|All files|*.*") };
             if (dialog.ShowDialog() != true) return;
             try
             {
                 if (new FileInfo(dialog.FileName).Length > 256 * 1024)
-                    throw new FormatException("That file is far too large to be shared settings.");
+                    throw new FormatException(L.T("That file is far too large to be shared settings."));
                 OfferSettings(File.ReadAllText(dialog.FileName));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatException)
             {
-                Prompt.Tell("Could not import", e.Message);
+                Prompt.Tell(L.T("Could not import"), e.Message);
             }
         }
 
@@ -547,7 +554,7 @@ namespace BloodborneLauncher.Views
         {
             if (Ws.Game.Running)
             {
-                Prompt.Tell("Close the game first", "The game changes these settings too while it runs.");
+                Prompt.Tell(L.T("Close the game first"), L.T("The game changes these settings too while it runs."));
                 return;
             }
             SharedSettings.Snapshot shared;
@@ -557,7 +564,7 @@ namespace BloodborneLauncher.Views
             }
             catch (FormatException e)
             {
-                Prompt.Tell("Could not import", e.Message);
+                Prompt.Tell(L.T("Could not import"), e.Message);
                 return;
             }
 
@@ -565,7 +572,7 @@ namespace BloodborneLauncher.Views
             var changes = SharedSettings.Changes(shared, Ini, S, everything);
             if (changes.Count == 0)
             {
-                Prompt.Tell("Nothing to change", "These settings are the same as yours.");
+                Prompt.Tell(L.T("Nothing to change"), L.T("These settings are the same as yours."));
                 return;
             }
             var settings = changes.Count(c => c.Part == SharedSettings.Part.Settings);
@@ -573,24 +580,24 @@ namespace BloodborneLauncher.Views
             var cheats = changes.Count(c => c.Part == SharedSettings.Part.Cheats);
             var counts = string.Join(", ", new[]
             {
-                settings > 0 ? $"{settings} graphics and engine" : null,
-                controls > 0 ? $"{controls} controls" : null,
-                cheats > 0 ? $"{cheats} cheats" : null,
+                settings > 0 ? L.F($"{settings} graphics and engine") : null,
+                controls > 0 ? L.F($"{controls} controls") : null,
+                cheats > 0 ? L.F($"{cheats} cheats") : null,
             }.Where(p => p != null));
             const int shown = 12;
             var list = string.Join("\n", changes.Take(shown).Select(SharedSettings.Describe)) +
-                       (changes.Count > shown ? $"\n…and {changes.Count - shown} more" : "");
-            var message = $"From {shared.From}: {changes.Count} changes ({counts}).\n\n{list}\n\n" +
-                          "Your current settings are saved first. The launcher restarts to show the new ones.";
+                       (changes.Count > shown ? L.F($"\n…and {changes.Count - shown} more") : "");
+            var message = L.F($"From {shared.From}: {changes.Count} changes ({counts}).\n\n{list}\n\n") +
+                          L.T("Your current settings are saved first. The launcher restarts to show the new ones.");
 
             HashSet<SharedSettings.Part> parts;
             if (settings > 0 && controls + cheats > 0)
             {
-                var choice = Prompt.Choose("Import settings", message, "Cancel", "Keep my controls and cheats", "Import all");
+                var choice = Prompt.Choose(L.T("Import settings"), message, L.T("Cancel"), L.T("Keep my controls and cheats"), L.T("Import all"));
                 if (choice <= 0) return;
                 parts = choice == 2 ? everything : new() { SharedSettings.Part.Settings };
             }
-            else if (!Prompt.Confirm("Import settings", message, "Import"))
+            else if (!Prompt.Confirm(L.T("Import settings"), message, L.T("Import")))
             {
                 return;
             }
@@ -604,11 +611,11 @@ namespace BloodborneLauncher.Views
                 var backup = Path.Combine(Paths.ConfigDir, "settings-before-import.json");
                 File.WriteAllText(backup, SharedSettings.ToJson(SharedSettings.Take(Ini, S)));
                 SharedSettings.Apply(shared, Ini, S, parts);
-                Ws.Log($"Imported settings from {shared.From}. Your previous ones: {backup} (Import settings › Open file).", LogLevel.Good);
+                Ws.Log(L.F($"Imported settings from {shared.From}. Your previous ones: {backup} (Import settings › Open file)."), LogLevel.Good);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                Prompt.Tell("Could not import", e.Message);
+                Prompt.Tell(L.T("Could not import"), e.Message);
                 return;
             }
             Restart();
@@ -619,12 +626,12 @@ namespace BloodborneLauncher.Views
 
         private void ChoosePort()
         {
-            var path = PickFolder("Engine folder (with run.py and bin\\bb-probe.exe)", Paths.PortDir);
+            var path = PickFolder(L.T("Engine folder (with run.py and bin\\bb-probe.exe)"), Paths.PortDir);
             if (path == null) return;
             if (!Paths.IsPortDir(path))
             {
-                System.Windows.MessageBox.Show(Application.Current.MainWindow!, "That folder has no run.py with Bloodborne.exe or bin\\bb-probe.exe.",
-                    "Engine folder", MessageBoxButton.OK, MessageBoxImage.Warning);
+                System.Windows.MessageBox.Show(Application.Current.MainWindow!, L.T("That folder has no run.py with Bloodborne.exe or bin\\bb-probe.exe."),
+                    L.T("Engine folder"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             S.Set("port_dir", path);
@@ -652,15 +659,15 @@ namespace BloodborneLauncher.Views
             var version = typeof(SettingsPage).Assembly.GetName().Version;
             var root = Paths.SourceRoot;
             if (root == null)
-                return $"Version {version?.ToString(3)}. The sources (launcher/windows) are not next to this copy, so it cannot rebuild itself.";
+                return L.F($"Version {version?.ToString(3)}. The sources (launcher/windows) are not next to this copy, so it cannot rebuild itself.");
 
             var stamp = SourceStamp.Read(SourceStamp.AppDirOf(root));
             var current = SourceStamp.Compute(root, SourceStamp.LauncherProject);
             var state = stamp.Launcher == current
-                ? "Up to date with the sources"
-                : "The sources changed since this build: rebuild to pick the changes up";
-            var built = stamp.Built == default ? "" : $" · built {stamp.Built.ToLocalTime():yyyy-MM-dd HH:mm}";
-            return $"Version {version?.ToString(3)}{built}. {state}.";
+                ? L.T("Up to date with the sources")
+                : L.T("The sources changed since this build: rebuild to pick the changes up");
+            var built = stamp.Built == default ? "" : L.F($" · built {stamp.Built.ToLocalTime():yyyy-MM-dd HH:mm}");
+            return L.F($"Version {version?.ToString(3)}{built}. {state}.");
         }
 
         private void Rebuild(bool force)
@@ -669,13 +676,13 @@ namespace BloodborneLauncher.Views
             if (builder == null)
             {
                 System.Windows.MessageBox.Show(Application.Current.MainWindow!,
-                    $"{SourceStamp.BuilderExe} was not found next to the launcher.", "Rebuild", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    L.F($"{SourceStamp.BuilderExe} was not found next to the launcher."), L.T("Rebuild"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             if (Ws.Game.Running)
             {
-                System.Windows.MessageBox.Show(Application.Current.MainWindow!, "Stop the game before rebuilding the launcher.",
-                    "Rebuild", MessageBoxButton.OK, MessageBoxImage.Information);
+                System.Windows.MessageBox.Show(Application.Current.MainWindow!, L.T("Stop the game before rebuilding the launcher."),
+                    L.T("Rebuild"), MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 

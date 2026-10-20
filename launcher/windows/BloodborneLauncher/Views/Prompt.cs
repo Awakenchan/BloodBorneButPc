@@ -102,7 +102,7 @@ namespace BloodborneLauncher.Views
             }
             else if (showCancel)
             {
-                var cancel = new Button { Content = "Cancel", Margin = new Thickness(0, 0, 8, 0), IsCancel = true, MinWidth = 110, HorizontalAlignment = HorizontalAlignment.Stretch };
+                var cancel = new Button { Content = L.T("Cancel"), Margin = new Thickness(0, 0, 8, 0), IsCancel = true, MinWidth = 110, HorizontalAlignment = HorizontalAlignment.Stretch };
                 cancel.Click += (_, _) => DialogResult = false;
                 buttons.Children.Add(cancel);
             }
@@ -212,7 +212,7 @@ namespace BloodborneLauncher.Views
         /// <summary>The fields' values, or null if cancelled.</summary>
         public static string[]? Ask(string title, string? message, params Field[] fields)
         {
-            var dialog = new Prompt(title, message, fields, "OK", showCancel: true);
+            var dialog = new Prompt(title, message, fields, L.T("OK"), showCancel: true);
             return dialog.ShowDialog() == true ? dialog._boxes.Select(b => b.Text).ToArray() : null;
         }
 
@@ -228,6 +228,6 @@ namespace BloodborneLauncher.Views
         }
 
         public static void Tell(string title, string message) =>
-            new Prompt(title, message, Array.Empty<Field>(), "OK", showCancel: false).ShowDialog();
+            new Prompt(title, message, Array.Empty<Field>(), L.T("OK"), showCancel: false).ShowDialog();
     }
 }

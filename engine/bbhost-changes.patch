@@ -2136,7 +2136,7 @@ index 0000000..dfb8088
 +- `ReplaceShader` (shader patching from the debug UI) destroys pipelines at once; a late bind
 +  still queued for one would use it after that.
 diff --git a/gpu/CMakeLists.txt b/gpu/CMakeLists.txt
-index f51df72..fb7d43c 100644
+index f51df72..ff0a591 100644
 --- a/gpu/CMakeLists.txt
 +++ b/gpu/CMakeLists.txt
 @@ -16,6 +16,14 @@ add_compile_options(-fno-omit-frame-pointer)
@@ -2221,22 +2221,24 @@ index f51df72..fb7d43c 100644
      set(BBGPU_LIBRARY_TYPE STATIC)
  else()
      set(BBGPU_LIBRARY_TYPE SHARED)
-@@ -194,9 +224,13 @@ target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui
+@@ -194,9 +224,14 @@ target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui
      third_party/imgui/backends/imgui_impl_vulkan.cpp)
  target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends)
  target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
 -    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
 +    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf"
++    BB_CJK_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/LanternMenuSC.ttf"
 +    BB_KEYCAP_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf")
  set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
-     OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf)
+-    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf)
++    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/LanternMenuSC.ttf")
 +# Keyboard prompts' keycaps (shim/engine/keycap_art.cpp): Roboto Medium (Apache License 2.0).
 +set_source_files_properties(shim/engine/keycap_art.cpp PROPERTIES
 +    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/misc/fonts/Roboto-Medium.ttf)
  target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
  target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
  target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
-@@ -205,13 +239,19 @@ if(NOT WIN32)
+@@ -205,13 +240,19 @@ if(NOT WIN32)
      target_compile_options(bbgpu PRIVATE -ftls-model=initial-exec)
      target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
  endif()
@@ -2257,7 +2259,7 @@ index f51df72..fb7d43c 100644
      # bb-probe.exe links libbbgpu.a with these (out/gpu/bbgpu_link.txt, one argument per line,
      # in link order): the static library's transitive dependencies.
      include(cmake/LinkClosure.cmake)
-@@ -242,6 +282,25 @@ target_link_libraries(pipeline-archive-test PRIVATE fmt::fmt)
+@@ -242,6 +283,25 @@ target_link_libraries(pipeline-archive-test PRIVATE fmt::fmt)
  add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
  target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
  target_include_directories(motion-history-test PRIVATE ..)
@@ -2283,7 +2285,7 @@ index f51df72..fb7d43c 100644
  add_executable(motion-shader-test EXCLUDE_FROM_ALL ../tests/test_motion_shaders.cpp ../tests/test_gpu_runtime_stubs.cpp)
  target_compile_options(motion-shader-test PRIVATE -UNDEBUG)
  target_include_directories(motion-shader-test PRIVATE shim shadps4 third_party/gcn/include)
-@@ -252,7 +311,8 @@ endif()
+@@ -252,7 +312,8 @@ endif()
  add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
  target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
  target_include_directories(ui-composition-test PRIVATE ..)
@@ -2293,7 +2295,7 @@ index f51df72..fb7d43c 100644
  target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
  target_include_directories(settings-test PRIVATE .. shim)
  
-@@ -278,9 +338,16 @@ target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
+@@ -278,9 +339,16 @@ target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
  target_link_libraries(camera-motion-test PRIVATE bbgpu)
  add_dependencies(camera-motion-test host_shaders)
  
@@ -2311,7 +2313,7 @@ index f51df72..fb7d43c 100644
  target_include_directories(upscaler-support-test PRIVATE shim)
  target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
  
-@@ -315,6 +382,7 @@ target_include_directories(pc-input-test PRIVATE shim)
+@@ -315,6 +383,7 @@ target_include_directories(pc-input-test PRIVATE shim)
  target_link_libraries(pc-input-test PRIVATE PkgConfig::SDL3)
  target_compile_options(pc-input-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
  add_executable(widescreen-test EXCLUDE_FROM_ALL ../tests/test_widescreen.cpp
@@ -71359,10 +71361,10 @@ index 4b4c335..48f85bf 100644
      std::thread(ReportLoop).detach();
 diff --git a/gpu/shim/bbport_menu_i18n.cpp b/gpu/shim/bbport_menu_i18n.cpp
 new file mode 100644
-index 0000000..77a227a
+index 0000000..6fecccc
 --- /dev/null
 +++ b/gpu/shim/bbport_menu_i18n.cpp
-@@ -0,0 +1,1311 @@
+@@ -0,0 +1,1497 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// bbport: the in-game menu (bbport_overlay.cpp) in the languages other than English and
 +// Russian, which MenuText takes at its call sites. Each table maps the English text, exactly as
@@ -72637,6 +72639,191 @@ index 0000000..77a227a
 +     "Hata ayıklama menüsü (yazı tipi dosyaları gerekir)"},
 +};
 +
++// Simplified Chinese (zh_CN). Lantern Menu SC (Noto Sans SC subset) supplies CJK glyphs.
++constexpr Entry kChinese[] = {
++    {"Off", "关闭"},
++    {"Infinite", "无限"},
++    {"Custom", "自定义"},
++    {"Amount", "数量"},
++    {"Unavailable", "不可用"},
++    {"Blood Echoes", "血之回响"},
++    {"+1 Insight", "+1 灵视"},
++    {"Added to the character in the world, up to the game's limits (999,999,999 Blood Echoes, 99 Insight). They are saved with your character: turning cheats off does not take them back.", "添加到当前世界中的角色，最多为 999,999,999 血之回响、99 灵视。结果会随角色存档保存，关闭修改器不会撤回。"},
++    {"HDR output", "HDR 输出"},
++    {"HDR output (restart required)", "HDR 输出（需重启游戏）"},
++    {"Shows the game's SDR picture on an HDR display without washed-out colors, with optional highlight expansion. Windows HDR must be on (Settings > Display > Use HDR). Turning it on or off applies after restarting the game.", "在 HDR 显示器上显示游戏的 SDR 画面，避免颜色发灰，并可扩展高光亮度。请先在 Windows“设置 > 显示”中开启 HDR。开启或关闭此功能后需重启游戏。"},
++    {"Not active: the display offers no HDR format (is Windows HDR on?)", "未启用：显示器未提供 HDR 格式，请检查 Windows HDR 是否开启。"},
++    {"Active: scRGB (FP16)", "已启用：scRGB（FP16）"},
++    {"Active: HDR10 (PQ, BT.2020)", "已启用：HDR10（PQ、BT.2020）"},
++    {"Native (from the game's HDR scene)", "原生（取自游戏 HDR 场景）"},
++    {"Expand (from the SDR picture)", "扩展（取自 SDR 画面）"},
++    {"HDR mode", "HDR 模式"},
++    {"Native: the brightness of lamps, fire, the moon and other highlights comes from the game's own HDR scene, before its tonemap clipped it to SDR white. Midtones, colours and the UI stay as in the SDR picture. Menus, loading screens and movies (no scene) use Expand. Expand: the SDR picture's brightest parts are stretched towards the peak.", "原生：灯光、火焰、月亮等高光取自游戏原始 HDR 场景，保留色调映射到 SDR 白色之前的亮度。中间调、色彩和界面保持 SDR 外观。菜单、加载画面和过场视频没有场景数据，会使用扩展模式。扩展：将 SDR 画面最亮的部分提升至设定的峰值亮度。"},
++    {"Paper white (nits)", "纸白亮度（尼特）"},
++    {"Peak brightness (nits)", "峰值亮度（尼特）"},
++    {"Highlight boost", "高光增强"},
++    {"UI brightness", "界面亮度"},
++    {"UI colour", "界面色彩"},
++    {"Native mode only: the game's HUD, menus, subtitles and loading screens. UI brightness: their white, times paper white. UI colour: 0 shows their exact sRGB colours, 1 the wider colours a wide-gamut monitor shows SDR with (the usual look; exact sRGB can look washed out next to it). Live.", "仅限原生模式：影响游戏 HUD、菜单、字幕和加载画面。界面亮度为界面白色相对纸白亮度的倍率。界面色彩：0 为准确的 sRGB 色彩，1 为广色域显示器呈现 SDR 时常见的较鲜艳色彩。调整即时生效。"},
++    {"Paper white: how bright the game's white (and this menu) is; about 200 suits a dim room. Peak: your display's peak brightness (its HDR specs, or the Windows HDR Calibration app). Highlight boost: 0 shows the SDR picture as it is; higher values let the brightest parts (lamps, fire, the moon) rise towards the peak. In Native mode it is how much of the scene's own highlight range is shown: 0.25 about half, 1 all of it (up to the peak). Changes apply live. Ctrl+click a slider to type an exact value.", "纸白亮度决定游戏白色和此菜单的亮度，较暗房间可从 200 尼特开始。峰值亮度应参考显示器 HDR 规格或 Windows HDR 校准结果。高光增强为 0 时保留 SDR 画面；提高后，灯光、火焰、月亮等高光会接近峰值。在原生模式下，它控制显示多少原始场景高光范围：0.25 约显示一半，1 显示全部，且不超过峰值。即时生效。按住 Ctrl 单击滑块可输入精确数值。"},
++    {"Picture", "画面"},
++    {"Unavailable: the game's code differs from version 1.09.", "不可用：游戏可执行文件与 1.09 版不一致。"},
++    {"Picture tuning", "画面调校"},
++    {"Brightness", "亮度"},
++    {"Contrast", "对比度"},
++    {"Saturation", "饱和度"},
++    {"Hue", "色相"},
++    {"Fog", "雾效"},
++    {"Vignette", "暗角"},
++    {"Ambient occlusion strength", "环境光遮蔽强度"},
++    {"Shadow distance", "阴影距离"},
++    {"Game's own picture", "恢复游戏原始画面"},
++    {"Changes apply live, Picture tuning too, to the game's own colour, fog and lighting of each area (the HUD and menus keep theirs). Moving one turns Picture tuning on; off: the game's own picture. 1.00 and Hue 0 are the game's. Fog 0 clears the haze over distant streets. The same settings are in the game's System menu (PC Graphics, PC Effects, PC Colour) and the launcher. Ctrl+click a slider to type any value, beyond its ends too (brightness, saturation and fog up to 5, contrast 0.5-1.5, hue -180-180, bloom up to 10, shadow distance 0.25-8).", "调整即时生效，直接影响各区域的原始色彩、雾效和光照，HUD 与菜单不受影响。调整任一滑块会开启画面调校；关闭后恢复游戏原始画面。1.00 和色相 0 为原始值；雾效 0 可去除远处街道的薄雾。游戏“系统”中的 PC 画质、PC 特效、PC 色彩菜单及启动器共用这些设置。按住 Ctrl 单击滑块可输入超出滑块范围的数值：亮度、饱和度、雾效最高 5，对比度 0.5–1.5，色相 -180–180，泛光最高 10，阴影距离 0.25–8。"},
++    {"Bloodborne - Graphics  (Insert / L3+R3)###bbport_settings", "血源诅咒 — 图形设置（Insert / L3+R3）###bbport_settings"},
++    {"%.0f FPS  (%.1f ms)", "%.0f FPS  (%.1f ms)"},
++    {"Temporal upscaler", "时域超分辨率"},
++    {"TAA (native anti-aliasing)", "TAA（原生分辨率抗锯齿）"},
++    {"Upscaler", "超分辨率算法"},
++    {"— not supported by this GPU", "— 当前显卡不支持"},
++    {"— in development", "— 开发中"},
++    {"FSR 4.1.1 in INT8 mode: the model from AMD's 4.1.1 DLL, reproduced in Vulkan (output matches the DLL). One model for Native through Performance and another for Ultra Performance. Assets: tools/fsr4cap/build_assets.sh (requires the DLL and Proton).", "FSR 4.1.1（INT8）：在 Vulkan 中复现 AMD 4.1.1 DLL 的模型，输出结果与 DLL 一致。原生抗锯齿到性能档共用一个模型，超高性能档使用另一个模型。资源生成脚本：tools/fsr4cap/build_assets.sh，需要 DLL 和 Proton。"},
++    {"FSR 4 in INT8 mode (v07 model from AMD FidelityFX SDK sources). Higher quality than FSR 3.1, but the pass is more demanding. Changing the preset rebuilds the model (a brief pause). Assets: tools/fetch_fsr4_assets.sh.", "FSR 4（INT8）：使用 AMD FidelityFX SDK 源码中的 v07 模型。画质优于 FSR 3.1，但 GPU 开销更高。切换档位会重建模型，可能短暂停顿。资源脚本：tools/fetch_fsr4_assets.sh。"},
++    {"FSR 4: auto exposure", "FSR 4：自动曝光"},
++    {"FSR 4: invert jitter sign", "FSR 4：反转抖动方向"},
++    {"For diagnosing ghosting: the FSR 4 network normalizes color by exposure and uses it to decide when to discard previous frames. Changes apply immediately, without a restart.", "用于排查拖影：FSR 4 网络按曝光归一化颜色，并据此决定何时丢弃历史帧。修改即时生效，无需重启。"},
++    {"Preset", "质量档位"},
++    {"%s (x%.1f, render %dx%d)", "%s（x%.1f，渲染 %dx%d）"},
++    {"Character motion vectors", "角色运动矢量"},
++    {"Accurate vectors for animated objects: clothing and weapons break up less during movement. The static scene does not get an additional pass. Changes apply after restarting the game.", "为动画物体生成准确的运动矢量，减少移动时衣物和武器的画面破碎。静态场景不会增加额外绘制通道。需重启游戏后生效。"},
++    {"Show motion vectors (debug)", "显示运动矢量（调试）"},
++    {"Red/green: horizontal/vertical motion (8 pixels = full brightness). Blue: the pixel received an accurate object vector, not just camera motion. The upscaler treats a moving object with no blue or red/green as stationary, causing trails.", "红色、绿色分别表示水平、垂直运动，8 像素对应最高亮度。蓝色表示该像素具有准确的物体运动矢量，而非只有镜头运动矢量。移动物体若既没有蓝色也没有红绿色信息，会被超分辨率算法视为静止，产生拖影。"},
++    {"Output resolution", "输出分辨率"},
++    {"Size of the final frame and UI. The preset sets the scene size relative to the output: 4K Performance = 1920x1080. Applies after restarting the game.", "最终画面及界面的尺寸。质量档位决定场景相对输出的渲染分辨率，例如 4K 输出的性能档为 1920x1080。需重启游戏后生效。"},
++    {"The final frame and UI size changes at the next frame boundary. The preset sets the scene size relative to the output: 4K Performance = 1920x1080. Changing the size resets FSR history and may cause a brief pause.", "最终画面和界面尺寸会在下一帧边界切换。质量档位决定场景相对输出的渲染分辨率，例如 4K 输出的性能档为 1920x1080。切换尺寸会重置 FSR 历史数据，可能短暂停顿。"},
++    {"Auto (based on GPU)", "自动（根据显卡）"},
++    {"Off (faster)", "关闭（速度更快）"},
++    {"On", "开启"},
++    {"Live resolution changes", "实时切换分辨率"},
++    {"On: output resolution and preset change without restarting, but game post-processing stays at 1080p, which is noticeably slower on Steam Deck and older GPUs. Off: everything renders at the preset resolution, and changes require a restart. Auto enables this on powerful discrete GPUs. Applies after restarting the game.", "开启：可直接切换输出分辨率和质量档位，但游戏后处理固定在 1080p，在 Steam Deck 和较旧显卡上明显更慢。关闭：全部按档位分辨率渲染，修改后需重启。自动：在性能较强的独立显卡上开启。此开关需重启游戏后生效。"},
++    {"Game effects (restart required)", "游戏特效（需重启游戏）"},
++    {"Highest (-2)", "最高（-2）"},
++    {"Game default", "游戏默认"},
++    {"Lower (1)", "较低（1）"},
++    {"Lowest (2)", "最低（2）"},
++    {"Model detail", "模型细节"},
++    {"Effects are enabled and disabled by game patches at startup (patches/Bloodborne.xml). Motion blur and shadows from dynamic lights place a significant load on the GPU.", "特效通过启动时的游戏补丁启用或关闭（patches/Bloodborne.xml）。运动模糊和动态光源阴影会显著增加显卡负载。"},
++    {"Free camera: hold Cross and press L3 (keyboard: Space + Z). Debug menu: left touchpad / Tab. Requires DbgFont14h.ccm and DbgFont14h.tpf in dvdroot_ps4/font from Nexus mod #253. Right touchpad: Backspace.", "自由镜头：按住 × 键再按 L3，键盘为 Space + Z。调试菜单：触摸板左侧或 Tab。需要 Nexus 模组 #253 提供的 DbgFont14h.ccm 和 DbgFont14h.tpf，放入 dvdroot_ps4/font。触摸板右侧对应 Backspace。"},
++    {"Changes apply after restarting the game", "修改需重启游戏后生效"},
++    {"Apply and restart game", "应用并重启游戏"},
++    {"Cheats", "修改器"},
++    {"Blood Vials", "采血瓶"},
++    {"Quicksilver Bullets", "水银子弹"},
++    {"Changes apply live. Infinite: kept full at the normal carry limit, even from none. Custom: the count is refilled to the amount and never lowered. Off restores the game's item data and keeps the counts you have. While a cheat is on, the counts it gives are saved with your character. Do not play online with cheats on.", "修改即时生效。无限：保持正常携带上限，即使原本没有该物品也会补满。自定义：补足至设定数量，已有数量更高时不减少。关闭：恢复物品原始数据并保留当前数量。修改器提供的物品数量会随角色存档保存。请勿开启修改器进行联机游戏。"},
++    {"Infinite stamina", "无限精力"},
++    {"Your stamina stays full (enemies are not affected). Off: nothing to restore.", "精力始终保持全满，不影响敌人。关闭后停止生效。"},
++    {"Stealth", "隐身"},
++    {"Enemies neither see nor hear you: the game's debug flags Player Hide and Player Silence. Off puts the flags back as they were.", "敌人无法看见或听见你，使用游戏的 Player Hide 和 Player Silence 调试标记。关闭后恢复原始标记。"},
++    {"Firearm range", "枪械射程"},
++    {"Bullets of the pistols, rifles, blunderbusses, cannons, Gatling Gun and the trick weapons' guns fly farther. Not Rosmarinus, the Flamesprayer, arcane or hunter tools. Off restores the game's bullet data.", "延长手枪、步枪、散弹枪、加农炮、加特林机枪及变形武器枪械的子弹射程。不影响迷迭香、火焰喷射器、秘法或猎人工具。关闭后恢复原始子弹数据。"},
++    {"Keep Blood Echoes on death", "死亡不掉落血之回响"},
++    {"Dying keeps your Blood Echoes; the bloodstain holds none. Off restores the game's code. Echoes you kept stay in your save.", "死亡时保留血之回响，血迹中不会留下回响。关闭后恢复游戏原始代码，已保留的回响仍在存档中。"},
++    {"x1 (off)", "x1（关闭）"},
++    {"Blood Echo multiplier", "血之回响获取倍率"},
++    {"Blood Echoes from enemies and bosses times this. An enemy already loaded may give the normal amount until the area loads again. x1 restores the game's data; echoes gained stay in your save.", "将击败敌人和首领获得的血之回响乘以此倍率。已经加载的敌人可能仍掉落正常数量，重新加载区域后生效。x1 恢复原始数据；已经获得的回响会保留在存档中。"},
++    {"No weapon wear", "武器耐久不减"},
++    {"Equipped weapons are kept at full durability. Off stops it; durability is saved as it is.", "已装备武器保持满耐久。关闭后停止生效，当前耐久度照常保存。"},
++    {"Infinite consumables", "消耗品无限"},
++    {"Molotovs, knives, pebbles, oil urns, antidotes, sedatives, elixirs, papers, Numbing Mist, Shining Coins and similar tools are not used up. Not Blood Vials or Quicksilver Bullets (above), key items, materials, or Insight and Blood Echo items. Off restores the item data.", "燃烧瓶、飞刀、石块、油壶、解毒药、镇静剂、药剂、附魔纸、麻痹雾、闪光硬币等工具不会耗尽。不包括上方的采血瓶和水银子弹，也不包括关键道具、材料、灵视及血之回响类道具。关闭后恢复原始物品数据。"},
++    {"Other", "其他"},
++    {"FPS counter in corner", "显示角落帧率统计"},
++    {"Frame rate", "帧率"},
++    {"Frame time", "帧时间"},
++    {"CPU usage", "CPU 占用率"},
++    {"GPU usage", "GPU 占用率"},
++    {"Hide mouse cursor", "隐藏鼠标指针"},
++    {"Hidden 2 seconds after the mouse stops moving; moving it brings it back.", "鼠标停止移动 2 秒后隐藏，移动鼠标即可重新显示。"},
++    {"Close", "关闭"},
++    {"Press again to quit", "再次点击退出"},
++    {"Quit game", "退出游戏"},
++    {"Settings are saved to bbport.ini", "设置保存至 bbport.ini"},
++    {"Chromatic aberration", "色差"},
++    {"Depth of field (DoF)", "景深（DoF）"},
++    {"Motion blur", "运动模糊"},
++    {"Ambient occlusion (SSAO)", "环境光遮蔽（SSAO）"},
++    {"Game's own anti-aliasing", "游戏自带抗锯齿"},
++    {"Shadows from dynamic lights", "动态光源阴影"},
++    {"Screen-space reflections (not in original game)", "屏幕空间反射（原作无此特效）"},
++    {"Language", "菜单语言"},
++    {"Bloom", "泛光"},
++    {"Upscaler unavailable: %s", "超分辨率不可用：%s"},
++    {"The mode selected above is active. You can select it again to retry.", "上方所选模式已启用，可再次选择以重试。"},
++    {"Display (auto)", "显示器分辨率（自动）"},
++    {"PC Camera", "PC 镜头"},
++    {"Enable PC Camera in the launcher before starting; changes here are live.", "请在启动前于启动器开启 PC 镜头；此处调整即时生效。"},
++    {"Camera FOV scale", "视野倍率"},
++    {"Camera distance scale", "镜头距离倍率"},
++    {"Camera height scale", "镜头高度倍率"},
++    {"Native AA", "原生抗锯齿"},
++    {"Quality", "质量"},
++    {"Balanced", "均衡"},
++    {"Performance", "性能"},
++    {"Ultra Performance", "超高性能"},
++    {"Skip startup intros", "跳过开场动画"},
++    {"Free camera (Cross + L3)", "自由镜头（× + L3）"},
++    {"Debug menu (requires font files)", "调试菜单（需额外字体文件）"},
++    {"Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel", "键盘：输入文字，Backspace 删除，Enter 确认，Esc 取消"},
++    {"the engine's executable was not verified", "引擎可执行文件尚未通过校验"},
++    {"engine code differs from the verified 1.09 image", "游戏代码与已验证的 1.09 版不一致"},
++    {"EquipParamGoods not found or its rows are not 0x6c bytes", "未找到物品参数表，或记录长度不是 0x6c 字节"},
++    {"goods row missing", "缺少物品记录"},
++    {"goods row differs from the game's own lookup", "物品记录与游戏内部查找结果不一致"},
++    {"goods row maxNum implausible", "物品数量上限异常"},
++    {"Blood Vial row is not consumable", "采血瓶记录未标记为消耗品"},
++    {"a param byte changed outside the cheat", "参数被其他功能改写"},
++    {"carry cap implausible", "携带上限异常"},
++    {"inventory not readable", "无法读取物品栏"},
++    {"refill had no effect", "补充物品未生效"},
++    {"BehaviorParam_PC not found or its rows are not 0x20 bytes", "未找到玩家行为参数表，或记录长度不是 0x20 字节"},
++    {"Bullet not found or its rows are not 0xa0 bytes", "未找到子弹参数表，或记录长度不是 0xa0 字节"},
++    {"a firearm's behaviour rows are missing", "缺少枪械行为记录"},
++    {"a firearm bullet's life, range or speed is implausible", "枪械子弹的存在时间、射程或速度异常"},
++    {"unexpected number of firearm bullet rows", "枪械子弹记录数量异常"},
++    {"an enemy's Blood Echoes are implausible", "敌人的血之回响数值异常"},
++    {"too few enemies give Blood Echoes", "提供血之回响的敌人记录过少"},
++    {"a consumable's goods row is missing", "缺少消耗品记录"},
++    {"a consumable's goods row is not a stackable consumable", "物品记录未标记为可堆叠的消耗品"},
++    {"a debug flag holds an unexpected value", "调试标记的数值异常"},
++    {"the game code changed outside the cheat", "游戏代码被其他功能改写"},
++    {"a byte changed outside the cheat", "数据被其他功能改写"},
++    {"EquipParamWeapon not found or its rows are not 0x13c bytes", "未找到武器参数表，或记录长度不是 0x13c 字节"},
++    {"equipment not readable", "无法读取装备数据"},
++    {"DLSS needs an NVIDIA RTX GPU, its driver's NGX and nvngx_dlss; using FSR 3.1", "DLSS 需要 NVIDIA RTX 显卡、驱动中的 NGX 和 nvngx_dlss，现已回退至 FSR 3.1"},
++    {"FSR 4.1.1 needs its fsr4_411 files and a GPU that runs its shaders; using FSR 4", "FSR 4.1.1 需要 fsr4_411 资源及兼容其着色器的显卡，现已回退至 FSR 4"},
++    {"GPU does not support the selected FSR 4 shaders; using FSR 3.1", "显卡不支持所选 FSR 4 着色器，现已回退至 FSR 3.1"},
++    {"TAA anti-aliases the scene at the output resolution, without an FSR model or upscaling. The saved preset returns when an upscaler is selected.", "TAA 在输出分辨率下进行场景抗锯齿，不使用 FSR 模型或超分辨率。重新选择超分辨率算法后，会恢复已保存的质量档位。"},
++    {"Active scene render: %d x %d", "当前场景渲染：%d x %d"},
++    {"Preset at startup: %s", "启动时质量档位：%s"},
++    {"With an output other than 1080p the whole game renders at the preset resolution (patched at startup): fastest on the Steam Deck and weaker GPUs. Preset or output changes apply after a restart. \"Live resolution changes\" below allows changing without a restart (post-processing then stays at 1080p, slower).", "输出不是 1080p 时，整个游戏按质量档位对应的分辨率渲染，在启动时应用补丁；这在 Steam Deck 和性能较弱的显卡上最快。修改质量档位或输出分辨率需重启游戏。开启下方“实时切换分辨率”可免重启切换，但后处理会固定在 1080p，速度较慢。"},
++    {"BB_RENDER_RES fixes the scene size at startup. Remove this explicit variable to change resolution and presets without restarting the game.", "BB_RENDER_RES 会在启动时固定场景分辨率。移除此环境变量后，才可免重启切换分辨率和质量档位。"},
++    {"Native AA: the upscaler works as anti-aliasing. The other presets lower the scene render resolution relative to the output. The UI is drawn at the output resolution. The preset applies from the next frame without restarting the game.", "原生抗锯齿：以超分辨率算法进行抗锯齿。其他质量档位会降低场景渲染分辨率，界面始终按输出分辨率绘制。切换档位从下一帧起生效，无需重启游戏。"},
++    {"Sharpening (RCAS)", "锐化（RCAS）"},
++    {"Sharpness", "锐化强度"},
++    {"Up to 1: the upscaler's own sharpening (RCAS). Above 1 another RCAS pass is added. DLSS has no sharpening of its own: an RCAS pass does all of it. Ctrl+click the slider to type an exact value.", "不超过 1 时使用超分辨率算法自带的 RCAS 锐化；超过 1 会额外增加一次 RCAS 处理。DLSS 不自带锐化，全部由 RCAS 处理。按住 Ctrl 单击滑块可输入精确数值。"},
++    {"Sub-pixel jitter", "亚像素抖动"},
++    {"Each frame the scene shifts by a fraction of a pixel, and the upscaler gathers more detail from several frames. Without it you only get history-based anti-aliasing.", "每帧将场景偏移不足一个像素的距离，让超分辨率算法从多帧中重建更多细节。关闭后只能基于历史帧进行抗锯齿。"},
++    {"Reactive mask", "响应遮罩"},
++    {"Enable mask", "启用遮罩"},
++    {"Marks transparent effects (particles, haze) so the upscaler relies less on past frames. Fewer trails behind effects, but shimmer returns underneath them.", "标记粒子、薄雾等透明特效，减少超分辨率算法对历史帧的依赖。可减轻特效拖影，但特效下方的画面可能重新出现闪烁。"},
++    {"Scale", "缩放系数"},
++    {"Threshold", "阈值"},
++    {"Maximum", "最大值"},
++    {"Show mask (debug)", "显示遮罩（调试）"},
++    {"Frame generation", "帧生成"},
++    {"Frame generation: game at half the refresh rate", "帧生成：游戏帧率为刷新率的一半"},
++    {"Shows an extra frame between the game's own (2x smoother motion). Adds a little input lag. Needs an upscaler; off in menus, movies and with HDR output.", "在游戏的原生帧之间插入额外一帧（运动流畅度提高至 2 倍）。会略增输入延迟。需启用超分辨率；菜单、影片和 HDR 输出时关闭。"},
++    {"Every generated frame reaches the screen evenly (60 + 60 at 120 Hz). Off: the game runs faster, but the screen skips some generated frames.", "使每个生成帧均匀显示（120 Hz 下为 60 + 60 帧）。关闭后游戏运行更快，但屏幕会跳过部分生成帧。"},
++};
++
 +using Table = std::unordered_map<std::string_view, const char*>;
 +
 +template <std::size_t N>
@@ -72653,9 +72840,9 @@ index 0000000..77a227a
 +
 +const char* MenuTranslation(MenuLanguage language, const char* english) {
 +    // Built once (thread-safe static initialization); looked up for every string every frame.
-+    static const std::array<Table, 7> tables = {
++    static const std::array<Table, 8> tables = {
 +        Build(kSpanish), Build(kPortugueseBrazil), Build(kFrench), Build(kGerman),
-+        Build(kItalian), Build(kPolish), Build(kTurkish),
++        Build(kItalian), Build(kPolish), Build(kTurkish), Build(kChinese),
 +    };
 +    std::size_t index = 0;
 +    switch (language) {
@@ -72666,6 +72853,7 @@ index 0000000..77a227a
 +    case MenuLanguage::Italian: index = 4; break;
 +    case MenuLanguage::Polish: index = 5; break;
 +    case MenuLanguage::Turkish: index = 6; break;
++    case MenuLanguage::ChineseSimplified: index = 7; break;
 +    default: return english;
 +    }
 +    const Table& table = tables[index];
@@ -73136,7 +73324,7 @@ index 0000000..279ba77
 +void MaybeReport();
 +} // namespace BbNativeCalls
 diff --git a/gpu/shim/bbport_overlay.cpp b/gpu/shim/bbport_overlay.cpp
-index 83e5538..93227f2 100644
+index 83e5538..41a680b 100644
 --- a/gpu/shim/bbport_overlay.cpp
 +++ b/gpu/shim/bbport_overlay.cpp
 @@ -12,12 +12,16 @@
@@ -73157,7 +73345,26 @@ index 83e5538..93227f2 100644
  #ifdef _WIN32
  // PE/COFF assemblers have no .hidden/.previous: the compiler embeds the file (#embed, a GCC
  // extension in C++).
-@@ -156,10 +160,44 @@ void Checkbox(const char* label, std::atomic<bool>& value) {
+@@ -43,6 +47,18 @@ extern "C" const unsigned char bb_font_ttf[];
+ extern "C" const unsigned char bb_font_ttf_end[];
+ #endif
+
++#ifdef _WIN32
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wpedantic"
++alignas(16) static const unsigned char bb_font_cjk[] = {
++#embed BB_CJK_FONT_PATH
++};
++#pragma GCC diagnostic pop
++#else
++asm(".section .rodata\n.balign 16\n.global bb_font_cjk\nbb_font_cjk:\n.incbin \"" BB_CJK_FONT_PATH "\"\n.global bb_font_cjk_end\nbb_font_cjk_end:\n.previous\n");
++extern "C" const unsigned char bb_font_cjk[], bb_font_cjk_end[];
++#endif
++
+ extern "C" void runtime_restart(void); // bb-probe (probe.c)
+
+ namespace BbOverlay {
+@@ -156,10 +172,44 @@ void Checkbox(const char* label, std::atomic<bool>& value) {
      Store(value, v, changed);
  }
  
@@ -73198,19 +73405,19 @@ index 83e5538..93227f2 100644
 +        }
 +    }
 +    if (const char* why = BbEngine::Cheats::Unavailable(which)) {
-+        ImGui::TextDisabled("%s: %s", BbSettings::MenuText("Unavailable", "Недоступно"), why);
++        ImGui::TextDisabled("%s: %s", BbSettings::MenuText("Unavailable", "Недоступно"), BbSettings::MenuText(why, why));
 +    }
 +    ImGui::PopID();
  }
  
  void Hint(const char* text) {
-@@ -173,6 +211,208 @@ void Hint(const char* text) {
+@@ -173,6 +223,208 @@ void Hint(const char* text) {
      }
  }
  
 +void CheatUnavailable(BbEngine::Cheats::Which which) {
 +    if (const char* why = BbEngine::Cheats::Unavailable(which)) {
-+        ImGui::TextDisabled("%s: %s", BbSettings::MenuText("Unavailable", "Недоступно"), why);
++        ImGui::TextDisabled("%s: %s", BbSettings::MenuText("Unavailable", "Недоступно"), BbSettings::MenuText(why, why));
 +    }
 +}
 +
@@ -73375,7 +73582,7 @@ index 83e5538..93227f2 100644
 +    moved |= Slider(BbSettings::MenuText("Saturation", "Насыщенность"), s.graphics_saturation, 0.0f, 3.0f);
 +    moved |= Slider(BbSettings::MenuText("Hue", "Оттенок"), s.graphics_hue, -180.0f, 180.0f, "%.0f");
 +    moved |= Slider(BbSettings::MenuText("Fog", "Туман"), s.graphics_fog, 0.0f, 3.0f);
-+    moved |= Slider("Bloom", s.graphics_bloom, 0.0f, 3.0f);
++    moved |= Slider(BbSettings::MenuText("Bloom", "Bloom"), s.graphics_bloom, 0.0f, 3.0f);
 +    Checkbox(BbSettings::MenuText("Vignette", "Виньетка"), s.graphics_vignette);
 +    moved |= vignette != s.graphics_vignette;
 +    moved |= Slider(BbSettings::MenuText("Ambient occlusion strength", "Сила затенения (AO)"), s.graphics_ao_strength,
@@ -73413,7 +73620,7 @@ index 83e5538..93227f2 100644
  void Menu() {
      auto& s = BbSettings::Get();
      const ImGuiViewport* viewport = ImGui::GetMainViewport();
-@@ -185,6 +425,18 @@ void Menu() {
+@@ -185,6 +437,18 @@ void Menu() {
          pos.y = viewport->WorkPos.y +
                  std::clamp(s.menu_y * viewport->WorkSize.y, 0.0f, std::max(viewport->WorkSize.y - margin, 0.0f));
      }
@@ -73432,7 +73639,7 @@ index 83e5538..93227f2 100644
      ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
      ImGui::SetNextWindowSize(ImVec2(620.0f * base_scale, 0.0f), ImGuiCond_Appearing);
      bool keep_open = true;
-@@ -195,6 +447,8 @@ void Menu() {
+@@ -195,6 +459,8 @@ void Menu() {
          ImGui::End();
          return;
      }
@@ -73441,7 +73648,7 @@ index 83e5538..93227f2 100644
      // Moved: remembered (saved with the settings when the menu closes).
      if (!ImGui::IsWindowAppearing() && viewport->WorkSize.x > 0.0f && viewport->WorkSize.y > 0.0f) {
          const ImVec2 at = ImGui::GetWindowPos();
-@@ -206,12 +460,15 @@ void Menu() {
+@@ -206,12 +472,15 @@ void Menu() {
              dirty = true;
          }
      }
@@ -73452,17 +73659,29 @@ index 83e5538..93227f2 100644
 +    // Always readable, whatever language the rest of the menu is in: each language by its own
 +    // name, in MenuLanguage order.
 +    static const char* languages[] = {"English",  "Русский",  "Español", "Português (Brasil)",
-+                                      "Français", "Deutsch",  "Italiano", "Polski", "Türkçe"};
++                                      "Français", "Deutsch",  "Italiano", "Polski", "Türkçe", "简体中文"};
 +    static_assert(std::size(languages) == BbSettings::MenuLanguageCount);
 +    int language = int(s.menu_language.load());
-+    if (ImGui::Combo("Language", &language, languages, BbSettings::MenuLanguageCount)) {
++    if (ImGui::Combo(BbSettings::MenuText("Language", "Language"), &language, languages, BbSettings::MenuLanguageCount)) {
          s.menu_language =
 -            language == 1 ? BbSettings::MenuLanguage::Russian : BbSettings::MenuLanguage::English;
 +            BbSettings::MenuLanguage(std::clamp(language, 0, BbSettings::MenuLanguageCount - 1));
          BbSettings::Save();
      }
      ImGui::Text(BbSettings::MenuText("%.0f FPS  (%.1f ms)", "%.0f FPS  (%.1f мс)"),
-@@ -286,6 +543,29 @@ void Menu() {
+@@ -250,9 +519,9 @@ void Menu() {
+     }
+     if (const char* problem = s.fsr4_problem.load()) {
+         ImGui::PushTextWrapPos();
+-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "Upscaler unavailable: %s", problem);
++        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), BbSettings::MenuText("Upscaler unavailable: %s", "Upscaler unavailable: %s"), BbSettings::MenuText(problem, problem));
+         if (!BbSettings::IsFsr4(s.upscaler))
+-            ImGui::TextUnformatted("The mode selected above is active. You can select it again to retry.");
++            ImGui::TextUnformatted(BbSettings::MenuText("The mode selected above is active. You can select it again to retry.", "The mode selected above is active. You can select it again to retry."));
+         ImGui::PopTextWrapPos();
+     }
+     if (BbSettings::IsFsr4(s.upscaler)) {
+@@ -286,13 +555,36 @@ void Menu() {
              "Проверка при гостинге: сеть FSR 4 нормирует цвет по экспозиции и по ней решает, "
              "когда отбросить прошлые кадры. Меняются сразу, без перезапуска."));
      }
@@ -73492,26 +73711,105 @@ index 83e5538..93227f2 100644
      const bool upscaler_on = s.upscaler != BbSettings::UpscalerOff;
      const bool taa = s.upscaler == BbSettings::UpscalerTaa;
      ImGui::BeginDisabled(!upscaler_on);
-@@ -303,8 +583,8 @@ void Menu() {
+     ImGui::BeginDisabled(taa);
+     int preset = taa ? BbSettings::NativeAA : s.preset.load();
+     char preset_label[64];
+-    std::snprintf(preset_label, sizeof(preset_label), "%s (x%.1f)", BbSettings::PresetName(preset),
++    std::snprintf(preset_label, sizeof(preset_label), "%s (x%.1f)", BbSettings::MenuText(BbSettings::PresetName(preset), BbSettings::PresetName(preset)),
+                   BbSettings::PresetScale(preset));
+     if (ImGui::BeginCombo(BbSettings::MenuText("Preset", "Пресет"), preset_label)) {
+         for (int i = 0; i < BbSettings::PresetCount; ++i) {
+@@ -302,9 +594,9 @@ void Menu() {
+             std::snprintf(
                  label, sizeof(label),
                  BbSettings::MenuText("%s (x%.1f, render %dx%d)", "%s (x%.1f, рендер %dx%d)"),
-                 BbSettings::PresetName(i), scale,
+-                BbSettings::PresetName(i), scale,
 -                int(std::lround(BbSettings::OutputWidths[output] / scale / 2) * 2),
 -                int(std::lround(BbSettings::OutputHeights[output] / scale / 2) * 2));
++                BbSettings::MenuText(BbSettings::PresetName(i), BbSettings::PresetName(i)), scale,
 +                int(std::lround(BbSettings::OutputWidth(output) / scale / 4) * 4),
 +                int(std::lround(BbSettings::OutputHeight(output) / scale / 4) * 4));
              if (ImGui::Selectable(label, i == preset)) {
                  Store(s.preset, i, true);
              }
-@@ -388,9 +668,13 @@ void Menu() {
+@@ -313,50 +605,39 @@ void Menu() {
+     }
+     ImGui::EndDisabled();
+     if (taa) {
+-        ImGui::TextWrapped("TAA anti-aliases the scene at the output resolution, without an FSR "
+-                           "model or upscaling. The saved preset returns when an upscaler is selected.");
++        ImGui::TextWrapped("%s", BbSettings::MenuText("TAA anti-aliases the scene at the output resolution, without an FSR model or upscaling. The saved preset returns when an upscaler is selected.", "TAA anti-aliases the scene at the output resolution, without an FSR model or upscaling. The saved preset returns when an upscaler is selected."));
+     }
+-    ImGui::Text("Active scene render: %d x %d", s.active_render_width.load(),
++    ImGui::Text(BbSettings::MenuText("Active scene render: %d x %d", "Active scene render: %d x %d"), s.active_render_width.load(),
+                 s.active_render_height.load());
+     if (BbSettings::FixedRenderSession()) {
+-        ImGui::Text("Preset at startup: %s", BbSettings::PresetName(s.startup_preset));
++        ImGui::Text(BbSettings::MenuText("Preset at startup: %s", "Preset at startup: %s"), BbSettings::MenuText(BbSettings::PresetName(s.startup_preset), BbSettings::PresetName(s.startup_preset)));
+         if (const char* automatic = std::getenv("BB_AUTO_RENDER_RES");
+             automatic && automatic[0] == '1') {
+-            Hint("With an output other than 1080p the whole game renders at the preset resolution "
+-                 "(patched at startup): fastest on the Steam Deck and weaker GPUs. Preset or output "
+-                 "changes apply after a restart. \"Live resolution changes\" below allows changing "
+-                 "without a restart (post-processing then stays at 1080p, slower).");
++            Hint(BbSettings::MenuText("With an output other than 1080p the whole game renders at the preset resolution (patched at startup): fastest on the Steam Deck and weaker GPUs. Preset or output changes apply after a restart. \"Live resolution changes\" below allows changing without a restart (post-processing then stays at 1080p, slower).", "With an output other than 1080p the whole game renders at the preset resolution (patched at startup): fastest on the Steam Deck and weaker GPUs. Preset or output changes apply after a restart. \"Live resolution changes\" below allows changing without a restart (post-processing then stays at 1080p, slower)."));
+         } else {
+-            Hint("BB_RENDER_RES fixes the scene size at startup. Remove this explicit variable "
+-                 "to change resolution and presets without restarting the game.");
++            Hint(BbSettings::MenuText("BB_RENDER_RES fixes the scene size at startup. Remove this explicit variable to change resolution and presets without restarting the game.", "BB_RENDER_RES fixes the scene size at startup. Remove this explicit variable to change resolution and presets without restarting the game."));
+         }
+     } else {
+-        Hint("Native AA: the upscaler works as anti-aliasing. The other presets lower the scene "
+-             "render resolution relative to the output. The UI is drawn at the output resolution. "
+-             "The preset applies from the next frame without restarting the game.");
++        Hint(BbSettings::MenuText("Native AA: the upscaler works as anti-aliasing. The other presets lower the scene render resolution relative to the output. The UI is drawn at the output resolution. The preset applies from the next frame without restarting the game.", "Native AA: the upscaler works as anti-aliasing. The other presets lower the scene render resolution relative to the output. The UI is drawn at the output resolution. The preset applies from the next frame without restarting the game."));
+     }
+-    Checkbox("Sharpening (RCAS)", s.sharpen);
++    Checkbox(BbSettings::MenuText("Sharpening (RCAS)", "Sharpening (RCAS)"), s.sharpen);
+     ImGui::BeginDisabled(!s.sharpen);
+-    Slider("Sharpness", s.sharpness, 0.0f, 2.0f);
+-    Hint("Up to 1: the upscaler's own sharpening (RCAS). Above 1 another RCAS pass is added. "
+-         "DLSS has no sharpening of its own: an RCAS pass does all of it. "
+-         "Ctrl+click the slider to type an exact value.");
++    Slider(BbSettings::MenuText("Sharpness", "Sharpness"), s.sharpness, 0.0f, 2.0f);
++    Hint(BbSettings::MenuText("Up to 1: the upscaler's own sharpening (RCAS). Above 1 another RCAS pass is added. DLSS has no sharpening of its own: an RCAS pass does all of it. Ctrl+click the slider to type an exact value.", "Up to 1: the upscaler's own sharpening (RCAS). Above 1 another RCAS pass is added. DLSS has no sharpening of its own: an RCAS pass does all of it. Ctrl+click the slider to type an exact value."));
+     ImGui::EndDisabled();
+-    Checkbox("Sub-pixel jitter", s.jitter);
+-    Hint("Each frame the scene shifts by a fraction of a pixel, and the upscaler gathers more "
+-         "detail from several frames. Without it you only get history-based anti-aliasing.");
++    Checkbox(BbSettings::MenuText("Sub-pixel jitter", "Sub-pixel jitter"), s.jitter);
++    Hint(BbSettings::MenuText("Each frame the scene shifts by a fraction of a pixel, and the upscaler gathers more detail from several frames. Without it you only get history-based anti-aliasing.", "Each frame the scene shifts by a fraction of a pixel, and the upscaler gathers more detail from several frames. Without it you only get history-based anti-aliasing."));
+
+-    ImGui::SeparatorText("Reactive mask");
++    ImGui::SeparatorText(BbSettings::MenuText("Reactive mask", "Reactive mask"));
+     ImGui::BeginDisabled(taa);
+-    Checkbox("Enable mask", s.reactive);
+-    Hint("Marks transparent effects (particles, haze) so the upscaler relies less on past "
+-         "frames. Fewer trails behind effects, but shimmer returns underneath them.");
++    Checkbox(BbSettings::MenuText("Enable mask", "Enable mask"), s.reactive);
++    Hint(BbSettings::MenuText("Marks transparent effects (particles, haze) so the upscaler relies less on past frames. Fewer trails behind effects, but shimmer returns underneath them.", "Marks transparent effects (particles, haze) so the upscaler relies less on past frames. Fewer trails behind effects, but shimmer returns underneath them."));
+     ImGui::BeginDisabled(!s.reactive);
+-    Slider("Scale", s.reactive_scale, 0.0f, 4.0f);
+-    Slider("Threshold", s.reactive_threshold, 0.0f, 1.0f);
+-    Slider("Maximum", s.reactive_max, 0.0f, 1.0f);
++    Slider(BbSettings::MenuText("Scale", "Scale"), s.reactive_scale, 0.0f, 4.0f);
++    Slider(BbSettings::MenuText("Threshold", "Threshold"), s.reactive_threshold, 0.0f, 1.0f);
++    Slider(BbSettings::MenuText("Maximum", "Maximum"), s.reactive_max, 0.0f, 1.0f);
+     bool show_mask = s.debug_view == BbSettings::DebugReactive;
+-    if (ImGui::Checkbox("Show mask (debug)", &show_mask)) {
++    if (ImGui::Checkbox(BbSettings::MenuText("Show mask (debug)", "Show mask (debug)"), &show_mask)) {
+         s.debug_view = show_mask ? BbSettings::DebugReactive : BbSettings::DebugNone;
+     }
+     ImGui::EndDisabled();
+@@ -388,9 +669,13 @@ void Menu() {
      ImGui::EndDisabled(); // upscaler off
  
      ImGui::SeparatorText(BbSettings::MenuText("Output resolution", "Разрешение вывода"));
 -    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160",
 -        "2560 x 1080", "3440 x 1440", "3840 x 1600", "3840 x 1080", "5120 x 1440", "5120 x 2160"};
-+    static const char* outputs[] = {"1280 x 720", "1600 x 900", "1920 x 1080", "2560 x 1440", "3840 x 2160",
++    const char* outputs[] = {"1280 x 720", "1600 x 900", "1920 x 1080", "2560 x 1440", "3840 x 2160",
 +        "2560 x 1080", "3440 x 1440", "3840 x 1600", "3840 x 1080", "5120 x 1440", "5120 x 2160",
-+        "7680 x 2160", "Display (auto)", "Custom"};
++        "7680 x 2160", BbSettings::MenuText("Display (auto)", "Display (auto)"), "Custom"};
      static_assert(std::size(outputs)==BbSettings::OutputCount);
 +    static char custom[48];
 +    std::snprintf(custom, sizeof custom, "Custom (%d x %d)", s.custom_output_w, s.custom_output_h);
@@ -73519,7 +73817,7 @@ index 83e5538..93227f2 100644
      int output = s.output_res;
      if (ImGui::BeginCombo(BbSettings::MenuText("Output resolution", "Разрешение вывода"),
                            outputs[output])) {
-@@ -439,6 +723,8 @@ void Menu() {
+@@ -439,6 +724,8 @@ void Menu() {
          "остаётся в 1080p — на Steam Deck и старых видеокартах это заметно медленнее. "
          "Выключена: всё рисуется в разрешении пресета, смена — через перезапуск. Авто включает "
          "её на мощных дискретных видеокартах. Применяется после перезапуска игры."));
@@ -73528,7 +73826,7 @@ index 83e5538..93227f2 100644
      ImGui::SeparatorText(BbSettings::MenuText("Game effects (restart required)",
                                                "Эффекты игры (после перезапуска)"));
      const char* lods[] = {BbSettings::MenuText("Highest (-2)", "Максимальная (-2)"),
-@@ -478,7 +764,8 @@ void Menu() {
+@@ -478,7 +765,8 @@ void Menu() {
  
      bool restart =
          s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
@@ -73538,10 +73836,21 @@ index 83e5538..93227f2 100644
      for (int e = 0; e < BbSettings::EffectCount; ++e) {
          restart |= s.effects[e] != s.startup_effects[e];
      }
-@@ -499,13 +786,123 @@ void Menu() {
-     Slider("Camera distance scale", s.camera_distance_scale, 0.5f, 1.5f);
-     Slider("Camera height scale", s.camera_height_scale, 0.5f, 1.5f);
+@@ -493,19 +781,129 @@ void Menu() {
+         }
+     }
  
+-    ImGui::SeparatorText("PC Camera");
+-    ImGui::TextDisabled("Enable PC Camera in the launcher before starting; changes here are live.");
+-    Slider("Camera FOV scale", s.camera_fov_scale, 1.0f, 1.5f);
+-    Slider("Camera distance scale", s.camera_distance_scale, 0.5f, 1.5f);
+-    Slider("Camera height scale", s.camera_height_scale, 0.5f, 1.5f);
++    ImGui::SeparatorText(BbSettings::MenuText("PC Camera", "PC Camera"));
++    ImGui::TextDisabled("%s", BbSettings::MenuText("Enable PC Camera in the launcher before starting; changes here are live.", "Enable PC Camera in the launcher before starting; changes here are live."));
++    Slider(BbSettings::MenuText("Camera FOV scale", "Camera FOV scale"), s.camera_fov_scale, 1.0f, 1.5f);
++    Slider(BbSettings::MenuText("Camera distance scale", "Camera distance scale"), s.camera_distance_scale, 0.5f, 1.5f);
++    Slider(BbSettings::MenuText("Camera height scale", "Camera height scale"), s.camera_height_scale, 0.5f, 1.5f);
++
 +    ImGui::SeparatorText(BbSettings::MenuText("Cheats", "Читы"));
 +    Cheat(BbSettings::MenuText("Blood Vials", "Флаконы крови"), s.cheat_vials, BbEngine::Cheats::Vials,
 +          custom_vials);
@@ -73616,7 +73925,7 @@ index 83e5538..93227f2 100644
 +                    "ртутные пули (выше), не ключевые предметы, материалы, предметы озарения и отголосков. Выкл. "
 +                    "возвращает данные предметов."));
 +    CheatStats();
-+
+
      ImGui::SeparatorText(BbSettings::MenuText("Other", "Прочее"));
      Checkbox(BbSettings::MenuText("FPS counter in corner", "Счётчик FPS в углу"), s.show_fps);
 +    if (s.show_fps) {
@@ -73662,7 +73971,7 @@ index 83e5538..93227f2 100644
      ImGui::SameLine();
      ImGui::TextDisabled("%s", BbSettings::MenuText("Settings are saved to bbport.ini",
                                               "Настройки сохраняются в bbport.ini"));
-@@ -516,6 +913,38 @@ void Menu() {
+@@ -516,6 +914,38 @@ void Menu() {
  }
  
  void FpsCounter() {
@@ -73701,7 +74010,7 @@ index 83e5538..93227f2 100644
      const ImGuiViewport* viewport = ImGui::GetMainViewport();
      const float pad = 12.0f * base_scale;
      ImGui::SetNextWindowPos(
-@@ -526,9 +955,7 @@ void FpsCounter() {
+@@ -526,9 +956,7 @@ void FpsCounter() {
                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                       ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                       ImGuiWindowFlags_NoFocusOnAppearing);
@@ -73712,7 +74021,16 @@ index 83e5538..93227f2 100644
      ImGui::End();
  }
  
-@@ -567,6 +994,19 @@ void SetTextPrompt(bool active, const std::string& prompt, const std::string& te
+@@ -552,7 +980,7 @@ void TextPrompt() {
+     ImGui::Separator();
+     ImGui::Text("%s_", text.c_str());
+     ImGui::Separator();
+-    ImGui::TextUnformatted("Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel");
++    ImGui::TextUnformatted(BbSettings::MenuText("Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel", "Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel"));
+     ImGui::End();
+ }
+
+@@ -567,6 +995,19 @@ void SetTextPrompt(bool active, const std::string& prompt, const std::string& te
      prompt_active = active;
  }
  
@@ -73732,7 +74050,7 @@ index 83e5538..93227f2 100644
  void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) {
      std::scoped_lock lock{imgui_mutex};
      if (initialized) {
-@@ -576,6 +1016,7 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count)
+@@ -576,6 +1017,7 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count)
      ImGui::CreateContext();
      ImGuiIO& io = ImGui::GetIO();
      io.IniFilename = nullptr; // window positions are not kept
@@ -73740,7 +74058,7 @@ index 83e5538..93227f2 100644
      io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
      io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
      io.BackendPlatformName = "bbport";
-@@ -587,6 +1028,9 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count)
+@@ -587,10 +1029,23 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count)
      style.GrabRounding = 4.0f;
      style.Colors[ImGuiCol_WindowBg].w = 0.92f;
  
@@ -73750,7 +74068,21 @@ index 83e5538..93227f2 100644
      ImFontConfig font_config;
      font_config.FontDataOwnedByAtlas = false;
      io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_font_ttf),
-@@ -624,7 +1068,9 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count)
+                                    int(bb_font_ttf_end - bb_font_ttf), 18.0f, &font_config);
++    ImFontConfig cjk_config;
++    cjk_config.FontDataOwnedByAtlas = false;
++    cjk_config.MergeMode = true;
++#ifdef _WIN32
++    const int cjk_size = int(sizeof(bb_font_cjk));
++#else
++    const int cjk_size = int(bb_font_cjk_end - bb_font_cjk);
++#endif
++    io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_font_cjk), cjk_size, 18.0f, &cjk_config);
++
+
+     const vk::Instance vk_instance = instance.GetInstance();
+     ImGui_ImplVulkan_LoadFunctions(
+@@ -624,7 +1079,9 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count)
          return;
      }
      initialized = true;
@@ -73761,7 +74093,7 @@ index 83e5538..93227f2 100644
  }
  
  void UpdateTextInput(SDL_Window* window) {
-@@ -654,7 +1100,8 @@ bool HandleEvent(const SDL_Event& event) {
+@@ -654,7 +1111,8 @@ bool HandleEvent(const SDL_Event& event) {
      case SDL_EVENT_KEY_UP: {
          const bool down = event.type == SDL_EVENT_KEY_DOWN;
          if (down && !event.key.repeat &&
@@ -73771,7 +74103,7 @@ index 83e5538..93227f2 100644
              SetOpen(event.key.key == SDLK_INSERT ? !is_open : false);
              return true;
          }
-@@ -678,7 +1125,7 @@ bool HandleEvent(const SDL_Event& event) {
+@@ -678,7 +1136,7 @@ bool HandleEvent(const SDL_Event& event) {
          } else if (button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) {
              r3_down = down;
          }
@@ -74453,7 +74785,7 @@ index f88cc52..5563f99 100644
  } // namespace BbSections
  
 diff --git a/gpu/shim/bbport_settings.cpp b/gpu/shim/bbport_settings.cpp
-index cf4fbd8..9181a4a 100644
+index cf4fbd8..87c131d 100644
 --- a/gpu/shim/bbport_settings.cpp
 +++ b/gpu/shim/bbport_settings.cpp
 @@ -6,9 +6,11 @@
@@ -74468,7 +74800,7 @@ index cf4fbd8..9181a4a 100644
  #include <cstdio>
  #include <cmath>
  #include <cstdlib>
-@@ -31,19 +33,73 @@ float Clamp(float v, float lo, float hi) {
+@@ -31,19 +33,77 @@ float Clamp(float v, float lo, float hi) {
      return std::clamp(v, lo, hi);
  }
  
@@ -74519,6 +74851,10 @@ index cf4fbd8..9181a4a 100644
 -        if (value == "en") v.menu_language = MenuLanguage::English;
 -        else if (value == "ru") v.menu_language = MenuLanguage::Russian;
 -        else std::printf("Settings: unknown menu_language '%s' (expected en or ru)\n", value.c_str());
++        if (value == "zh" || value == "zh-CN" || value == "zh_CN") {
++            v.menu_language = MenuLanguage::ChineseSimplified;
++            return;
++        }
 +        bool known = false;
 +        for (int l = 0; l < MenuLanguageCount; ++l) {
 +            if (value == MenuLanguageCodes[l]) {
@@ -74528,7 +74864,7 @@ index cf4fbd8..9181a4a 100644
 +        }
 +        if (!known) {
 +            std::printf("Settings: unknown menu_language '%s' (expected en, ru, es, pt_BR, fr, de, it, pl "
-+                        "or tr)\n",
++                        "or tr, zh_CN)\n",
 +                        value.c_str());
 +        }
      } else if (key == "upscaler") {
@@ -74545,7 +74881,7 @@ index cf4fbd8..9181a4a 100644
      } else if (key == "preset") {
          v.preset = std::clamp(i, 0, PresetCount - 1);
      } else if (key == "sharpen") {
-@@ -63,9 +119,21 @@ void Set(Values& v, const std::string& key, const std::string& value) {
+@@ -63,9 +123,21 @@ void Set(Values& v, const std::string& key, const std::string& value) {
      } else if (key == "reactive_max") {
          v.reactive_max = Clamp(f, 0.0f, 1.0f);
      } else if (key == "debug_view") {
@@ -74568,7 +74904,7 @@ index cf4fbd8..9181a4a 100644
      } else if (key == "menu_pos") {
          float x = -1.0f, y = -1.0f;
          if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
-@@ -91,6 +159,30 @@ void Set(Values& v, const std::string& key, const std::string& value) {
+@@ -91,6 +163,30 @@ void Set(Values& v, const std::string& key, const std::string& value) {
          v.mouse_invert_y=i!=0;
      } else if (key == "mouse_auto_rotation") {
          v.mouse_auto_rotation=i!=0;
@@ -74599,7 +74935,7 @@ index cf4fbd8..9181a4a 100644
      } else if (key == "mouse_sensitivity") {
          v.mouse_sensitivity=std::clamp(i,0,10);
      } else if (key == "camera_controls") {
-@@ -109,22 +201,83 @@ void Set(Values& v, const std::string& key, const std::string& value) {
+@@ -109,22 +205,83 @@ void Set(Values& v, const std::string& key, const std::string& value) {
          v.graphics_controls=i!=0;
      } else if (key == "graphics_vignette") {
          v.graphics_vignette=i!=0;
@@ -74688,7 +75024,7 @@ index cf4fbd8..9181a4a 100644
              if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
                  v.output_res = r;
              }
-@@ -138,15 +291,71 @@ void Set(Values& v, const std::string& key, const std::string& value) {
+@@ -138,15 +295,74 @@ void Set(Values& v, const std::string& key, const std::string& value) {
      }
  }
  
@@ -74699,6 +75035,9 @@ index cf4fbd8..9181a4a 100644
 +        return MenuLanguage::English;
 +    }
 +    const auto lower = [lang](int i) { return char(std::tolower(static_cast<unsigned char>(lang[i]))); };
++    if (lower(0) == 'z' && lower(1) == 'h') {
++        return MenuLanguage::ChineseSimplified;
++    }
 +    if (lower(0) == 'p' && lower(1) == 't') {
 +        return (lang[2] == '_' || lang[2] == '-') && lower(3) == 'b' && lower(4) == 'r'
 +                   ? MenuLanguage::PortugueseBrazil
@@ -74761,7 +75100,7 @@ index cf4fbd8..9181a4a 100644
  }
  
  void Load() {
-@@ -166,9 +375,7 @@ void Load() {
+@@ -166,9 +382,7 @@ void Load() {
                  }
              }
          }
@@ -74772,7 +75111,7 @@ index cf4fbd8..9181a4a 100644
      }
      if (FILE* file = std::fopen(Path(), "r")) {
          char line[256];
-@@ -196,6 +403,10 @@ void Load() {
+@@ -196,6 +410,10 @@ void Load() {
          {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
          {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
          {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
@@ -74783,7 +75122,7 @@ index cf4fbd8..9181a4a 100644
      };
      for (const auto& [env, key] : env_keys) {
          if (const char* value = std::getenv(env)) {
-@@ -211,6 +422,7 @@ void Load() {
+@@ -211,6 +429,7 @@ void Load() {
      v.startup_model_lod = v.model_lod;
      v.startup_output_res = v.output_res;
      v.startup_live_resolution = v.live_resolution;
@@ -74791,7 +75130,7 @@ index cf4fbd8..9181a4a 100644
  }
  
  void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool dlss) {
-@@ -223,6 +435,12 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool dlss) {
+@@ -223,6 +442,12 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool dlss) {
          v.fsr4_problem = "DLSS needs an NVIDIA RTX GPU, its driver's NGX and nvngx_dlss; using FSR 3.1";
          std::printf("Upscaler: dlss unavailable; falling back to FSR 3.1 before the first frame\n");
          v.upscaler = UpscalerFsr3;
@@ -74804,7 +75143,7 @@ index cf4fbd8..9181a4a 100644
      } else if ((requested == UpscalerFsr4 && !v.fsr4_supported) ||
          (requested == UpscalerFsr411 && !v.fsr411_supported)) {
          v.fsr4_problem = "GPU does not support the selected FSR 4 shaders; using FSR 3.1";
-@@ -264,9 +482,11 @@ void Save() {
+@@ -264,9 +489,11 @@ void Save() {
          return std::string(text);
      };
      const auto flag = [](bool value) { return std::string(value ? "1" : "0"); };
@@ -74817,7 +75156,7 @@ index cf4fbd8..9181a4a 100644
      put("sharpen", flag(v.sharpen));
      put("sharpness", fixed(v.sharpness, 2));
      put("jitter", flag(v.jitter));
-@@ -275,8 +495,13 @@ void Save() {
+@@ -275,8 +502,13 @@ void Save() {
      put("reactive_scale", fixed(v.reactive_scale, 2));
      put("reactive_threshold", fixed(v.reactive_threshold, 2));
      put("reactive_max", fixed(v.reactive_max, 2));
@@ -74832,7 +75171,7 @@ index cf4fbd8..9181a4a 100644
      put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
      put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
      // Read by patches.py at start.
-@@ -284,12 +509,23 @@ void Save() {
+@@ -284,12 +516,23 @@ void Save() {
          put(Effects[e].key, flag(v.effects[e]));
      }
      put("fullscreen", flag(v.fullscreen));
@@ -74856,7 +75195,7 @@ index cf4fbd8..9181a4a 100644
      put("camera_controls", flag(v.camera_controls));
      put("widescreen",flag(v.widescreen));
      put("pc_controls",flag(v.pc_controls));
-@@ -299,14 +535,26 @@ void Save() {
+@@ -299,14 +542,26 @@ void Save() {
      put("mouse_invert_y",flag(v.mouse_invert_y));
      put("mouse_auto_rotation",flag(v.mouse_auto_rotation));
      put("mouse_sensitivity",std::to_string(v.mouse_sensitivity.load()));
@@ -74886,7 +75225,7 @@ index cf4fbd8..9181a4a 100644
      put("live_resolution", v.live_resolution < 0 ? "auto" : flag(v.live_resolution != 0));
      if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {
 diff --git a/gpu/shim/bbport_settings.h b/gpu/shim/bbport_settings.h
-index c0e8a94..e56fa67 100644
+index c0e8a94..7b6ed48 100644
 --- a/gpu/shim/bbport_settings.h
 +++ b/gpu/shim/bbport_settings.h
 @@ -20,9 +20,21 @@ inline bool IsFsr4(int upscaler) {
@@ -74903,12 +75242,12 @@ index c0e8a94..e56fa67 100644
 -enum class MenuLanguage { English, Russian };
 +/// The menu's language, in the Language selector's order (bbport_overlay.cpp).
 +enum class MenuLanguage {
-+    English, Russian, Spanish, PortugueseBrazil, French, German, Italian, Polish, Turkish
++    English, Russian, Spanish, PortugueseBrazil, French, German, Italian, Polish, Turkish, ChineseSimplified
 +};
 +/// menu_language in bbport.ini, by MenuLanguage; the launcher's BB_MENU_LANGUAGE uses the same codes.
-+inline constexpr const char* MenuLanguageCodes[] = {"en", "ru", "es", "pt_BR", "fr", "de", "it", "pl", "tr"};
++inline constexpr const char* MenuLanguageCodes[] = {"en", "ru", "es", "pt_BR", "fr", "de", "it", "pl", "tr", "zh_CN"};
 +inline constexpr int MenuLanguageCount = int(sizeof(MenuLanguageCodes) / sizeof(MenuLanguageCodes[0]));
-+static_assert(MenuLanguageCount == int(MenuLanguage::Turkish) + 1);
++static_assert(MenuLanguageCount == int(MenuLanguage::ChineseSimplified) + 1);
  
  /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
  /// menu label, default (the game's own behaviour).

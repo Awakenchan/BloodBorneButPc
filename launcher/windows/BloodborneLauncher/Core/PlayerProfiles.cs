@@ -38,12 +38,12 @@ namespace BloodborneLauncher.Core
         {
             name = name.Trim();
             error = "";
-            if (name.Length == 0) { error = "Enter a name."; return null; }
-            if (name.Length > 32) { error = "Use 32 characters or fewer."; return null; }
-            if (SafeName(name) != name) { error = "Use letters, numbers, spaces, - or _ only."; return null; }
+            if (name.Length == 0) { error = L.T("Enter a name."); return null; }
+            if (name.Length > 32) { error = L.T("Use 32 characters or fewer."); return null; }
+            if (SafeName(name) != name) { error = L.T("Use letters, numbers, spaces, - or _ only."); return null; }
             if (All(s).Any(p => p.Equals(name, StringComparison.OrdinalIgnoreCase) && !p.Equals(renaming, StringComparison.OrdinalIgnoreCase)))
             {
-                error = $"There is already a profile called {name}.";
+                error = L.F($"There is already a profile called {name}.");
                 return null;
             }
             return name;

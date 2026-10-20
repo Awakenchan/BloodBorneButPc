@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <Resource Include="app.ico" />
+    <EmbeddedResource Include="Localization\zh-CN.json" LogicalName="BloodborneLauncher.Localization.zh-CN.json" />
     <Resource Include="lantern-beta.ico" />
     <Resource Include="lantern-stable.ico" />
     <Resource Include="lantern-j3loo.ico" />

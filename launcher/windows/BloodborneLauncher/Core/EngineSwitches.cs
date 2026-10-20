@@ -81,63 +81,63 @@ namespace BloodborneLauncher.Core
             new(env, group, title, hint, SwitchKind.Text, "") { Placeholder = placeholder };
 
         private static Choice[] Auto(string note, params string[] values) =>
-            new[] { new Choice("Auto", "", note) }.Concat(values.Select(v => new Choice(v, v))).ToArray();
+            new[] { new Choice(L.T("Auto"), "", note) }.Concat(values.Select(v => new Choice(v, v))).ToArray();
 
-        private static readonly Choice[] AutoOnOff = { new("Auto", ""), new("On", "1"), new("Off", "0") };
+        private static readonly Choice[] AutoOnOff = { new(L.T("Auto"), ""), new(L.T("On"), "1"), new(L.T("Off"), "0") };
 
         public static readonly IReadOnlyList<EngineSwitch> All = new[]
         {
-            Pick("BB_GPU_ID", Graphics, "Graphics card",
-                "For laptops and PCs with two graphics cards where the game picks the wrong one. Auto takes the faster one", "",
-                new("Auto", ""), new("First", "0"), new("Second", "1")),
-            Pick("BB_ANISO", Graphics, "Texture filtering",
-                "Anisotropic filtering forced on the game's textures: ground and walls seen at an angle stay sharp. Lower " +
-                "values cost a little less GPU time; Game's own leaves the game's filtering as it is", "16",
-                new("16x", "16"), new("8x", "8"), new("4x", "4"), new("2x", "2"), new("Game's own", "0")),
+            Pick("BB_GPU_ID", Graphics, L.T("Graphics card"),
+                L.T("For laptops and PCs with two graphics cards where the game picks the wrong one. Auto takes the faster one"), "",
+                new(L.T("Auto"), ""), new(L.T("First"), "0"), new(L.T("Second"), "1")),
+            Pick("BB_ANISO", Graphics, L.T("Texture filtering"),
+                L.T("Anisotropic filtering forced on the game's textures: ground and walls seen at an angle stay sharp. Lower ") +
+                L.T("values cost a little less GPU time; Game's own leaves the game's filtering as it is"), "16",
+                new("16x", "16"), new("8x", "8"), new("4x", "4"), new("2x", "2"), new(L.T("Game's own"), "0")),
 
-            Pick("BB_PIPELINE_THREADS", Performance, "Shader compile threads",
-                "How many threads compile new shaders in the background. More finish a new area's shaders sooner but take CPU " +
-                "time from the game while they work", "",
-                Auto("A third of the CPU threads, at most 4", "1", "2", "3", "4", "6", "8")),
-            Pick("BB_FILE_PREFETCH", Performance, "Area prefetch (hard disks)",
-                "When the game starts loading a map area, a background thread reads that area's model files into the Windows file " +
-                "cache in big sequential reads, so models and textures stop appearing late in front of you. Auto: on when the game " +
-                "is installed on a hard disk (an SSD does not need it)", "", AutoOnOff),
-            Pick("BB_BACKGROUND_FPS", Performance, "Frame rate in the background",
-                "The frame-rate limit while the game window is in the background or minimized, to save power and heat. Online " +
-                "play is never limited, so co-op and invasions keep their pace", "30",
-                new("10 FPS", "10"), new("15 FPS", "15"), new("30 FPS", "30"), new("60 FPS", "60"), new("No limit", "0")),
-
-
+            Pick("BB_PIPELINE_THREADS", Performance, L.T("Shader compile threads"),
+                L.T("How many threads compile new shaders in the background. More finish a new area's shaders sooner but take CPU ") +
+                L.T("time from the game while they work"), "",
+                Auto(L.T("A third of the CPU threads, at most 4"), "1", "2", "3", "4", "6", "8")),
+            Pick("BB_FILE_PREFETCH", Performance, L.T("Area prefetch (hard disks)"),
+                L.T("When the game starts loading a map area, a background thread reads that area's model files into the Windows file ") +
+                L.T("cache in big sequential reads, so models and textures stop appearing late in front of you. Auto: on when the game ") +
+                L.T("is installed on a hard disk (an SSD does not need it)"), "", AutoOnOff),
+            Pick("BB_BACKGROUND_FPS", Performance, L.T("Frame rate in the background"),
+                L.T("The frame-rate limit while the game window is in the background or minimized, to save power and heat. Online ") +
+                L.T("play is never limited, so co-op and invasions keep their pace"), "30",
+                new("10 FPS", "10"), new("15 FPS", "15"), new("30 FPS", "30"), new("60 FPS", "60"), new(L.T("No limit"), "0")),
 
 
-            Text("BB_GAMEPAD", Input, "Preferred gamepad",
-                "Part of a controller's name (DualSense, Xbox, 8BitDo...) or its SDL GUID: that one is used when several are " +
-                "connected. Empty: the pad you use takes over", "DualSense"),
 
-            Flag("BB_AUDIO", Sound, "Run without sound",
-                "Starts without any sound device (silent). Only for finding out whether a sound driver is what keeps the game " +
-                "from starting or hangs it", onValue: "none"),
 
-            OnUnless0("BB_RESPAWN_DELAY_FIX", Fixes, "No minimum loading time after death",
-                "Skips the game's 12-second minimum loading screen after dying. Off: the original delay"),
-            OnUnless0("BB_SOUND_HACK", Fixes, "Weapon sound save fix",
-                "Sets the flag in the game's save that some weapon and player sounds need (without it they never play), before " +
-                "the game reads the save. Off leaves saves untouched"),
-            Flag("BB_INTEL_TONEMAP_FIX", Fixes, "Intel black tonemap fix",
-                "Adds the Intel Black Tonemap Fix patch: for Intel CPUs where the picture turns black or far too dark " +
-                "(the DLC areas most)"),
-            Flag("BB_SKIP_GAME_CHECK", Fixes, "Skip the game files check",
-                "Starts with game files that are not the supported version (base game plus the 1.09 update). Other editions " +
-                "may crash, and the engine's patches and PC menus may not apply"),
+            Text("BB_GAMEPAD", Input, L.T("Preferred gamepad"),
+                L.T("Part of a controller's name (DualSense, Xbox, 8BitDo...) or its SDL GUID: that one is used when several are ") +
+                L.T("connected. Empty: the pad you use takes over"), L.T("DualSense")),
+
+            Flag("BB_AUDIO", Sound, L.T("Run without sound"),
+                L.T("Starts without any sound device (silent). Only for finding out whether a sound driver is what keeps the game ") +
+                L.T("from starting or hangs it"), onValue: "none"),
+
+            OnUnless0("BB_RESPAWN_DELAY_FIX", Fixes, L.T("No minimum loading time after death"),
+                L.T("Skips the game's 12-second minimum loading screen after dying. Off: the original delay")),
+            OnUnless0("BB_SOUND_HACK", Fixes, L.T("Weapon sound save fix"),
+                L.T("Sets the flag in the game's save that some weapon and player sounds need (without it they never play), before ") +
+                L.T("the game reads the save. Off leaves saves untouched")),
+            Flag("BB_INTEL_TONEMAP_FIX", Fixes, L.T("Intel black tonemap fix"),
+                L.T("Adds the Intel Black Tonemap Fix patch: for Intel CPUs where the picture turns black or far too dark ") +
+                L.T("(the DLC areas most)")),
+            Flag("BB_SKIP_GAME_CHECK", Fixes, L.T("Skip the game files check"),
+                L.T("Starts with game files that are not the supported version (base game plus the 1.09 update). Other editions ") +
+                L.T("may crash, and the engine's patches and PC menus may not apply")),
 
 
             // Off by default (beta 9.4): with it on in betas, two players' games stayed on a black
             // screen before the first frame. Testers: BB_NATIVE_CALLS=verify, BB_GNM_CENSUS and
             // BB_GNM_OBSERVE in Extra variables.
-            Toggle("BB_NATIVE_CALLS", DirectVulkan, "Direct draw calls",
-                "Draw calls go straight to the renderer instead of through emulated PS4 GPU commands. Testing only: " +
-                "turn it off if the game stays on a black screen or something draws wrong", on: false) with { AlwaysPass = true },
+            Toggle("BB_NATIVE_CALLS", DirectVulkan, L.T("Direct draw calls"),
+                L.T("Draw calls go straight to the renderer instead of through emulated PS4 GPU commands. Testing only: ") +
+                L.T("turn it off if the game stays on a black screen or something draws wrong"), on: false) with { AlwaysPass = true },
         };
 
         // ---------------------------------------------------------------- values
@@ -185,10 +185,10 @@ namespace BloodborneLauncher.Core
             {
                 SwitchKind.Toggle => item.Default == item.On ? "on" : "off",
                 SwitchKind.Number => item.Default + (item.Unit.Length > 0 ? " " + item.Unit : ""),
-                SwitchKind.Text => "not set",
+                SwitchKind.Text => L.T("not set"),
                 _ => item.Options.FirstOrDefault(o => o.Value == item.Default)?.Label ?? item.Default,
             };
-            return $"{item.Hint}\n{item.Env}, default: {value}. Applied when the game starts";
+            return L.F($"{item.Hint}\n{item.Env}, default: {value}. Applied when the game starts");
         }
 
         private static double? Parse(string text) =>

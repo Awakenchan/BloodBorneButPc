@@ -254,7 +254,7 @@ namespace BloodborneLauncher.Views
                 Background = Brushes.Transparent,
                 Cursor = Cursors.Hand,
                 Focusable = true,
-                ToolTip = "Settings most players never need to change",
+                ToolTip = L.T("Settings most players never need to change"),
                 Child = LauncherPage.Row(_chevron, _label),
             };
             header.SetResourceReference(Border.BorderBrushProperty, "GlassDividerBrush");
@@ -649,7 +649,7 @@ namespace BloodborneLauncher.Views
                 VerticalContentAlignment = VerticalAlignment.Center,
                 ClearButtonEnabled = false,
                 Margin = new Thickness(10, 0, 0, 0),
-                ToolTip = $"Type a value from {min.ToString(format, culture)} to {max.ToString(format, culture)} and press Enter",
+                ToolTip = L.F($"Type a value from {min.ToString(format, culture)} to {max.ToString(format, culture)} and press Enter"),
             };
             value.SetResourceReference(System.Windows.Controls.Control.FontFamilyProperty, "MonoFont");
             void Show() => value.Text = slider.Value.ToString(format, culture);

@@ -26,12 +26,12 @@ namespace BloodborneLauncher.Core
         /// <summary>Adds (or updates) the shortcut. Returns the Steam account folders it went into.</summary>
         public static List<string> Add(string exe)
         {
-            var steam = SteamDir() ?? throw new InvalidOperationException("Steam is not installed for this Windows user.");
+            var steam = SteamDir() ?? throw new InvalidOperationException(L.T("Steam is not installed for this Windows user."));
             if (SteamRunning())
-                throw new InvalidOperationException("Close Steam first (Steam › Exit): it rewrites its shortcut list when it closes.");
+                throw new InvalidOperationException(L.T("Close Steam first (Steam › Exit): it rewrites its shortcut list when it closes."));
             var accounts = Accounts(steam);
             if (accounts.Count == 0)
-                throw new InvalidOperationException("No Steam account has signed in on this PC yet: start Steam once and sign in.");
+                throw new InvalidOperationException(L.T("No Steam account has signed in on this PC yet: start Steam once and sign in."));
             var added = new List<string>();
             foreach (var account in accounts)
             {
@@ -159,7 +159,7 @@ namespace BloodborneLauncher.Core
                         case 1: node.Children.Add(new(key, ReadString(d, ref at))); break;
                         case 2: node.Children.Add(new(key, BitConverter.ToInt32(d, at))); at += 4; break;
                         case 7: node.Children.Add(new(key, BitConverter.ToUInt64(d, at))); at += 8; break;
-                        default: throw new InvalidDataException($"shortcuts.vdf: unknown value type {type}");
+                        default: throw new InvalidDataException(L.F($"shortcuts.vdf: unknown value type {type}"));
                     }
                 }
                 return node;
@@ -168,7 +168,7 @@ namespace BloodborneLauncher.Core
             private static string ReadString(byte[] d, ref int at)
             {
                 var end = Array.IndexOf(d, (byte)0, at);
-                if (end < 0) throw new InvalidDataException("shortcuts.vdf: unterminated string");
+                if (end < 0) throw new InvalidDataException(L.T("shortcuts.vdf: unterminated string"));
                 var s = Encoding.UTF8.GetString(d, at, end - at);
                 at = end + 1;
                 return s;

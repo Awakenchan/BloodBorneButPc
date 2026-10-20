@@ -20,8 +20,8 @@ namespace BloodborneLauncher.Views
         private readonly TextBlock _logHint;
         private string _filter = "all";
 
-        public TrophiesPage() : base("Trophies",
-            "Bloodborne's 40 trophies, your completion rate, and the notification shown in game when one unlocks.")
+        public TrophiesPage() : base(L.T("Trophies"),
+            L.T("Bloodborne's 40 trophies, your completion rate, and the notification shown in game when one unlocks."))
         {
             _support = new InfoBar { IsClosable = false, Severity = InfoBarSeverity.Warning, Margin = new Thickness(0, 14, 0, 0) };
             Body.Children.Add(_support);
@@ -37,7 +37,7 @@ namespace BloodborneLauncher.Views
             _percent.SetResourceReference(TextBlock.FontFamilyProperty, "MonoFont");
             top.Children.Add(_percent);
             var summary = new StackPanel { Margin = new Thickness(18, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-            summary.Children.Add(Text("COMPLETION", "StatLabel"));
+            summary.Children.Add(Text(L.T("COMPLETION"), "StatLabel"));
             _count = Text("", "RowTitle");
             _points = Text("", "Faint");
             summary.Children.Add(_count);
@@ -52,7 +52,7 @@ namespace BloodborneLauncher.Views
 
             var parts = new UniformGrid { Rows = 1, Margin = new Thickness(0, 14, 0, 0) };
             parts.Children.Add(Part("Bloodborne", out _baseText, out _base));
-            parts.Children.Add(Part("The Old Hunters", out _dlcText, out _dlc));
+            parts.Children.Add(Part(L.T("The Old Hunters"), out _dlcText, out _dlc));
             stack.Children.Add(parts);
             stack.Children.Add(_grades);
             card.Content = stack;
@@ -62,12 +62,12 @@ namespace BloodborneLauncher.Views
             var header = new Grid { Margin = new Thickness(2, 24, 0, 8) };
             header.ColumnDefinitions.Add(new ColumnDefinition());
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var title = Text("All trophies", "GroupHeader");
+            var title = Text(L.T("All trophies"), "GroupHeader");
             title.Margin = new Thickness(0);
             title.VerticalAlignment = VerticalAlignment.Center;
             header.Children.Add(title);
             var filter = new ComboBox { Width = 150 };
-            foreach (var (label, value) in new[] { ("All", "all"), ("Earned", "earned"), ("Locked", "locked") })
+            foreach (var (label, value) in new[] { (L.T("All"), "all"), (L.T("Earned"), "earned"), (L.T("Locked"), "locked") })
                 filter.Items.Add(new ComboBoxItem { Content = label, Tag = value });
             ComboSearch.Attach(filter);
             filter.SelectedIndex = 0;
@@ -82,31 +82,31 @@ namespace BloodborneLauncher.Views
             Body.Children.Add(_list);
 
             // ==================== Notifications ====================
-            Group("Notification");
-            SettingToggle(SymbolRegular.Alert24, "Show in game", "A small banner in a corner of the game's screen, without taking focus. In fullscreen it needs Display › Borderless fullscreen",
+            Group(L.T("Notification"));
+            SettingToggle(SymbolRegular.Alert24, L.T("Show in game"), L.T("A small banner in a corner of the game's screen, without taking focus. In fullscreen it needs Display › Borderless fullscreen"),
                 "trophy_notifications");
-            ComboRow(SymbolRegular.Pin24, "Position", null, new[]
+            ComboRow(SymbolRegular.Pin24, L.T("Position"), null, new[]
             {
-                new Choice("Top right", "top-right"), new Choice("Top left", "top-left"),
-                new Choice("Bottom right", "bottom-right"), new Choice("Bottom left", "bottom-left"),
+                new Choice(L.T("Top right"), "top-right"), new Choice(L.T("Top left"), "top-left"),
+                new Choice(L.T("Bottom right"), "bottom-right"), new Choice(L.T("Bottom left"), "bottom-left"),
             }, () => S.Str("trophy_position"), v => S.Set("trophy_position", v));
-            SettingToggle(SymbolRegular.Speaker224, "Play a sound", null, "trophy_sound");
-            SliderRow(SymbolRegular.Speaker124, "Volume", null, 0, 100, 5, () => S.Int("trophy_volume"),
+            SettingToggle(SymbolRegular.Speaker224, L.T("Play a sound"), null, "trophy_sound");
+            SliderRow(SymbolRegular.Speaker124, L.T("Volume"), null, 0, 100, 5, () => S.Int("trophy_volume"),
                 v => S.Set("trophy_volume", (int)v), "0");
-            Add(Card(SymbolRegular.MusicNote224, "Sound file", "A .wav of your own; empty uses the built-in chime", Row(
-                SmallButton("Choose…", SymbolRegular.FolderOpen24, (_, _) => ChooseSound()),
-                IconButton(SymbolRegular.ArrowUndo24, "Use the built-in chime", (_, _) =>
+            Add(Card(SymbolRegular.MusicNote224, L.T("Sound file"), L.T("A .wav of your own; empty uses the built-in chime"), Row(
+                SmallButton(L.T("Choose…"), SymbolRegular.FolderOpen24, (_, _) => ChooseSound()),
+                IconButton(SymbolRegular.ArrowUndo24, L.T("Use the built-in chime"), (_, _) =>
                 {
                     S.Set("trophy_sound_file", "");
                     Ws.SaveSoon();
-                    Ws.Log("Trophy sound: built-in chime.", LogLevel.Step);
+                    Ws.Log(L.T("Trophy sound: built-in chime."), LogLevel.Step);
                 })), out _));
-            Add(Card(SymbolRegular.PlayCircle24, "Try it", "Shows a sample notification and plays the sound",
-                SmallButton("Test", SymbolRegular.Trophy24, (_, _) => TrophyToast.Announce(TrophyTracker.ById[14])), out _));
-            Add(Card(SymbolRegular.Folder24, "Trophy log", "", IconButton(SymbolRegular.Open24, "Open the saves folder",
+            Add(Card(SymbolRegular.PlayCircle24, L.T("Try it"), L.T("Shows a sample notification and plays the sound"),
+                SmallButton(L.T("Test"), SymbolRegular.Trophy24, (_, _) => TrophyToast.Announce(TrophyTracker.ById[14])), out _));
+            Add(Card(SymbolRegular.Folder24, L.T("Trophy log"), "", IconButton(SymbolRegular.Open24, L.T("Open the saves folder"),
                 (_, _) => Paths.OpenFolder(GameEnvironment.UserDir(S))), out _logHint));
-            Add(Card(SymbolRegular.ArrowReset24, "Reset trophy progress", "Starts trophies and completion over, for a fresh run. The old log is kept as a backup",
-                SmallButton("Reset…", SymbolRegular.ArrowReset24, (_, _) => ResetProgress()), out _));
+            Add(Card(SymbolRegular.ArrowReset24, L.T("Reset trophy progress"), L.T("Starts trophies and completion over, for a fresh run. The old log is kept as a backup"),
+                SmallButton(L.T("Reset…"), SymbolRegular.ArrowReset24, (_, _) => ResetProgress()), out _));
 
             Ws.TrophiesChanged += Refresh;
         }
@@ -115,21 +115,21 @@ namespace BloodborneLauncher.Views
         {
             if (Ws.Trophies.Count == 0)
             {
-                Prompt.Tell("Reset trophy progress", "There is no trophy progress to reset.");
+                Prompt.Tell(L.T("Reset trophy progress"), L.T("There is no trophy progress to reset."));
                 return;
             }
-            if (!Prompt.Confirm("Reset trophy progress",
-                    $"All {Ws.Trophies.Count} unlocked trophies and the completion rate start over. Your saves are not touched, " +
-                    "and the current trophy log is kept as a backup in the saves folder.", "Reset"))
+            if (!Prompt.Confirm(L.T("Reset trophy progress"),
+                    L.F($"All {Ws.Trophies.Count} unlocked trophies and the completion rate start over. Your saves are not touched, ") +
+                    L.T("and the current trophy log is kept as a backup in the saves folder."), L.T("Reset")))
                 return;
             try
             {
                 var backup = Ws.Trophies.Reset();
-                Ws.Log(backup == null ? "Trophy progress reset." : "Trophy progress reset. Backup: " + backup, LogLevel.Good);
+                Ws.Log(backup == null ? L.T("Trophy progress reset.") : L.T("Trophy progress reset. Backup: ") + backup, LogLevel.Good);
             }
             catch (Exception e)
             {
-                Ws.Log("Could not reset trophy progress: " + e.Message, LogLevel.Bad);
+                Ws.Log(L.T("Could not reset trophy progress: ") + e.Message, LogLevel.Bad);
             }
             Refresh();
         }
@@ -186,19 +186,19 @@ namespace BloodborneLauncher.Views
                 return (says, File.Exists(log));
             });
             _support.IsOpen = !reports && !hasLog;
-            _support.Title = "This build of the game does not report trophies";
-            _support.Message = "Its bb-probe.exe accepts unlocks silently, so nothing can be tracked. A build with trophy hooks " +
-                               "(for example the Windows release of github.com/pyL1nx/bloodborne_pc) writes trophies.log, and the " +
-                               "launcher picks it up from there.";
+            _support.Title = L.T("This build of the game does not report trophies");
+            _support.Message = L.T("Its bb-probe.exe accepts unlocks silently, so nothing can be tracked. A build with trophy hooks ") +
+                               L.T("(for example the Windows release of github.com/pyL1nx/bloodborne_pc) writes trophies.log, and the ") +
+                               L.T("launcher picks it up from there.");
         }
 
         private void Refresh()
         {
             var t = Ws.Trophies;
-            SetHint(_logHint, $"trophies.log in the saves folder of the {PlayerProfiles.Current(S)} profile: one line per unlock (id and time)");
+            SetHint(_logHint, L.F($"trophies.log in the saves folder of the {PlayerProfiles.Current(S)} profile: one line per unlock (id and time)"));
             _percent.Text = $"{t.Completion * 100:0}%";
-            _count.Text = $"{t.Count} of {TrophyTracker.All.Length} trophies";
-            _points.Text = $"{t.EarnedPoints} of {t.TotalPoints} points (weighted by grade, as on PlayStation)";
+            _count.Text = L.F($"{t.Count} of {TrophyTracker.All.Length} trophies");
+            _points.Text = L.F($"{t.EarnedPoints} of {t.TotalPoints} points (weighted by grade, as on PlayStation)");
             _overall.Value = t.Completion;
 
             var (b, bt) = t.Progress(dlc: false);
@@ -235,10 +235,10 @@ namespace BloodborneLauncher.Views
                 var earned = t.Unlocked.TryGetValue(trophy.Id, out var when);
                 if (_filter == "earned" && !earned || _filter == "locked" && earned) continue;
 
-                var hint = trophy.Description + (trophy.Dlc ? "  ·  The Old Hunters" : "");
+                var hint = trophy.Description + (trophy.Dlc ? L.T("  ·  The Old Hunters") : "");
                 var status = earned
                     ? DateTimeOffset.FromUnixTimeSeconds(when).LocalDateTime.ToString("d MMM yyyy, HH:mm")
-                    : "Locked";
+                    : L.T("Locked");
                 var right = Text(status, earned ? "Muted" : "Faint");
                 right.VerticalAlignment = VerticalAlignment.Center;
                 right.TextAlignment = TextAlignment.Right;
@@ -253,11 +253,11 @@ namespace BloodborneLauncher.Views
                     ? GradeBrush(trophy.Grade)
                     : (Brush)FindResource("TextFillColorTertiaryBrush");
                 row.Opacity = earned ? 1 : 0.62;
-                row.ToolTip = $"{trophy.Grade} · {trophy.Points} points";
+                row.ToolTip = L.F($"{trophy.Grade} · {trophy.Points} points");
                 _list.Children.Add(row);
             }
             if (_list.Children.Count == 0)
-                _list.Children.Add(Text(_filter == "earned" ? "No trophies earned yet." : "Every trophy is earned. Hats off!", "Faint"));
+                _list.Children.Add(Text(_filter == "earned" ? L.T("No trophies earned yet.") : L.T("Every trophy is earned. Hats off!"), "Faint"));
         }
 
         private string? _shown;
@@ -278,7 +278,7 @@ namespace BloodborneLauncher.Views
 
         private void ChooseSound()
         {
-            var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Trophy sound", Filter = "WAV sound|*.wav" };
+            var dialog = new Microsoft.Win32.OpenFileDialog { Title = L.T("Trophy sound"), Filter = L.T("WAV sound|*.wav") };
             if (dialog.ShowDialog() != true) return;
             S.Set("trophy_sound_file", dialog.FileName);
             Ws.SaveSoon();

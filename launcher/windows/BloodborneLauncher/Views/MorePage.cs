@@ -11,10 +11,10 @@ namespace BloodborneLauncher.Views
         // Cheats only once the engine applies them.
         private static readonly (string Key, string Label, Type Page)[] Sections = new (string, string, Type)[]
         {
-            ("mods", "Mods", typeof(ModsPage)),
-            ("cheats", "Cheats", typeof(CheatsPage)),
-            ("engine", "Engine", typeof(EnginePage)),
-            ("output", "Log", typeof(OutputPage)),
+            ("mods", L.T("Mods"), typeof(ModsPage)),
+            ("cheats", L.T("Cheats"), typeof(CheatsPage)),
+            ("engine", L.T("Engine"), typeof(EnginePage)),
+            ("output", L.T("Log"), typeof(OutputPage)),
         }.Where(s => s.Item1 != "cheats" || CheatsPage.Supported).ToArray();
 
         private readonly Dictionary<Type, LauncherPage> _pages = new();
@@ -22,7 +22,7 @@ namespace BloodborneLauncher.Views
         private readonly Segmented _tabs;
         private int _current = -1;
 
-        public MorePage() : base("More", "")
+        public MorePage() : base(L.T("More"), "")
         {
             _tabs = new Segmented(Sections.Select(s => new Choice(s.Label, s.Key)).ToArray())
             {

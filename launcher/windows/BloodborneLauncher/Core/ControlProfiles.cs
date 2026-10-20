@@ -43,10 +43,10 @@ namespace BloodborneLauncher.Core
 
         public static readonly Profile[] BuiltIns =
         {
-            new("PC default", "Lantern Engine", "The engine's own layout: attack on left click, firearm and transform on the mouse too.",
+            new("PC default", "Lantern Engine", L.T("The engine's own layout: attack on left click, firearm and transform on the mouse too."),
                 DefaultBindings(), BuiltIn: true),
-            new("EldenRingStyle", "Lantern Engine", "Elden Ring's PC layout (the package default): left click attacks, Shift + left click strong attack, " +
-                "right click left hand (firearm / parry), Q or middle click lock on, R Blood Vial, E interact, arrows switch.",
+            new("EldenRingStyle", "Lantern Engine", L.T("Elden Ring's PC layout (the package default): left click attacks, Shift + left click strong attack, ") +
+                L.T("right click left hand (firearm / parry), Q or middle click lock on, R Blood Vial, E interact, arrows switch."),
                 new Dictionary<string, string>(DefaultBindings())
                 {
                     ["attack"] = "Mouse1",
@@ -65,8 +65,8 @@ namespace BloodborneLauncher.Core
                     ["dpad_up"] = "Up",
                     ["walk"] = "Left Alt",
                 }, BuiltIn: true),
-            new("Mouse focus", "Lantern Engine", "Both attacks and lock on on the mouse: left click attack, right click strong attack, " +
-                "middle click lock on; firearm F, quick item V.",
+            new("Mouse focus", "Lantern Engine", L.T("Both attacks and lock on on the mouse: left click attack, right click strong attack, ") +
+                L.T("middle click lock on; firearm F, quick item V."),
                 new Dictionary<string, string>(DefaultBindings())
                 {
                     ["attack"] = "Mouse1",
@@ -174,24 +174,24 @@ namespace BloodborneLauncher.Core
         public static Parsed Parse(string text)
         {
             if (Encoding.UTF8.GetByteCount(text) > MaxBytes)
-                throw new FormatException("The file is too large to be a control profile.");
+                throw new FormatException(L.T("The file is too large to be a control profile."));
 
             JsonObject root;
             try
             {
                 root = JsonNode.Parse(text.Trim().TrimStart('﻿'), documentOptions: new JsonDocumentOptions
                     { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip }) as JsonObject
-                    ?? throw new FormatException("This is not a control profile (expected a JSON object).");
+                    ?? throw new FormatException(L.T("This is not a control profile (expected a JSON object)."));
             }
             catch (JsonException e)
             {
-                throw new FormatException("This is not valid JSON: " + e.Message);
+                throw new FormatException(L.T("This is not valid JSON: ") + e.Message);
             }
 
             if ((string?)Str(root, "format") is { } format && format != Format)
-                throw new FormatException($"This is a \"{format}\" file, not a control profile.");
+                throw new FormatException(L.F($"This is a \"{format}\" file, not a control profile."));
             if (root["bindings"] is not JsonObject bindings)
-                throw new FormatException("This file has no \"bindings\" section.");
+                throw new FormatException(L.T("This file has no \"bindings\" section."));
 
             var notes = new List<string>();
             var known = InputMap.Controls.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
@@ -200,7 +200,7 @@ namespace BloodborneLauncher.Core
             {
                 if (!known.TryGetValue(input, out var control))
                 {
-                    notes.Add($"Skipped unknown input \"{Clip(input, 30)}\".");
+                    notes.Add(L.F($"Skipped unknown input \"{Clip(input, 30)}\"."));
                     continue;
                 }
                 var value = node is JsonValue jv && jv.TryGetValue<string>(out var s) ? s
@@ -208,7 +208,7 @@ namespace BloodborneLauncher.Core
                     : null;
                 if (value == null)
                 {
-                    notes.Add($"Skipped {control.Label}: its binding is not text.");
+                    notes.Add(L.F($"Skipped {control.Label}: its binding is not text."));
                     continue;
                 }
 
@@ -217,7 +217,7 @@ namespace BloodborneLauncher.Core
                 {
                     var canonical = InputMap.Canonical(name);
                     if (canonical == null)
-                        notes.Add($"{control.Label}: skipped unknown key \"{Clip(name, 30)}\".");
+                        notes.Add(L.F($"{control.Label}: skipped unknown key \"{Clip(name, 30)}\"."));
                     else if (!names.Contains(canonical, StringComparer.OrdinalIgnoreCase))
                         names.Add(canonical);
                 }
@@ -225,12 +225,12 @@ namespace BloodborneLauncher.Core
                 var key = names.FirstOrDefault(n => !InputMap.IsMouse(n));
                 var mouse = names.FirstOrDefault(InputMap.IsMouse);
                 if (names.Count > (key != null ? 1 : 0) + (mouse != null ? 1 : 0))
-                    notes.Add($"{control.Label}: kept one key and one mouse input.");
+                    notes.Add(L.F($"{control.Label}: kept one key and one mouse input."));
                 names = new[] { key, mouse }.Where(n => n != null).Select(n => n!).ToList();
                 result[control.Name] = InputMap.Join(names);
             }
             if (result.Count == 0)
-                throw new FormatException("This profile binds nothing the launcher knows.");
+                throw new FormatException(L.T("This profile binds nothing the launcher knows."));
 
             // The controller layout: PS4 inputs and SDL button names the launcher offers.
             Dictionary<string, string>? padMap = null;
@@ -243,7 +243,7 @@ namespace BloodborneLauncher.Core
                 {
                     if (!inputs.Contains(input))
                     {
-                        notes.Add($"Controller: skipped unknown input \"{Clip(input, 30)}\".");
+                        notes.Add(L.F($"Controller: skipped unknown input \"{Clip(input, 30)}\"."));
                         continue;
                     }
                     var value = node is JsonValue jv && jv.TryGetValue<string>(out var s) ? s : "";
@@ -279,7 +279,7 @@ namespace BloodborneLauncher.Core
             link = link.Trim();
             if (!link.Contains("://")) link = "https://" + link;
             if (!Uri.TryCreate(link, UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http"))
-                throw new FormatException("That is not a web link.");
+                throw new FormatException(L.T("That is not a web link."));
 
             var host = uri.Host.ToLowerInvariant();
             var path = uri.AbsolutePath.TrimEnd('/');
@@ -316,9 +316,9 @@ namespace BloodborneLauncher.Core
             http.DefaultRequestHeaders.UserAgent.ParseAdd("BloodborneLauncher/1.0");
             using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
             if (!response.IsSuccessStatusCode)
-                throw new FormatException($"The link answered {(int)response.StatusCode} {response.ReasonPhrase}.");
+                throw new FormatException(L.F($"The link answered {(int)response.StatusCode} {response.ReasonPhrase}."));
             if (response.Content.Headers.ContentLength > MaxBytes)
-                throw new FormatException("That link is too large to be a control profile.");
+                throw new FormatException(L.T("That link is too large to be a control profile."));
 
             await using var stream = await response.Content.ReadAsStreamAsync();
             var buffer = new byte[MaxBytes + 1];
@@ -327,11 +327,11 @@ namespace BloodborneLauncher.Core
             while (read < buffer.Length && (n = await stream.ReadAsync(buffer.AsMemory(read))) > 0)
                 read += n;
             if (read > MaxBytes)
-                throw new FormatException("That link is too large to be a control profile.");
+                throw new FormatException(L.T("That link is too large to be a control profile."));
 
             var text = Encoding.UTF8.GetString(buffer, 0, read);
             if (text.TrimStart().StartsWith('<'))
-                throw new FormatException("That link shows a web page, not the raw profile. Use the paste's \"raw\" link.");
+                throw new FormatException(L.T("That link shows a web page, not the raw profile. Use the paste's \"raw\" link."));
             return Parse(text);
         }
     }

@@ -18,35 +18,35 @@ namespace BloodborneLauncher.Core
     {
         public static readonly ControlDef[] Controls =
         {
-            new("move_forward", "Move forward", "Movement", "", "W", "Left stick"),
-            new("move_back", "Move back", "Movement", "", "S", "Left stick"),
-            new("move_left", "Move left", "Movement", "", "A", "Left stick"),
-            new("move_right", "Move right", "Movement", "", "D", "Left stick"),
-            new("walk", "Walk", "Movement", "Hold with the movement keys", "Left Alt", null),
-            new("roll", "Dodge / sprint", "Movement", "Tap to dodge, hold to sprint", "Space", "Circle"),
-            new("l3", "Left stick click", "Movement", "", "Left Ctrl", "L3"),
-            new("attack", "Attack", "Combat", "With the strong modifier held: strong attack", "Mouse1", "R1"),
-            new("strong_attack", "Strong attack", "Combat", "Hold to charge", "V", "R2"),
-            new("strong_modifier", "Strong attack modifier", "Combat", "Held with Attack", "Left Shift", null),
-            new("transform", "Transform weapon", "Combat", "", "C, Mouse2", "L1"),
-            new("firearm", "Firearm / parry", "Combat", "", "X, Mouse3", "L2"),
-            new("lock_on", "Lock on", "Combat", "Or reset the camera", "Q", "R3"),
-            new("blood_vial", "Blood Vial", "Items", "", "R", "Triangle"),
-            new("use_item", "Use item", "Items", "The selected quick item", "F", "Square"),
-            new("interact", "Interact", "Items", "Talk, examine, pick up, open", "E", "Cross"),
-            new("switch_item", "Switch item", "Items", "Cycle the quick items", "Down", "D-pad down"),
-            new("switch_right", "Switch right weapon", "Items", "", "Right", "D-pad right"),
-            new("switch_left", "Switch left weapon", "Items", "", "Left", "D-pad left"),
-            new("dpad_up", "D-pad up", "Items", "", "Up", "D-pad up"),
-            new("gestures", "Gestures", "Menus", "", "G", "Touchpad (left)"),
-            new("personal_effects", "Personal effects", "Menus", "", "T", "Touchpad (right)"),
-            new("menu", "Menu", "Menus", "", "Escape", "Options"),
-            new("confirm", "Confirm in menus", "Menus", "", "Return", null),
-            new("back", "Back in menus", "Menus", "", "Backspace", null),
-            new("look_up", "Look up", "Camera keys", "The camera without the mouse", "I", "Right stick"),
-            new("look_down", "Look down", "Camera keys", "", "K", "Right stick"),
-            new("look_left", "Look left", "Camera keys", "", "J", "Right stick"),
-            new("look_right", "Look right", "Camera keys", "", "L", "Right stick"),
+            new("move_forward", L.T("Move forward"), L.T("Movement"), "", "W", "Left stick"),
+            new("move_back", L.T("Move back"), L.T("Movement"), "", "S", "Left stick"),
+            new("move_left", L.T("Move left"), L.T("Movement"), "", "A", "Left stick"),
+            new("move_right", L.T("Move right"), L.T("Movement"), "", "D", "Left stick"),
+            new("walk", L.T("Walk"), L.T("Movement"), L.T("Hold with the movement keys"), "Left Alt", null),
+            new("roll", L.T("Dodge / sprint"), L.T("Movement"), L.T("Tap to dodge, hold to sprint"), "Space", "Circle"),
+            new("l3", L.T("Left stick click"), L.T("Movement"), "", "Left Ctrl", "L3"),
+            new("attack", L.T("Attack"), L.T("Combat"), L.T("With the strong modifier held: strong attack"), "Mouse1", "R1"),
+            new("strong_attack", L.T("Strong attack"), L.T("Combat"), L.T("Hold to charge"), "V", "R2"),
+            new("strong_modifier", L.T("Strong attack modifier"), L.T("Combat"), L.T("Held with Attack"), "Left Shift", null),
+            new("transform", L.T("Transform weapon"), L.T("Combat"), "", "C, Mouse2", "L1"),
+            new("firearm", L.T("Firearm / parry"), L.T("Combat"), "", "X, Mouse3", "L2"),
+            new("lock_on", L.T("Lock on"), L.T("Combat"), L.T("Or reset the camera"), "Q", "R3"),
+            new("blood_vial", L.T("Blood Vial"), L.T("Items"), "", "R", "Triangle"),
+            new("use_item", L.T("Use item"), L.T("Items"), L.T("The selected quick item"), "F", "Square"),
+            new("interact", L.T("Interact"), L.T("Items"), L.T("Talk, examine, pick up, open"), "E", "Cross"),
+            new("switch_item", L.T("Switch item"), L.T("Items"), L.T("Cycle the quick items"), "Down", "D-pad down"),
+            new("switch_right", L.T("Switch right weapon"), L.T("Items"), "", "Right", "D-pad right"),
+            new("switch_left", L.T("Switch left weapon"), L.T("Items"), "", "Left", "D-pad left"),
+            new("dpad_up", L.T("D-pad up"), L.T("Items"), "", "Up", "D-pad up"),
+            new("gestures", L.T("Gestures"), L.T("Menus"), "", "G", "Touchpad (left)"),
+            new("personal_effects", L.T("Personal effects"), L.T("Menus"), "", "T", "Touchpad (right)"),
+            new("menu", L.T("Menu"), L.T("Menus"), "", "Escape", "Options"),
+            new("confirm", L.T("Confirm in menus"), L.T("Menus"), "", "Return", null),
+            new("back", L.T("Back in menus"), L.T("Menus"), "", "Backspace", null),
+            new("look_up", L.T("Look up"), L.T("Camera keys"), L.T("The camera without the mouse"), "I", "Right stick"),
+            new("look_down", L.T("Look down"), L.T("Camera keys"), "", "K", "Right stick"),
+            new("look_left", L.T("Look left"), L.T("Camera keys"), "", "J", "Right stick"),
+            new("look_right", L.T("Look right"), L.T("Camera keys"), "", "L", "Right stick"),
         };
 
         /// <summary>Keys the port itself uses while the game runs.</summary>
@@ -62,14 +62,14 @@ namespace BloodborneLauncher.Core
         /// <summary>A friendly name for a chip.</summary>
         public static string Display(string name) => name.ToLowerInvariant() switch
         {
-            "mouse1" => "Left click",
+            "mouse1" => L.T("Left click"),
             // SDL numbering, as the engine reads it (input.cpp): 2 is the middle button, 3 the right.
-            "mouse2" => "Middle click",
-            "mouse3" => "Right click",
-            "mouse4" => "Mouse 4",
-            "mouse5" => "Mouse 5",
-            "wheelup" => "Wheel up",
-            "wheeldown" => "Wheel down",
+            "mouse2" => L.T("Middle click"),
+            "mouse3" => L.T("Right click"),
+            "mouse4" => L.T("Mouse 4"),
+            "mouse5" => L.T("Mouse 5"),
+            "wheelup" => L.T("Wheel up"),
+            "wheeldown" => L.T("Wheel down"),
             _ => name,
         };
 
@@ -254,7 +254,7 @@ namespace BloodborneLauncher.Core
                     pads.Add(new Pad(name, path.Contains("{00001124-", StringComparison.OrdinalIgnoreCase)));
             }
             foreach (var _ in XInput.Connected())
-                pads.Add(new Pad("Xbox controller", false));
+                pads.Add(new Pad(L.T("Xbox controller"), false));
             return pads;
         }
 
@@ -300,7 +300,7 @@ namespace BloodborneLauncher.Core
                 }
                 var buffer = new char[127];
                 var name = HidD_GetProductString(device, buffer, buffer.Length * 2) ? new string(buffer).TrimEnd('\0').Trim() : "";
-                return name.Length > 0 ? name : "Game controller";
+                return name.Length > 0 ? name : L.T("Game controller");
             }
             catch
             {

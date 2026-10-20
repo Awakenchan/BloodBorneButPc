@@ -137,10 +137,10 @@ namespace BloodborneLauncher.Core
         /// what is there.</summary>
         public static void Import(LauncherSettings s, string from)
         {
-            if (!HasSaves(from)) throw new IOException("That folder has no Bloodborne save files (userdata).");
+            if (!HasSaves(from)) throw new IOException(L.T("That folder has no Bloodborne save files (userdata)."));
             if (!IsComplete(from))
-                throw new IOException($"That save is incomplete: it has no {SlotFile}, the file the game needs to find the " +
-                                      "save slots (importing it would make the game crash). Import the whole SPRJ0005 folder.");
+                throw new IOException(L.F($"That save is incomplete: it has no {SlotFile}, the file the game needs to find the ") +
+                                      L.T("save slots (importing it would make the game crash). Import the whole SPRJ0005 folder."));
             SaveBackups.Create(s, beforeRestore: true);
             var target = Target(s);
             // Copied next to it first, so a failed copy leaves the current saves in place. Only the

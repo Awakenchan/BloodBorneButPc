@@ -14,9 +14,9 @@ namespace BloodborneLauncher.Views
     {
         private static readonly Choice[] Modes =
         {
-            new("Off", "off"),
-            new("Infinite", "infinite", "Kept full at the normal carry limit, even if you have none. Items put into storage while it is on come back"),
-            new("Custom amount", "custom", "Refilled to the amount below whenever it drops"),
+            new(L.T("Off"), "off"),
+            new(L.T("Infinite"), "infinite", L.T("Kept full at the normal carry limit, even if you have none. Items put into storage while it is on come back")),
+            new(L.T("Custom amount"), "custom", L.T("Refilled to the amount below whenever it drops")),
         };
 
         /// <summary>Engine builds from before the cheats module: they ignore the cheat_* keys.</summary>
@@ -26,16 +26,16 @@ namespace BloodborneLauncher.Views
         private readonly InfoBar _engine;
         private readonly InfoBar _online;
 
-        public CheatsPage() : base("Cheats",
-            "Set here for the next start. While playing, change them in the in-game menu (Insert or L3 + R3): they apply live. Turning a cheat off puts the game's values back; items you already have stay.")
+        public CheatsPage() : base(L.T("Cheats"),
+            L.T("Set here for the next start. While playing, change them in the in-game menu (Insert or L3 + R3): they apply live. Turning a cheat off puts the game's values back; items you already have stay."))
         {
             _engine = new InfoBar
             {
                 IsClosable = false,
                 Severity = InfoBarSeverity.Warning,
                 Margin = new Thickness(0, 14, 0, 0),
-                Title = "Not in this engine yet",
-                Message = "Your engine doesn't apply cheats yet: they arrive with the next engine update. What you pick here is saved and starts working then.",
+                Title = L.T("Not in this engine yet"),
+                Message = L.T("Your engine doesn't apply cheats yet: they arrive with the next engine update. What you pick here is saved and starts working then."),
             };
             Body.Children.Add(_engine);
             // The engine turns every cheat off in an online session (cheats.cpp SharedWorld).
@@ -44,33 +44,33 @@ namespace BloodborneLauncher.Views
                 IsClosable = false,
                 Severity = InfoBarSeverity.Informational,
                 Margin = new Thickness(0, 14, 0, 0),
-                Title = "Off while playing online",
-                Message = "Play online is on: every cheat stays off in online sessions, so other players never meet them. " +
-                          "Turn Play online off and they work again; what you pick here is kept.",
+                Title = L.T("Off while playing online"),
+                Message = L.T("Play online is on: every cheat stays off in online sessions, so other players never meet them. ") +
+                          L.T("Turn Play online off and they work again; what you pick here is kept."),
             };
             Body.Children.Add(_online);
 
-            Group("Items");
-            Cheat(SymbolRegular.Drop24, "Blood Vials", "cheat_vials", "cheat_vials_amount");
-            Cheat(SymbolRegular.Flash24, "Quicksilver Bullets", "cheat_bullets", "cheat_bullets_amount");
-            IniToggle(SymbolRegular.Beaker24, "Infinite consumables",
-                "Molotovs, throwing knives, pebbles, antidotes, papers and the like are not used up (not Blood Vials or Bullets, which are above, and not insight items)",
+            Group(L.T("Items"));
+            Cheat(SymbolRegular.Drop24, L.T("Blood Vials"), "cheat_vials", "cheat_vials_amount");
+            Cheat(SymbolRegular.Flash24, L.T("Quicksilver Bullets"), "cheat_bullets", "cheat_bullets_amount");
+            IniToggle(SymbolRegular.Beaker24, L.T("Infinite consumables"),
+                L.T("Molotovs, throwing knives, pebbles, antidotes, papers and the like are not used up (not Blood Vials or Bullets, which are above, and not insight items)"),
                 "cheat_consumables");
 
-            Group("Character");
-            IniToggle(SymbolRegular.Run24, "Infinite stamina", "Your stamina stays full", "cheat_stamina");
-            IniToggle(SymbolRegular.EyeOff24, "Stealth", "Enemies don't notice you and your steps make no noise", "cheat_stealth");
-            IniToggle(SymbolRegular.Shield24, "No weapon wear", "Equipped weapons are kept at full durability, so no repairs", "cheat_no_durability");
-            ComboRow(SymbolRegular.Target24, "Firearm range", "How far firearm bullets travel (pistols, rifles, blunderbuss, cannons)",
-                new[] { new Choice("Normal", "off"), new Choice("150%", "150"), new Choice("200%", "200"), new Choice("300%", "300") },
+            Group(L.T("Character"));
+            IniToggle(SymbolRegular.Run24, L.T("Infinite stamina"), L.T("Your stamina stays full"), "cheat_stamina");
+            IniToggle(SymbolRegular.EyeOff24, L.T("Stealth"), L.T("Enemies don't notice you and your steps make no noise"), "cheat_stealth");
+            IniToggle(SymbolRegular.Shield24, L.T("No weapon wear"), L.T("Equipped weapons are kept at full durability, so no repairs"), "cheat_no_durability");
+            ComboRow(SymbolRegular.Target24, L.T("Firearm range"), L.T("How far firearm bullets travel (pistols, rifles, blunderbuss, cannons)"),
+                new[] { new Choice(L.T("Normal"), "off"), new Choice("150%", "150"), new Choice("200%", "200"), new Choice("300%", "300") },
                 () => Ini.Get("cheat_gun_range", "off"), v => Ini.Set("cheat_gun_range", v));
 
-            Group("Blood Echoes");
-            IniToggle(SymbolRegular.Heart24, "Keep echoes on death", "Dying never drops your Blood Echoes, so there is nothing to pick back up", "cheat_keep_echoes");
-            ComboRow(SymbolRegular.ArrowTrendingLines24, "Echoes from kills", "Enemies already loaded give the new amount after you rest at a lamp or reload",
-                new[] { new Choice("Normal", "1"), new Choice("x2", "2"), new Choice("x5", "5"), new Choice("x10", "10") },
+            Group(L.T("Blood Echoes"));
+            IniToggle(SymbolRegular.Heart24, L.T("Keep echoes on death"), L.T("Dying never drops your Blood Echoes, so there is nothing to pick back up"), "cheat_keep_echoes");
+            ComboRow(SymbolRegular.ArrowTrendingLines24, L.T("Echoes from kills"), L.T("Enemies already loaded give the new amount after you rest at a lamp or reload"),
+                new[] { new Choice(L.T("Normal"), "1"), new Choice("x2", "2"), new Choice("x5", "5"), new Choice("x10", "10") },
                 () => Ini.Get("cheat_echo_multiplier", "1"), v => Ini.Set("cheat_echo_multiplier", v));
-            Add(Card(SymbolRegular.Add24, "Add echoes or insight", "In the in-game menu (Insert or L3 + R3): +1,000, +10,000, +100,000 echoes and +1 insight", null, out _));
+            Add(Card(SymbolRegular.Add24, L.T("Add echoes or insight"), L.T("In the in-game menu (Insert or L3 + R3): +1,000, +10,000, +100,000 echoes and +1 insight"), null, out _));
         }
 
         /// <summary>A mode row and its amount slider for one cheat key.</summary>
@@ -89,9 +89,9 @@ namespace BloodborneLauncher.Views
             {
                 Ini.Set(key, v == "custom" ? Amount().ToString(CultureInfo.InvariantCulture) : v);
                 ShowAmount(amount, v == "custom");
-                Ws.Log($"{title}: {(v == "custom" ? $"kept at {Amount()}" : v)}.", LogLevel.Step);
+                Ws.Log($"{title}: {(v == "custom" ? L.F($"kept at {Amount()}") : v)}.", LogLevel.Step);
             });
-            amount = SliderRow(SymbolRegular.NumberSymbol24, "Amount", $"How many {title} to keep", 1, 99, 1, () => Amount(), v =>
+            amount = SliderRow(SymbolRegular.NumberSymbol24, L.T("Amount"), L.F($"How many {title} to keep"), 1, 99, 1, () => Amount(), v =>
             {
                 S.Set(amountKey, (int)v);
                 if (Mode() == "custom") Ini.Set(key, ((int)v).ToString(CultureInfo.InvariantCulture));

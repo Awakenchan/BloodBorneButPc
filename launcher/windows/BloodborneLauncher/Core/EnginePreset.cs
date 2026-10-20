@@ -20,9 +20,9 @@ namespace BloodborneLauncher.Core
 
         public static readonly Choice[] Choices =
         {
-            new("New (recommended)", New, "The current engine: occlusion culling, faster draw thread, quicker shader compiling, more VRAM for textures"),
-            new("Legacy (0.9.33)", Legacy, "The engine as 0.9.33 ran it, with those features off. Try it if the new engine crashes or draws something wrong"),
-            new("Custom", Custom, "Features below changed one by one"),
+            new(L.T("New (recommended)"), New, L.T("The current engine: occlusion culling, faster draw thread, quicker shader compiling, more VRAM for textures")),
+            new(L.T("Legacy (0.9.33)"), Legacy, L.T("The engine as 0.9.33 ran it, with those features off. Try it if the new engine crashes or draws something wrong")),
+            new("Custom", Custom, L.T("Features below changed one by one")),
         };
 
         public static string Current(LauncherSettings s)

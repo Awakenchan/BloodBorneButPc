@@ -159,7 +159,7 @@ namespace BloodborneLauncher.Core
             try
             {
                 var xml = XDocument.Load(Path.Combine(Paths.EngineDir, "patches", "Bloodborne.xml"));
-                var template = xml.Descendants("Metadata").FirstOrDefault(m => (string?)m.Attribute("Name") == ResolutionTemplate);
+                var template = xml.Descendants("Metadata").FirstOrDefault(m => (string?)m.Attribute(L.T("Name")) == ResolutionTemplate);
                 return template?.Descendants("Line").Select(Range).Where(r => r.HasValue).Select(r => r!.Value).ToList() ?? new();
             }
             catch
@@ -252,12 +252,12 @@ namespace BloodborneLauncher.Core
                     if (!IsSupportedVersion((string?)meta.Attribute("AppVer")) ||
                         ((string?)meta.Attribute("AppElf") ?? "eboot.bin") != "eboot.bin")
                         continue;
-                    var name = (string?)meta.Attribute("Name") ?? "";
+                    var name = (string?)meta.Attribute(L.T("Name")) ?? "";
                     if (isBuiltIn && ManagedBuiltIn(name))
                         continue;
                     var file = Path.GetFileName(path);
                     found.Add(new Patch($"{file}/{name}", name.Length > 0 ? name : $"{file}/{name}", file,
-                        (string?)meta.Attribute("Author") ?? "",
+                        (string?)meta.Attribute(L.T("Author")) ?? "",
                         ((string?)meta.Attribute("Note") ?? "").Replace("\\n", "\n"),
                         !isBuiltIn && string.Equals((string?)meta.Attribute("isEnabled"), "true", StringComparison.OrdinalIgnoreCase),
                         meta.Descendants("Line").Any(WritesRegion),

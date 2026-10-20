@@ -33,8 +33,8 @@ namespace BloodborneLauncher.Core
 
         /// <summary>One line for the UI: "NVIDIA GeForce RTX 5060 (8 GB) · AMD Ryzen 5 5600 (12 threads) · 2560 × 1440 at 165 Hz".</summary>
         public string Summary =>
-            $"{Gpu}{(VramBytes > 0 ? $" ({VramGb} GB)" : "")} · {Cpu} ({Threads} threads) · " +
-            (ScreenWidth > 0 ? $"{ScreenWidth} × {ScreenHeight} at {RefreshHz} Hz" : "display unknown");
+            L.F($"{Gpu}{(VramBytes > 0 ? $" ({VramGb} GB)" : "")} · {Cpu} ({Threads} threads) · ") +
+            (ScreenWidth > 0 ? L.F($"{ScreenWidth} × {ScreenHeight} at {RefreshHz} Hz") : L.T("display unknown"));
 
         private static Hardware? _detected;
         public static Hardware Detect() => _detected ??= Probe();
@@ -110,13 +110,13 @@ namespace BloodborneLauncher.Core
 
             var tier = GpuTier;
             var dlss = File.Exists(Path.Combine(Paths.BinariesDir, "nvngx_dlss.dll"));
-            Ini("Upscaler", "upscaler", Rtx && dlss ? "dlss" : Rdna4 ? "fsr4" : "fsr3", Choices.Upscalers);
+            Ini(L.T("Upscaler"), "upscaler", Rtx && dlss ? "dlss" : Rdna4 ? "fsr4" : "fsr3", Choices.Upscalers);
 
             // The output: the display's own size, by name where it is one of the choices, else
             // "Display (auto)"; 1920 x 1080 when the display is unknown.
             var output = ScreenWidth == 0 ? "1920x1080"
                 : Choices.OutputResolutions.Select(c => c.Value).FirstOrDefault(v => v == $"{ScreenWidth}x{ScreenHeight}") ?? "auto";
-            Ini("Output resolution", "output_res", output, Choices.OutputResolutions, "1920x1080");
+            Ini(L.T("Output resolution"), "output_res", output, Choices.OutputResolutions, "1920x1080");
 
             // How far below the output the game renders: more for bigger outputs and smaller GPUs.
             var height = Choices.OutputSize(output).H;
@@ -134,23 +134,23 @@ namespace BloodborneLauncher.Core
                 (_, Tier.Mid) => 3,
                 _ => 4,
             };
-            Ini("Quality preset", "preset", preset.ToString(), Choices.Presets, "0");
+            Ini(L.T("Quality preset"), "preset", preset.ToString(), Choices.Presets, "0");
 
             // 120 needs a fast display, a mid or better GPU and a CPU with 12+ threads (the game's
             // render thread is the limit); 60 otherwise.
             var fps = RefreshHz >= 119 && tier != Tier.Low && Threads >= 12 ? "120" : "60";
-            Setting("Frame rate", "fps_mode", fps, Choices.FpsModes);
+            Setting(L.T("Frame rate"), "fps_mode", fps, Choices.FpsModes);
 
             // Character motion vectors cost about 10%: on for the biggest GPUs, off for the smallest.
-            if (tier == Tier.High) Ini("Object motion vectors", "object_motion", "1", OnOff, "1");
-            if (tier == Tier.Low) Ini("Object motion vectors", "object_motion", "0", OnOff, "1");
+            if (tier == Tier.High) Ini(L.T("Object motion vectors"), "object_motion", "1", OnOff, "1");
+            if (tier == Tier.Low) Ini(L.T("Object motion vectors"), "object_motion", "0", OnOff, "1");
             return changes;
         }
 
-        private static readonly Choice[] OnOff = { new("On", "1"), new("Off", "0") };
+        private static readonly Choice[] OnOff = { new(L.T("On"), "1"), new(L.T("Off"), "0") };
 
         private static string Name(IReadOnlyList<Choice>? names, string value) =>
-            names?.FirstOrDefault(c => c.Value == value)?.Label.Split(" (")[0] ?? (value.Length > 0 ? value : "default");
+            names?.FirstOrDefault(c => c.Value == value)?.Label.Split(" (")[0] ?? (value.Length > 0 ? value : L.T("default"));
 
         // ---------------------------------------------------------------- display mode
 

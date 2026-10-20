@@ -139,7 +139,7 @@ namespace BloodborneLauncher.Views
 
             var filter = new TextBox
             {
-                PlaceholderText = "Type to filter",
+                PlaceholderText = L.T("Type to filter"),
                 PlaceholderEnabled = true,
                 ClearButtonEnabled = true,
                 Icon = new SymbolIcon { Symbol = SymbolRegular.Search24 },

@@ -25,9 +25,9 @@ namespace BloodborneLauncher.Core
         public static GameStatus Inspect(string gameDir)
         {
             if (string.IsNullOrWhiteSpace(gameDir))
-                return new GameStatus(Health.Bad, "No game folder chosen", "", "");
+                return new GameStatus(Health.Bad, L.T("No game folder chosen"), "", "");
             if (!File.Exists(Path.Combine(gameDir, "eboot.bin")))
-                return new GameStatus(Health.Bad, "No eboot.bin in this folder: choose the folder that contains it", "", "");
+                return new GameStatus(Health.Bad, L.T("No eboot.bin in this folder: choose the folder that contains it"), "", "");
 
             var sfo = ReadSfo(Path.Combine(gameDir, "sce_sys", "param.sfo"));
             var title = sfo.GetValueOrDefault("TITLE_ID", "?");
@@ -40,16 +40,16 @@ namespace BloodborneLauncher.Core
 
             if (title != "?" && !SupportedTitles.Contains(title))
                 return new GameStatus(Health.Bad,
-                    $"This is not a retail Bloodborne (found {title}): any region with update 1.09 is needed", title, version);
+                    L.F($"This is not a retail Bloodborne (found {title}): any region with update 1.09 is needed"), title, version);
             if (version != "?" && version != SupportedVersion)
                 return new GameStatus(Health.Warning,
-                    $"Update 1.09 is needed: put the dumped 1.09 update beside the game as {Path.GetFileName(Path.TrimEndingDirectorySeparator(gameDir))}-UPDATE, or copy it into the game folder (found {version})", title, version);
+                    L.F($"Update 1.09 is needed: put the dumped 1.09 update beside the game as {Path.GetFileName(Path.TrimEndingDirectorySeparator(gameDir))}-UPDATE, or copy it into the game folder (found {version})"), title, version);
             if (title == "?")
-                return new GameStatus(Health.Warning, "sce_sys/param.sfo is missing or unreadable; the game may not start", title, version);
+                return new GameStatus(Health.Warning, L.T("sce_sys/param.sfo is missing or unreadable; the game may not start"), title, version);
 
             return new GameStatus(Health.Good, update != null
-                ? $"Bloodborne {title}, version {version} (update from {Path.GetFileName(update)})"
-                : $"Bloodborne {title}, version {version}", title, version);
+                ? L.F($"Bloodborne {title}, version {version} (update from {Path.GetFileName(update)})")
+                : L.F($"Bloodborne {title}, version {version}"), title, version);
         }
 
         /// <summary>The game update beside the game folder (&lt;game&gt;-UPDATE or &lt;game&gt;-patch, any case)

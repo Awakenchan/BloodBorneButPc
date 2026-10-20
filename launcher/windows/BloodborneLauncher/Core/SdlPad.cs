@@ -126,7 +126,7 @@ namespace BloodborneLauncher.Core
             {
                 var supported = _isGamepad!(id);
                 var name = Marshal.PtrToStringUTF8(supported ? _nameForId!(id) : _joystickNameForId!(id));
-                devices.Add(new Device(string.IsNullOrWhiteSpace(name) ? "Game controller" : name!, supported));
+                devices.Add(new Device(string.IsNullOrWhiteSpace(name) ? L.T("Game controller") : name!, supported));
             }
             return devices;
         }

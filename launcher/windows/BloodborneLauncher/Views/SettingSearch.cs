@@ -58,7 +58,7 @@ namespace BloodborneLauncher.Views
             var inTitle = words.Count(w => Has(title, w));
             if (inTitle == words.Length) return new Hit(row, place, null, 50);
             bool Shows(string text) => words.Any(w => !Has(title, w) && Has(text, w));
-            var snippet = Shows(info) ? info : Shows(hint) ? hint : Shows(row.Choices) ? "Options: " + row.Choices : null;
+            var snippet = Shows(info) ? info : Shows(hint) ? hint : Shows(row.Choices) ? L.T("Options: ") + row.Choices : null;
             return new Hit(row, place, snippet, 10 + 10 * inTitle);
         }
 
@@ -123,7 +123,7 @@ namespace BloodborneLauncher.Views
         /// <summary>The line shown when nothing matches.</summary>
         public static TextBlock Nothing(string query)
         {
-            var text = LauncherPage.Text($"No setting matches \"{query.Trim()}\".", "Faint");
+            var text = LauncherPage.Text(L.F($"No setting matches \"{query.Trim()}\"."), "Faint");
             text.Margin = new Thickness(10, 7, 10, 7);
             return text;
         }

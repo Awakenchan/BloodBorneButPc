@@ -13,6 +13,7 @@ namespace BloodborneLauncher
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            L.Initialize();
             base.OnStartup(e);
 
             // A UI-thread fault is recoverable; the other two are only logged, so a hard exit
@@ -78,8 +79,8 @@ namespace BloodborneLauncher
                 return;
             }
             Record("Dispatcher", args.Exception);
-            MessageBox.Show($"{args.Exception.Message}\n\nLogged to:\n{CrashLog}",
-                "Unexpected error", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(L.F($"{args.Exception.Message}\n\nLogged to:\n{CrashLog}"),
+                L.T("Unexpected error"), MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
         }
 
@@ -91,7 +92,7 @@ namespace BloodborneLauncher
                 var entry = new StringBuilder()
                     .AppendLine(new string('=', 70))
                     .AppendLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  [{source}]")
-                    .AppendLine(exception?.ToString() ?? "(no exception object)")
+                    .AppendLine(exception?.ToString() ?? L.T("(no exception object)"))
                     .AppendLine();
                 File.AppendAllText(CrashLog, entry.ToString());
             }

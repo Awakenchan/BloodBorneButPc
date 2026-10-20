@@ -47,7 +47,7 @@ namespace BloodborneLauncher.Core
         public string? Start(LauncherSettings s)
         {
             if (_process != null)
-                return "The game is already running.";
+                return L.T("The game is already running.");
             SdlPad.Stop(); // the game takes the controllers
 
             ProcessStartInfo info;
@@ -55,7 +55,7 @@ namespace BloodborneLauncher.Core
             {
                 var command = Paths.Expand(s.Str("custom_command").Trim());
                 if (command.Length == 0)
-                    return "No custom command is set. Choose one in Settings › Launch.";
+                    return L.T("No custom command is set. Choose one in Settings › Launch.");
                 info = new ProcessStartInfo(command) { Arguments = s.Str("custom_args") };
             }
             else
@@ -126,7 +126,7 @@ namespace BloodborneLauncher.Core
             {
                 _process = null;
                 CloseLog();
-                return "Could not start: " + e.Message;
+                return L.T("Could not start: ") + e.Message;
             }
         }
 

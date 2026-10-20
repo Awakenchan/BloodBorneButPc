@@ -70,7 +70,7 @@ namespace BloodborneLauncher.Core
         public static void Restore(LauncherSettings s, Backup backup)
         {
             var from = Path.Combine(backup.Dir, "savedata");
-            if (!Directory.Exists(from)) throw new DirectoryNotFoundException("This backup has no savedata folder.");
+            if (!Directory.Exists(from)) throw new DirectoryNotFoundException(L.T("This backup has no savedata folder."));
             Create(s, beforeRestore: true);
 
             var target = SaveData(s);
