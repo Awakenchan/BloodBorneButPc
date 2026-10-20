@@ -76,7 +76,7 @@ at tag `v0.4.0-darkizuku-preview.1`.
 | Third-party patches for version `1.09` are taken as well as `01.09` | |
 | Add-ons (The Old Hunters on base-game dumps): the dumped add-ons in the launcher's DLC folder and in `<user>/addcont/<title id>/` are reported to the game as installed; the label is the end of each add-on's CONTENT_ID (`sce_sys/param.sfo`, category `ac`), else its folder's name. Their data ships with update 1.09 | `BB_DLC_DIR` |
 | FPS counter: frame rate, frame time and upscaler each on or off | `show_fps_rate`, `show_fps_frame_time`, `show_fps_upscaler` |
-| Keys navigate menus as the d-pad only while a menu has the screen: in the 0.4 s after a menu closed, W was a held d-pad up in the world (HP into Quicksilver Bullets) | |
+| Keyboard arrows alone navigate menus as the d-pad while a menu has the screen; WASD stays left-stick movement in menus and no longer suppresses mouse hover/click while WASD is held (before, in the 0.4 s after a menu closed, W was a held d-pad up in the world: HP into Quicksilver Bullets) | |
 
 Parts are adapted from [IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR),
 [AwesomeObserver/bloodborne_pc](https://github.com/AwesomeObserver/bloodborne_pc),

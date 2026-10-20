@@ -79543,7 +79543,7 @@ index deefd94..1d12ce5 100644
  uint32_t menu_confirm_button();
  uint32_t menu_back_button();
 diff --git a/gpu/shim/input/input.cpp b/gpu/shim/input/input.cpp
-index 30fdc4f..7630a3d 100644
+index 30fdc4f..9260d96 100644
 --- a/gpu/shim/input/input.cpp
 +++ b/gpu/shim/input/input.cpp
 @@ -54,7 +54,7 @@ bool host_mouse_stage_position(float& x,float& y) {
@@ -79555,20 +79555,45 @@ index 30fdc4f..7630a3d 100644
      const float present=std::min(window_w/ow,window_h/oh);
      if(!s.widescreen){
          x=(mouse_x-(window_w-ow*present)/2)/present*1920/ow;
-@@ -162,8 +162,10 @@ extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_
+@@ -146,6 +146,7 @@ extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_
+     p.touch_count=std::min<uint8_t>(d->touch_count,2);
+     for(int i=0;i<p.touch_count;i++)p.touch[i]={d->touch[i].x,d->touch[i].y,d->touch[i].id,true};
+     const bool menu=menu_pointer_in_menu();
++    bool keyboard_move_x=false,keyboard_move_y=false;
+     const bool camera=s.mouse_camera && mouse_camera_installed() && !menu && !host_text_entry_open() && focused;
+     wanted_relative=camera && device==InputDevice::KeyboardMouse;
+     mouse_camera_publish(s.mouse_sensitivity,s.mouse_invert_x,s.mouse_invert_y,
+@@ -158,27 +159,30 @@ extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_
+     else {
+         bool held[kBindCount]={};
+         if(keys)host_bindings_keys_held(keys,nkeys,held);
++        keyboard_move_x=held[kBindMoveL]||held[kBindMoveR];
++        keyboard_move_y=held[kBindMoveF]||held[kBindMoveB];
+         if(device==InputDevice::KeyboardMouse) {
              if(p.lx==128)p.lx=127;if(p.ly==128)p.ly=127;
              if(p.rx==128)p.rx=127;if(p.ry==128)p.ry=127;
          }
 -        // Separate immutable menu navigation from gameplay keys.
 -        if(menu && keys) {
 +        // Separate immutable menu navigation from gameplay keys (only while a menu has the screen:
-+        // menu_pointer_navigating).
++        // menu_pointer_navigating). The arrows navigate; the movement keys stay movement (left stick).
 +        const bool navigating=menu && menu_pointer_navigating();
 +        if(navigating && keys) {
              for(int i=kBindLookU;i<=kBindLookR;i++)held[i]=false;
-             if(keys[SDL_SCANCODE_UP]||held[kBindMoveF])p.buttons|=0x10;
-             if(keys[SDL_SCANCODE_DOWN]||held[kBindMoveB])p.buttons|=0x40;
-@@ -178,7 +180,7 @@ extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_
+-            if(keys[SDL_SCANCODE_UP]||held[kBindMoveF])p.buttons|=0x10;
+-            if(keys[SDL_SCANCODE_DOWN]||held[kBindMoveB])p.buttons|=0x40;
+-            if(keys[SDL_SCANCODE_LEFT]||held[kBindMoveL])p.buttons|=0x80;
+-            if(keys[SDL_SCANCODE_RIGHT]||held[kBindMoveR])p.buttons|=0x20;
++            if(keys[SDL_SCANCODE_UP])p.buttons|=0x10;
++            if(keys[SDL_SCANCODE_DOWN])p.buttons|=0x40;
++            if(keys[SDL_SCANCODE_LEFT])p.buttons|=0x80;
++            if(keys[SDL_SCANCODE_RIGHT])p.buttons|=0x20;
+             if(keys[SDL_SCANCODE_RETURN])p.buttons|=menu_confirm_button();
+             if(keys[SDL_SCANCODE_BACKSPACE])p.buttons|=menu_back_button();
+-            for(int i=kBindMoveF;i<=kBindMoveR;i++)held[i]=false;
+         }
+         host_bindings_apply(held,held[kBindStrongMod],p);
+         if(menu) {
              if(s.mouse_menu){
                  if(edges&1)menu_pointer_click();
                  if(edges&SDL_BUTTON_RMASK)p.buttons|=menu_back_button();
@@ -79577,6 +79602,20 @@ index 30fdc4f..7630a3d 100644
                  p.buttons|=menu_pointer_take_press();
              }
          }else {
+@@ -188,7 +192,12 @@ extern "C" int bbgpu_pc_input(BbPcPad* d,const bool* keys,int nkeys,int gamepad_
+                 p.rx=uint8_t(std::clamp(127+int(127*x),0,254));p.ry=uint8_t(std::clamp(127+int(127*y),0,254));}
+         }
+     }
+-    {std::lock_guard lock(state_lock);snapshot=p;}
++    PadState host_snapshot=p;
++    if(menu) {
++        if(keyboard_move_x)host_snapshot.lx=kStickRest;
++        if(keyboard_move_y)host_snapshot.ly=kStickRest;
++    }
++    {std::lock_guard lock(state_lock);snapshot=host_snapshot;}
+     d->buttons=p.buttons;d->lx=p.lx;d->ly=p.ly;d->rx=p.rx;d->ry=p.ry;d->l2=p.l2;d->r2=p.r2;
+     d->touch_count=p.touch_count;for(int i=0;i<p.touch_count;i++)d->touch[i]={p.touch[i].x,p.touch[i].y,p.touch[i].id};
+     return 1;
 diff --git a/gpu/shim/input/input.h b/gpu/shim/input/input.h
 index d4f3a31..5716e3f 100644
 --- a/gpu/shim/input/input.h
