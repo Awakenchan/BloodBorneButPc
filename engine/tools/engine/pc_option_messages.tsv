@@ -24,53 +24,55 @@
 # (engine/rebirth_script.h); the help column is unused.
 # A "\n" in the text is a line break.
 #
-# id	menu text (group 0xc8)	line help (group 0xc9)
-110006	PC Settings	Options added by the PC port.
-110007	PC Graphics	Graphics options added by the PC port.
-110008	PC Controls	The mouse: camera, sensitivity and the pointer; button prompts and controller icons.
-110009	Key Bindings	Keyboard and mouse bindings.
-110010	PC Effects	Post-processing: blur, bloom, vignette and lens effects.
-110011	PC Camera	The follow camera: field of view, distance and height.
-110012	Steam Deck	Frame rate and model detail for the Steam Deck.
-110013	PC Enhancements	Enable the mirror, rebirth and PC Camera controls. Each needs a restart.
-110014	PC Colour	Brightness, contrast, saturation and hue of the picture.
-110015	Quit to Desktop	Close the game and return to the desktop.
-116000	Vertical Sync	Wait for the display. Off can tear.
-116001	Fullscreen	Borderless, at the desktop resolution.
-116002	Mouse in Menus	Move and click to select.
-116003	Draw the Pointer	Show the mouse pointer.
-116004	Skip Company Logos	Skips the logos and the Exit Game warning at startup. Applies on the next run.
-116005	Frame Cap	30 is the game's own pace; 60 or more runs the game at 60 (applies on the next run). Above 60 only caps presentation.
-116007	FPS Counter	Frames per second actually presented, in the top right corner.
-116020	PC Settings	
+# Optional columns 4 and 5: Simplified Chinese text and help for msg/zhocn.
+# Other language bundles retain the English columns. Empty translations fall back to English.
+# id	menu text (group 0xc8)	line help (group 0xc9)	zh-CN text	zh-CN help
+110006	PC Settings	Options added by the PC port.	PC 设置	PC 移植版新增的选项。
+110007	PC Graphics	Graphics options added by the PC port.	PC 画质	PC 移植版新增的图形选项。
+110008	PC Controls	The mouse: camera, sensitivity and the pointer; button prompts and controller icons.	PC 控制	鼠标镜头、灵敏度和指针，以及按键提示和手柄图标。
+110009	Key Bindings	Keyboard and mouse bindings.	按键绑定	键盘和鼠标的按键设置。
+110010	PC Effects	Post-processing: blur, bloom, vignette and lens effects.	PC 特效	后处理：模糊、泛光、暗角和镜头特效。
+110011	PC Camera	The follow camera: field of view, distance and height.	PC 镜头	跟随镜头的视野、距离和高度。
+110012	Steam Deck	Frame rate and model detail for the Steam Deck.	Steam Deck	Steam Deck 的帧率和模型细节。
+110013	PC Enhancements	Enable the mirror, rebirth and PC Camera controls. Each needs a restart.	PC 增强功能	开启镜子、重生和 PC 镜头控制。各项均需重启游戏。
+110014	PC Colour	Brightness, contrast, saturation and hue of the picture.	PC 色彩	画面的亮度、对比度、饱和度和色相。
+110015	Quit to Desktop	Close the game and return to the desktop.	退出至桌面	关闭游戏并返回桌面。
+116000	Vertical Sync	Wait for the display. Off can tear.	垂直同步	等待显示器刷新。关闭后可能出现画面撕裂。
+116001	Fullscreen	Borderless, at the desktop resolution.	全屏	以桌面分辨率使用无边框全屏。
+116002	Mouse in Menus	Move and click to select.	菜单鼠标操作	移动鼠标并单击以选择。
+116003	Draw the Pointer	Show the mouse pointer.	显示鼠标指针	显示鼠标指针。
+116004	Skip Company Logos	Skips the logos and the Exit Game warning at startup. Applies on the next run.	跳过公司标志	跳过启动标志和退出游戏警告。下次启动时生效。
+116005	Frame Cap	30 is the game's own pace; 60 or more runs the game at 60 (applies on the next run). Above 60 only caps presentation.	帧率上限	30 为游戏原始帧率；60 或更高会以 60 帧运行游戏（下次启动时生效）。超过 60 的数值仅限制显示帧率。
+116007	FPS Counter	Frames per second actually presented, in the top right corner.	FPS 计数器	在右上角显示实际呈现的每秒帧数。
+116020	PC Settings		PC 设置
 116030	30	
 116031	60	
 116032	90	
 116033	120	
 116034	144	
-116035	Unlimited	
-117000	Ambient Occlusion	Screen-space ambient occlusion.
-117005	Motion Blur	The blur on fast camera and character movement. Requires a restart in this renderer.
-117001	Anti-Aliasing	The game's own anti-aliasing pass.
-117002	Depth of Field	Blurs distant scenery. Off keeps far views sharp. Requires a restart in this renderer.
-117020	PC Graphics	
-117003	Chromatic Aberration	The colour fringing at the edges of the frame. Requires a restart in this renderer.
-117006	Shadow Distance	How far sun and moon shadows reach. 0 is the game's own.
-117007	AO Strength	How dark corners and contact get. 5 is the game's own.
-117008	Fog	How thick the haze over distant streets is. 10 is the game's own.
-120020	PC Effects	
-120000	Bloom	The glow around bright light. 10 is the game's own.
-120001	Vignette	The darkened frame edges some areas use.
-125020	PC Colour	
-125004	Picture Tuning	Applies PC Graphics, PC Effects and PC Colour live. Off: the game's own picture. Moving one of their settings turns it on.
-125000	Brightness	How bright the picture is. 5 is the game's own.
-125001	Contrast	The difference between dark and bright. 5 is the game's own.
-125002	Saturation	Colour. 5 is the game's own; 0 is black and white.
-125003	Hue	Shifts every colour. 5 is the game's own.
-121020	PC Camera	
-121000	Camera Distance	How far behind the character the camera sits. 5 is the game's own.
-121001	Camera Height	How high above the character the camera looks. 5 is the game's own.
-117004	Output Resolution	Existing upscaler output setting. Restart required unless Live Resolution is enabled.
+116035	Unlimited		不限帧率
+117000	Ambient Occlusion	Screen-space ambient occlusion.	环境光遮蔽	屏幕空间环境光遮蔽。
+117005	Motion Blur	The blur on fast camera and character movement. Requires a restart in this renderer.	运动模糊	镜头和角色快速移动时的模糊效果。当前渲染器需要重启游戏。
+117001	Anti-Aliasing	The game's own anti-aliasing pass.	抗锯齿	游戏自带的抗锯齿处理。
+117002	Depth of Field	Blurs distant scenery. Off keeps far views sharp. Requires a restart in this renderer.	景深	模糊远处景物。关闭后远景保持清晰。当前渲染器需要重启游戏。
+117020	PC Graphics		PC 画质
+117003	Chromatic Aberration	The colour fringing at the edges of the frame. Requires a restart in this renderer.	色差	画面边缘的彩色偏移效果。当前渲染器需要重启游戏。
+117006	Shadow Distance	How far sun and moon shadows reach. 0 is the game's own.	阴影距离	日光和月光阴影的显示距离。0 为游戏原始值。
+117007	AO Strength	How dark corners and contact get. 5 is the game's own.	环境光遮蔽强度	角落和接触区域的暗部强度。5 为游戏原始值。
+117008	Fog	How thick the haze over distant streets is. 10 is the game's own.	雾效	远处街道薄雾的浓度。10 为游戏原始值。
+120020	PC Effects		PC 特效
+120000	Bloom	The glow around bright light. 10 is the game's own.	泛光	明亮光源周围的光晕。10 为游戏原始值。
+120001	Vignette	The darkened frame edges some areas use.	暗角	部分区域使用的画面边缘变暗效果。
+125020	PC Colour		PC 色彩
+125004	Picture Tuning	Applies PC Graphics, PC Effects and PC Colour live. Off: the game's own picture. Moving one of their settings turns it on.	画面调校	实时应用 PC 画质、PC 特效和 PC 色彩设置。关闭后使用游戏原始画面。调整这些设置中的任一项会将其开启。
+125000	Brightness	How bright the picture is. 5 is the game's own.	亮度	画面的明暗程度。5 为游戏原始值。
+125001	Contrast	The difference between dark and bright. 5 is the game's own.	对比度	暗部与亮部的差异。5 为游戏原始值。
+125002	Saturation	Colour. 5 is the game's own; 0 is black and white.	饱和度	色彩浓度。5 为游戏原始值；0 为黑白画面。
+125003	Hue	Shifts every colour. 5 is the game's own.	色相	整体偏移画面颜色。5 为游戏原始值。
+121020	PC Camera		PC 镜头
+121000	Camera Distance	How far behind the character the camera sits. 5 is the game's own.	镜头距离	镜头在角色后方的距离。5 为游戏原始值。
+121001	Camera Height	How high above the character the camera looks. 5 is the game's own.	镜头高度	镜头在角色上方的高度。5 为游戏原始值。
+117004	Output Resolution	Existing upscaler output setting. Restart required unless Live Resolution is enabled.	输出分辨率	现有的超分辨率输出设置。除非开启实时切换分辨率，否则需要重启游戏。
 117010	1280x720
 117011	1600x900
 117012	1920x1080
@@ -83,56 +85,56 @@
 117033	3840x1080 (32:9)
 117034	5120x1440 (32:9)
 117035	1280x800 (16:10)
-117036	960x600 (16:10, upscaled)
-117037	1024x640 (16:10, upscaled)
-118000	Mouse Camera	The mouse turns the camera outside menus.
-118004	Field of View	How wide the camera sees. 0 is the game's own; each step widens it 5%.
-118001	Camera Sensitivity	How fast the mouse turns the camera.
-118002	Mouse X-Axis	The mouse's horizontal camera direction.
-118003	Mouse Y-Axis	The mouse's vertical camera direction.
-118020	PC Controls
+117036	960x600 (16:10, upscaled)		960x600（16:10，超分辨率）
+117037	1024x640 (16:10, upscaled)		1024x640（16:10，超分辨率）
+118000	Mouse Camera	The mouse turns the camera outside menus.	鼠标控制镜头	在菜单外使用鼠标转动镜头。
+118004	Field of View	How wide the camera sees. 0 is the game's own; each step widens it 5%.	视野	镜头的可视范围。0 为游戏原始值；每级增加 5%。
+118001	Camera Sensitivity	How fast the mouse turns the camera.	镜头灵敏度	鼠标转动镜头的速度。
+118002	Mouse X-Axis	The mouse's horizontal camera direction.	鼠标 X 轴	鼠标控制镜头的水平方向。
+118003	Mouse Y-Axis	The mouse's vertical camera direction.	鼠标 Y 轴	鼠标控制镜头的垂直方向。
+118020	PC Controls		PC 控制
 # Key Bindings. The seven action rows' captions and line help are replaced by
 # the port at runtime (engine/option_menu.cpp); these are what they stand in
 # for until then.
-119000	Page	Left and right change the group of actions shown.
-119001	Action	
-119002	Action	
-119003	Action	
-119004	Action	
-119005	Action	
-119006	Action	
-119007	Action	
-119020	Key Bindings
-122000	Quit to Desktop	Close the game and return to the desktop.
-123020	Steam Deck	
-123000	Frame Rate	30 fps: the screen's own 1280x800. 60 fps: 960x600 upscaled by FSR 1, Model Detail Low. Frame rate: on restart.
-123001	Model Detail	Normal is the game's own. Low and Lowest swap in simpler models sooner and run faster; Full never swaps.
-123030	30 fps	
-123031	60 fps	
-123040	Full	
-123041	Normal	
-123042	Low	
-123043	Lowest	
-124020	PC Enhancements	
-124001	Hunter's Dream Mirror	Requires a restart. The Dream's mirror opens the appearance editor (the unused "Put on Disguise").
-124002	Rebirth at the Altar	Requires a restart. With the Yharnam Stone, the Altar of Despair resets level and attributes.
-124004	PC Camera Controls	Requires a restart. Adds System > PC Camera with field of view, camera distance and height.
-124003	Five Players	Requires a restart. Two invaders in Mensis, Mergo's Loft, the Frontier and the DLC; all players need it.
-920000	Keep this resolution?\nIt goes back in 10 seconds unless you choose YES.	
-920001	Quit the game and return to the desktop?	
-14000332	Rebirth in the Nightmare	
-14000333	The altar is silent.\nIt awaits one who bears a sacred heirloom,\na consciousness that is only asleep.	
-14000334	Too many Blood Echoes are held to be reborn.\nSpend some, then return to the altar.	
-14000335	Accept Rebirth	
-14000336	Undo Rebirth	
+119000	Page	Left and right change the group of actions shown.	分类	使用左右方向切换显示的动作分类。
+119001	Action		动作
+119002	Action		动作
+119003	Action		动作
+119004	Action		动作
+119005	Action		动作
+119006	Action		动作
+119007	Action		动作
+119020	Key Bindings		按键绑定
+122000	Quit to Desktop	Close the game and return to the desktop.	退出至桌面	关闭游戏并返回桌面。
+123020	Steam Deck		Steam Deck
+123000	Frame Rate	30 fps: the screen's own 1280x800. 60 fps: 960x600 upscaled by FSR 1, Model Detail Low. Frame rate: on restart.	帧率	30 帧：屏幕原生 1280x800。60 帧：960x600，经 FSR 1 放大，模型细节为低。帧率在重启后生效。
+123001	Model Detail	Normal is the game's own. Low and Lowest swap in simpler models sooner and run faster; Full never swaps.	模型细节	正常为游戏原始设置。低和最低会更早使用简化模型以提升性能；完整始终使用完整模型。
+123030	30 fps		30 帧
+123031	60 fps		60 帧
+123040	Full		完整
+123041	Normal		正常
+123042	Low		低
+123043	Lowest		最低
+124020	PC Enhancements		PC 增强功能
+124001	Hunter's Dream Mirror	Requires a restart. The Dream's mirror opens the appearance editor (the unused "Put on Disguise").	猎人梦境的镜子	需要重启游戏。梦境中的镜子可打开外貌编辑器（原作未启用的“乔装”功能）。
+124002	Rebirth at the Altar	Requires a restart. With the Yharnam Stone, the Altar of Despair resets level and attributes.	祭坛重生	需要重启游戏。持有雅南之石时，可在绝望祭坛重置等级和属性。
+124004	PC Camera Controls	Requires a restart. Adds System > PC Camera with field of view, camera distance and height.	PC 镜头控制	需要重启游戏。在“系统”中加入 PC 镜头页，可调整视野、镜头距离和高度。
+124003	Five Players	Requires a restart. Two invaders in Mensis, Mergo's Loft, the Frontier and the DLC; all players need it.	五人联机	需要重启游戏。在曼西斯、梅高的阁楼、边境和 DLC 区域允许两名入侵者；所有玩家均须启用。
+920000	Keep this resolution?\nIt goes back in 10 seconds unless you choose YES.		保留此分辨率？\n若不选择“是”，将在 10 秒后恢复。
+920001	Quit the game and return to the desktop?		退出游戏并返回桌面？
+14000332	Rebirth in the Nightmare		在噩梦中重生
+14000333	The altar is silent.\nIt awaits one who bears a sacred heirloom,\na consciousness that is only asleep.		祭坛寂静无声。\n它等待着携带神圣遗物之人，\n以及那尚在沉睡的意识。
+14000334	Too many Blood Echoes are held to be reborn.\nSpend some, then return to the altar.		持有的血之回响过多，无法重生。\n请先花掉一些，再返回祭坛。
+14000335	Accept Rebirth		接受重生
+14000336	Undo Rebirth		撤销重生
 
-118005	Camera Auto Rotation	Allow the camera to turn automatically while using the mouse.
-118006	Button Prompts	The button icons in menus and prompts. Automatic shows keys while the keyboard or mouse is in use.
-118010	Automatic	
-118011	Keyboard	
-118012	Controller	
-118007	Controller Icons	The controller's buttons in menus and prompts. Automatic shows Xbox buttons while an Xbox controller is in use.
-118013	Automatic	
+118005	Camera Auto Rotation	Allow the camera to turn automatically while using the mouse.	镜头自动转动	使用鼠标时允许镜头自动转动。
+118006	Button Prompts	The button icons in menus and prompts. Automatic shows keys while the keyboard or mouse is in use.	按键提示	菜单和提示中的按键图标。自动模式在使用键盘或鼠标时显示键盘按键。
+118010	Automatic		自动
+118011	Keyboard		键盘
+118012	Controller		手柄
+118007	Controller Icons	The controller's buttons in menus and prompts. Automatic shows Xbox buttons while an Xbox controller is in use.	手柄图标	菜单和提示中的手柄按键。自动模式在使用 Xbox 手柄时显示 Xbox 按键。
+118013	Automatic		自动
 118014	PlayStation	
 118015	Xbox	
 117040	2560x1080 (21:9)
@@ -142,5 +144,51 @@
 117044	5120x1440 (32:9)
 117045	5120x2160 (21:9)
 117046	7680x2160 (32:9)
-117047	Display (auto)
-117048	Custom (bbport.ini)
+117047	Display (auto)		显示器分辨率（自动）
+117048	Custom (bbport.ini)		自定义（bbport.ini）
+
+# Dynamic Key Bindings captions: 119100 + BindAction (bindings.h).
+119100	Move Forward	Left stick up.	向前移动	左摇杆向上。
+119101	Move Back	Left stick down.	向后移动	左摇杆向下。
+119102	Move Left	Left stick left.	向左移动	左摇杆向左。
+119103	Move Right	Left stick right.	向右移动	左摇杆向右。
+119104	Walk	Hold with the movement keys to walk.	步行	按住并配合方向键以步行。
+119105	Dodge / Sprint	Circle. Tap to dodge, hold to sprint.	闪避／冲刺	○ 键。轻按闪避，按住冲刺。
+119106	Lock On	R3. Lock on to a target, or reset the camera.	锁定目标	R3。锁定目标，或重置镜头。
+119107	Attack	R1. With the strong attack modifier held, R2.	攻击	R1。按住重攻击修饰键时改为 R2。
+119108	Strong Attack	R2. Hold to charge.	重攻击	R2。按住以蓄力。
+119109	Strong Attack Modifier	Held with Attack, attacks strong (R2).	重攻击修饰键	按住并攻击，执行重攻击（R2）。
+119110	Transform	L1. Transform the trick weapon.	武器变形	L1。变形技巧武器。
+119111	Firearm / Parry	L2. Shoot the left-hand weapon.	射击／枪反	L2。发射左手武器。
+119112	Blood Vial	Triangle. Restore HP with a Blood Vial.	使用采血瓶	△ 键。使用采血瓶恢复生命值。
+119113	Use Item	Square. Use the selected quick item.	使用道具	□ 键。使用当前快捷道具。
+119114	Interact	Cross. Talk, examine, pick up, open.	互动	× 键。交谈、调查、拾取、开启。
+119115	Switch Item	D-pad down. Cycle the quick items.	切换道具	方向键下。循环切换快捷道具。
+119116	Switch Right Weapon	D-pad right.	切换右手武器	方向键右。
+119117	Switch Left Weapon	D-pad left.	切换左手武器	方向键左。
+119118	D-pad Up	D-pad up.	方向键上	方向键上。
+119119	Gestures	The touchpad's left side.	动作姿势	触摸板左侧。
+119120	Personal Effects	The touchpad's right side.	随身物品	触摸板右侧。
+119121	Look Up	Right stick up, for the camera without the mouse.	向上看	右摇杆向上。不使用鼠标时控制镜头。
+119122	Look Down	Right stick down.	向下看	右摇杆向下。
+119123	Look Left	Right stick left.	向左看	右摇杆向左。
+119124	Look Right	Right stick right.	向右看	右摇杆向右。
+119125	Menu	Options. Open the menu.	菜单	Options 键。打开菜单。
+119126	Menu Confirm	OK, in menus.	菜单确认	在菜单中确认。
+119127	Menu Back	Return, in menus.	菜单返回	在菜单中返回。
+119128	Left Stick Press	L3.	按下左摇杆	L3。
+119129	Debug Menu	Opens and closes the developers' debug menu (the Debug Menu plugin).	调试菜单	打开或关闭开发者调试菜单（调试菜单插件）。
+
+# Dynamic Key Bindings pages and status text.
+119200	Movement		移动
+119201	Combat		战斗
+119202	Items and Gestures		道具与动作
+119203	Camera and Menus		镜头与菜单
+119204	Other		其他
+119210	Press again		再次确认
+119211	Restored		已恢复
+119212	All actions		全部动作
+119213	Press a key...		请按下按键…
+119214	Unbound		未绑定
+119215	 Enter or click to rebind, Delete to clear.		 按 Enter 或单击重新绑定，按 Delete 清除。
+119216	Restore Defaults	Every action back to its default key and mouse button. Enter or click, then again to confirm.	恢复默认	将所有动作恢复为默认键鼠绑定。按 Enter 或单击，再次操作以确认。

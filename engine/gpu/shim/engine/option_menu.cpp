@@ -119,10 +119,10 @@ struct Captions {
 
 // The repository's own text for a message id: the caption object's +0x00,
 // which the repository owns and which outlives anything the port holds.
-const char16_t* message_text(std::uint32_t id) {
+const char16_t* message_text(std::uint32_t id, bool help = false) {
     Captions c(id);
     const char16_t* t = nullptr;
-    std::memcpy(&t, &c.buf[0], sizeof(t));
+    std::memcpy(&t, &c.buf[help ? 0x40 : 0], sizeof(t));
     return t;
 }
 
@@ -292,6 +292,22 @@ void to_utf16(char16_t (&out)[N], const char* s) {
     out[i] = 0;
 }
 
+// Copy game-localized UTF-16 messages without treating UTF-8 bytes as characters.
+template <std::size_t N>
+void to_utf16(char16_t (&out)[N], const char16_t* s) {
+    std::size_t i = 0;
+    for (; s && s[i] && i + 1 < N; ++i) out[i] = s[i];
+    out[i] = 0;
+}
+template <std::size_t N>
+void key_message(char16_t (&out)[N], std::uint32_t id, const char* fallback, bool help = false) {
+    const char16_t* text = message_text(id, help);
+    if (text && *text) to_utf16(out, text);
+    else to_utf16(out, fallback);  // an older/modded message bundle
+}
+constexpr std::uint32_t kKeyActionText = 119100, kKeyPageText = 119200;
+static_assert(kBindCount == 30 && kBindPages == 5, "Update pc_option_messages.tsv for new binding rows");
+
 // The page names, as the tabs read. Plain ASCII: the line help and values
 // are drawn as HTML text, where an ampersand is not a character.
 const char* const kKeyPageNames[kBindPages] = {"Movement", "Combat", "Items and Gestures", "Camera and Menus",
@@ -320,7 +336,9 @@ std::chrono::steady_clock::time_point g_keys_reset_at;
 
 void keys_fill_reset_text(int row) {
     // Short: the value column cut "Press again to restore" to "Press again to".
-    to_utf16(g_keys_text[row], g_keys_reset == KeysReset::Armed  ? "Press again"
+    key_message(g_keys_text[row], g_keys_reset == KeysReset::Armed ? 119210
+                                   : g_keys_reset == KeysReset::Done ? 119211 : 119212,
+                g_keys_reset == KeysReset::Armed  ? "Press again"
                                : g_keys_reset == KeysReset::Done ? "Restored"
                                                                  : "All actions");
 }
@@ -336,20 +354,21 @@ void keys_fill_value(int row) {
     }
     char d[64];
     host_binding_describe(keys_action(row), d, sizeof(d));
-    to_utf16(g_keys_text[row], d);
+    if (std::strcmp(d, "Unbound") == 0) key_message(g_keys_text[row], 119214, d);
+    else to_utf16(g_keys_text[row], d);
 }
 
 void keys_fill(int page) {
     g_keys.page = (page % kBindPages + kBindPages) % kBindPages;
     g_keys_page = g_keys.page;
-    to_utf16(g_keys_label[0], "Page");
-    to_utf16(g_keys_help[0], "Left and right change the group of actions shown.");
-    to_utf16(g_keys_text[0], kKeyPageNames[g_keys.page]);
+    key_message(g_keys_label[0], kKeysPageRow, "Page");
+    key_message(g_keys_help[0], kKeysPageRow, "Left and right change the group of actions shown.", true);
+    key_message(g_keys_text[0], kKeyPageText + g_keys.page, kKeyPageNames[g_keys.page]);
     for (int r = 1; r < kKeysRows; ++r) {
         if (keys_row_reset(r)) {
-            to_utf16(g_keys_label[r], "Restore Defaults");
-            to_utf16(g_keys_help[r], "Every action back to its default key and mouse button. Enter or click, then again "
-                                     "to confirm.");
+            key_message(g_keys_label[r], 119216, "Restore Defaults");
+            key_message(g_keys_help[r], 119216, "Every action back to its default key and mouse button. Enter or click, then again "
+                                     "to confirm.", true);
             keys_fill_reset_text(r);
             continue;
         }
@@ -358,10 +377,12 @@ void keys_fill(int page) {
             continue;
         }
         const BindingInfo& b = host_binding_info(keys_action(r));
-        to_utf16(g_keys_label[r], b.label);
-        char help[160];
-        std::snprintf(help, sizeof(help), "%s Enter or click to rebind, Delete to clear.", b.help);
-        to_utf16(g_keys_help[r], help);
+        key_message(g_keys_label[r], kKeyActionText + keys_action(r), b.label);
+        char16_t help[160], instruction[96];
+        key_message(help, kKeyActionText + keys_action(r), b.help, true);
+        key_message(instruction, 119215, " Enter or click to rebind, Delete to clear.");
+        const std::u16string full_help = std::u16string(help) + instruction;
+        to_utf16(g_keys_help[r], full_help.c_str());
         keys_fill_value(r);
     }
 }
@@ -449,7 +470,7 @@ void keys_update(int row, bool focused) {
             redraw(g_keys.widget[row] + kChoiceList);
             g_keys_save.store(true, std::memory_order_relaxed);
         } else if (keys_row_bound(row) && (edge & decide)) {
-            to_utf16(g_keys_text[row], "Press a key...");
+            key_message(g_keys_text[row], 119213, "Press a key...");
             redraw(g_keys.widget[row] + kChoiceList);
             host_bind_capture_begin(keys_action(row));
         } else if (keys_row_reset(row) && (edge & decide)) {

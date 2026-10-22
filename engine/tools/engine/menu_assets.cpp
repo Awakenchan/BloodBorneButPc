@@ -1025,7 +1025,7 @@ struct Message {
     std::string text, help;
 };
 
-std::map<std::int32_t, Message> read_messages() {
+std::map<std::int32_t, Message> read_messages(bool chinese = false) {
     std::map<std::int32_t, Message> rows;
     std::string all(kMessagesTsv);
     std::size_t at = 0;
@@ -1048,14 +1048,19 @@ std::map<std::int32_t, Message> read_messages() {
             for (std::size_t k = 0; (k = t.find("\\n", k)) != std::string::npos; ++k) t.replace(k, 2, "\n");
             return t;
         };
-        rows[std::atoi(parts[0].c_str())] = Message{unescape(parts[1]), parts.size() > 2 ? unescape(parts[2]) : ""};
+        const auto column = [&](std::size_t english, std::size_t translated) {
+            const std::size_t index = chinese && parts.size() > translated && !parts[translated].empty()
+                                          ? translated : english;
+            return parts.size() > index ? unescape(parts[index]) : std::string{};
+        };
+        rows[std::atoi(parts[0].c_str())] = Message{column(1, 3), column(2, 4)};
     }
     return rows;
 }
 
 // The message bundle: the port's ids in groups 200 and 201, the dialog groups
 // and the event text.
-Bytes build_menu_messages(const Bytes& raw) {
+Bytes build_menu_messages(const Bytes& raw, bool chinese = false) {
     Bytes payload, dcx_head;
     if (raw.size() >= 4 && std::memcmp(raw.data(), "DCX\0", 4) == 0) {
         if (raw.size() < 0x2c || std::memcmp(raw.data() + 0x28, "DFLT", 4) != 0) throw Fail{"the message bundle is not DFLT"};
@@ -1068,7 +1073,7 @@ Bytes build_menu_messages(const Bytes& raw) {
         payload = raw;
     }
     Bnd4 bnd = bnd_read(payload);
-    const auto rows = read_messages();
+    const auto rows = read_messages(chinese);
     std::set<std::uint32_t> added;
     for (BndFile& f : bnd.files) {
         if (f.id != kMenuText && f.id != kLineHelp && f.id != kDialogText && f.id != kScreenDialogText && f.id != kEventText) continue;
@@ -1169,7 +1174,7 @@ int main(int argc, char** argv) {
         Bytes raw(static_cast<std::size_t>(in.tellg()));
         in.seekg(0);
         if (!in.read(reinterpret_cast<char*>(raw.data()),raw.size())) throw Fail{"read source"};
-        Bytes result=args[1]=="movie" ? build_option_movie(raw) : args[1]=="rebirth" ? build_rebirth(raw) : build_menu_messages(raw);
+        Bytes result=args[1]=="movie" ? build_option_movie(raw) : args[1]=="rebirth" ? build_rebirth(raw) : build_menu_messages(raw, args[2].parent_path().filename() == "zhocn");
         std::ofstream out(args[3],std::ios::binary|std::ios::trunc);
         if (!out || !out.write(reinterpret_cast<const char*>(result.data()),result.size())) throw Fail{"write cache"};
         return 0;
