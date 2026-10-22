@@ -243,6 +243,38 @@
             </Setter>
         </Style>
 
+        <!-- The sidebar in the Modern layout (Settings › Navigation: Sidebar): the tabs' look, the
+             chosen page filled as a chosen tab is. -->
+        <Style x:Key="GlassSidebarItem" TargetType="RadioButton">
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Margin" Value="8,1" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bg" Background="Transparent" CornerRadius="15" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource SidebarItemHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource SegmentSelectedBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="SidebarIcon" TargetType="ui:SymbolIcon">
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Width" Value="16" />
@@ -347,8 +379,7 @@
 
                 <StackPanel x:Name="TitleTools" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
                     <Button x:Name="TitleUpdate" Style="{StaticResource TitleIcon}" Click="TitleUpdate_Click" Margin="0,0,6,0"
-                            Visibility="Collapsed" BorderBrush="{DynamicResource GoodTextBrush}" BorderThickness="1"
-                            ToolTip="{loc:Tr &#x27;A new launcher version is available&#x27;}">
+                            Visibility="Collapsed" ToolTip="{loc:Tr &#x27;A new launcher version is available&#x27;}">
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="ArrowDownload24" FontSize="13" Margin="0,0,5,0"
                                            Foreground="{DynamicResource GoodTextBrush}" />
@@ -386,12 +417,13 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Classic: the source-list sidebar. -->
+            <!-- Classic, and Modern with Settings › Navigation: Sidebar: the pages in groups (the hunt, how it
+                 looks, the workshop's mods and cheats, the Lantern Engine itself). -->
             <Border x:Name="Sidebar" Grid.Column="0" Grid.RowSpan="2" Width="196" Visibility="Collapsed"
                     Background="{DynamicResource WindowBaseBrush}"
                     BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,1,0">
                 <DockPanel Margin="0,16,0,10">
-                    <RadioButton DockPanel.Dock="Bottom" GroupName="Classic" Style="{StaticResource SidebarItem}"
+                    <RadioButton x:Name="ClassicSettingsBottom" DockPanel.Dock="Bottom" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                  Tag="{x:Type views:SettingsPage}" Checked="SidebarItem_Checked">
                         <StackPanel Orientation="Horizontal">
                             <ui:SymbolIcon Symbol="Settings24" Style="{StaticResource SidebarIcon}" />
@@ -399,26 +431,12 @@
                         </StackPanel>
                     </RadioButton>
                     <StackPanel>
-                        <TextBlock Text="{loc:Tr &#x27;GAME&#x27;}" Style="{StaticResource SidebarHeader}" />
+                        <TextBlock Text="{loc:Tr &#x27;HUNT&#x27;}" Style="{StaticResource SidebarHeader}" />
                         <RadioButton x:Name="ClassicPlay" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:PlayPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
                                 <ui:SymbolIcon Symbol="Play24" Style="{StaticResource SidebarIcon}" />
                                 <TextBlock Text="{loc:Tr &#x27;Play&#x27;}" />
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton GroupName="Classic" Style="{StaticResource SidebarItem}"
-                                     Tag="{x:Type views:DisplayPage}" Checked="SidebarItem_Checked">
-                            <StackPanel Orientation="Horizontal">
-                                <ui:SymbolIcon Symbol="Desktop24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="{loc:Tr &#x27;Display&#x27;}" />
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton GroupName="Classic" Style="{StaticResource SidebarItem}"
-                                     Tag="{x:Type views:GraphicsPage}" Checked="SidebarItem_Checked">
-                            <StackPanel Orientation="Horizontal">
-                                <ui:SymbolIcon Symbol="Sparkle24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="{loc:Tr &#x27;Graphics&#x27;}" />
                             </StackPanel>
                         </RadioButton>
                         <RadioButton x:Name="ClassicControls" GroupName="Classic" Style="{StaticResource SidebarItem}"
@@ -435,13 +453,6 @@
                                 <TextBlock Text="{loc:Tr &#x27;Trophies&#x27;}" />
                             </StackPanel>
                         </RadioButton>
-                        <RadioButton x:Name="ClassicMods" GroupName="Classic" Style="{StaticResource SidebarItem}"
-                                     Tag="{x:Type views:ModsPage}" Checked="SidebarItem_Checked">
-                            <StackPanel Orientation="Horizontal">
-                                <ui:SymbolIcon Symbol="PuzzlePiece24" Style="{StaticResource SidebarIcon}" />
-                                <TextBlock Text="{loc:Tr &#x27;Mods &amp; patches&#x27;}" />
-                            </StackPanel>
-                        </RadioButton>
                         <RadioButton x:Name="ClassicOnline" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:OnlinePage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">
@@ -449,7 +460,37 @@
                                 <TextBlock Text="{loc:Tr &#x27;Online&#x27;}" />
                             </StackPanel>
                         </RadioButton>
-                        <TextBlock Text="{loc:Tr &#x27;SYSTEM&#x27;}" Style="{StaticResource SidebarHeader}" Margin="18,18,0,6" />
+                        <TextBlock Text="{loc:Tr &#x27;SIGHT&#x27;}" Style="{StaticResource SidebarHeader}" Margin="18,18,0,6" />
+                        <RadioButton GroupName="Classic" Style="{StaticResource SidebarItem}"
+                                     Tag="{x:Type views:DisplayPage}" Checked="SidebarItem_Checked">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Desktop24" Style="{StaticResource SidebarIcon}" />
+                                <TextBlock Text="{loc:Tr &#x27;Display&#x27;}" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton GroupName="Classic" Style="{StaticResource SidebarItem}"
+                                     Tag="{x:Type views:GraphicsPage}" Checked="SidebarItem_Checked">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Sparkle24" Style="{StaticResource SidebarIcon}" />
+                                <TextBlock Text="{loc:Tr &#x27;Graphics&#x27;}" />
+                            </StackPanel>
+                        </RadioButton>
+                        <TextBlock Text="{loc:Tr &#x27;WORKSHOP&#x27;}" Style="{StaticResource SidebarHeader}" Margin="18,18,0,6" />
+                        <RadioButton x:Name="ClassicMods" GroupName="Classic" Style="{StaticResource SidebarItem}"
+                                     Tag="{x:Type views:ModsPage}" Checked="SidebarItem_Checked">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="PuzzlePiece24" Style="{StaticResource SidebarIcon}" />
+                                <TextBlock Text="{loc:Tr &#x27;Mods &amp; patches&#x27;}" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="ClassicCheats" GroupName="Classic" Style="{StaticResource SidebarItem}"
+                                     Tag="{x:Type views:CheatsPage}" Checked="SidebarItem_Checked">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Beaker24" Style="{StaticResource SidebarIcon}" />
+                                <TextBlock Text="{loc:Tr &#x27;Cheats&#x27;}" />
+                            </StackPanel>
+                        </RadioButton>
+                        <TextBlock Text="{loc:Tr &#x27;LANTERN&#x27;}" Style="{StaticResource SidebarHeader}" Margin="18,18,0,6" />
                         <RadioButton x:Name="ClassicSettings" GroupName="Classic" Style="{StaticResource SidebarItem}"
                                      Tag="{x:Type views:SettingsPage}" Checked="SidebarItem_Checked">
                             <StackPanel Orientation="Horizontal">

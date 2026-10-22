@@ -108,6 +108,8 @@ Required by the engine (it stops without them; every family above has them): Vul
   validation, `play` compiles in play from an empty cache.
 - `bb-shader-lab --check-cache <cache folder>`: what the warm-up would build, and why the rest is
   left out, without a GPU.
+- `tools/chunk_buffer_probe.cpp`: the PC memory model's guest memory chunk calls on Windows (host
+  import, the chunk route, the arena's binding) alone, for the validation layer on any driver.
 
 ## Validation baseline
 
@@ -130,6 +132,29 @@ card itself keeps its vertex input.
 `run.sh --software` in a source checkout builds first: export the build environment (CC, CXX,
 PKG_CONFIG_PATH, CMAKE_PREFIX_PATH as for build.sh) before the script.
 
+The shader catalogs of 0.9.37 beta 9 (docs/pipeline_compiles.md), each seeded into an empty cache with
+its own profile and checked with `bb-shader-lab --check-cache` (the layout rule above without a GPU:
+each pipeline's layout as the warm-up builds it, against its modules' SPIR-V):
+
+| catalog | keys built at the start | layouts that do not match |
+|---|---|---|
+| NVIDIA (RTX 5060 profile) | 869 of 877 | 0 of 828 |
+| AMD, new (RX 7800 XT profile) | 771 of 771 | 0 of 728 |
+
+The AMD catalog is a widening (AMD cards build 771 pipelines at the start where they built none), so it
+went through the warm-up under the validation layer as `rdna` (2026-10-23, WSL with 12 GB): recompiled
+for that profile 738 of 738 keys, all 738 built at the start, 375 messages, every one of a kind the
+baseline above accepts: `Location-06272` (the motion varyings), `OpEntryPoint-08743` only for
+tessellation control shaders reading locations their vertex stage does not write (the catalog has more
+tessellation pipelines than the dev cache; the same modules compile in play), and `pNext-pNext`. No
+layout error (`07988`/`07990`).
+
+lavapipe runs out of room for GPU arenas: its largest buffer is just under 4 GiB, an arena is 4 GiB, and
+`BufferCache::GetArena` fails (`ErrorOutOfDeviceMemory`, exit 23) once the game's memory needs a new
+one, a minute or two into a start (with beta 8's GX region every time). The warm-up runs before that,
+so `warmup` still validates the pipelines; `play` does not get far. Linux GPU assertions now print their
+call stack (`shim/common/assert.cpp`), which found this.
+
 ## Known driver behaviour
 
 - **AMD (Windows driver 2.0.x)** ends the process (0xC0000409) in `vkCreateGraphicsPipelines` on
@@ -141,7 +166,10 @@ PKG_CONFIG_PATH, CMAKE_PREFIX_PATH as for build.sh) before the script.
   vertex input is baked into every pipeline (GetVertexInputs).
 - **NVIDIA, the PC memory model**: the arena lists no memory type a host import may use, and the
   engine binds imports anyway, outside the Vulkan spec ("Guest memory: ... outside the Vulkan spec").
-  Treat it as unproven on every driver.
+  Treat it as unproven on every driver: the arena is not made for external memory either
+  (`VUID-VkSparseMemoryBind-memory-02731`), and on lavapipe the GPU reads other bytes through such a
+  binding than the CPU wrote (`tools/chunk_buffer_probe.cpp`). `BB_CHUNK_BUFFERS=1` moves bindings in
+  one chunk off it (EMULATION_REMOVAL_PLAN.md, step 6 item 2).
 - **NVIDIA Pascal (GTX 10)**: the 580 branch is the last driver; features in later drivers never
   reach these cards.
 

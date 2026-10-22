@@ -140,19 +140,20 @@ void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
 }
 
 Buffer::Buffer(const Vulkan::Instance& instance, u64 size_bytes_, vk::DeviceMemory memory,
+               vk::ExternalMemoryHandleTypeFlagBits handle_type, vk::BufferUsageFlags usage,
                std::string_view debug_name)
     : size_bytes{size_bytes_}, mem_type{MemoryType::HostCached},
       buffer{instance.GetDevice(), instance.GetAllocator()} {
+    // bbport: the handle type the memory came with (it was the dma-buf type on Windows too, where
+    // the memory is a host import: outside the spec), and the usage of the chunk's own buffer:
+    // vertex, index and indirect too, no texel usage (no buffer views are made).
     const vk::ExternalMemoryBufferCreateInfo external{
-        .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eDmaBufEXT,
+        .handleTypes = handle_type,
     };
     const vk::BufferCreateInfo buffer_ci = {
         .pNext = &external,
         .size = size_bytes,
-        .usage = vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst |
-                 vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer |
-                 vk::BufferUsageFlagBits::eUniformTexelBuffer |
-                 vk::BufferUsageFlagBits::eStorageTexelBuffer,
+        .usage = usage,
         .sharingMode = vk::SharingMode::eExclusive,
     };
     const auto device = instance.GetDevice();

@@ -71,6 +71,7 @@
 #include "shader_recompiler/specialization.h"
 #include "common/hash.h"
 #include "common/serdes.h"
+#include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 
 namespace fs = std::filesystem;
@@ -903,6 +904,197 @@ int RecompileBatch(const fs::path& dir, size_t start, const fs::path& only) {
     return 0;
 }
 
+// --- Keys of a stage compiled beside another fragment shader (bb-shader-lab --fix-keys <cache>) --
+// bbport (docs/pipeline_compiles.md, 0.9.37 beta 9): engines up to 0.9.37 beta 6 reused a module
+// compiled after one fragment shader beside another, whose bindings end elsewhere. The warm-up leaves
+// such keys out (LoadGraphicsPipeline: each stage's bindings start where the stages before it end),
+// so the pipeline compiled in play on every PC a catalog with them seeded (150 of the catalog's
+// 1085 keys). Here each such stage is compiled again from its state with the start the key's
+// earlier stages leave, or a permutation of its program that has that start is used, and the key
+// names it: the warm-up then builds it. A child process (RecompileCache): a stage the compiler
+// refuses ends only this.
+
+std::set<size_t> UsedPerms(const fs::path& cache, u64 pgm);
+
+/// One permutation's record (its .meta), as the warm-up reads it.
+struct StageRecord {
+    u64 pgm = 0;
+    size_t perm = 0;
+    std::unique_ptr<Info> info;
+    StageSpecialization spec{};
+    std::optional<Gcn::FetchShaderData> fetch;
+};
+
+int FixKeys(const fs::path& dir) {
+    const auto profile_bytes = ReadAll(dir / "profile.bin");
+    Profile profile{};
+    if (profile_bytes.size() != sizeof(Profile)) {
+        std::printf("\n@FIXED 0 0 0\n");
+        return 3;
+    }
+    std::memcpy(&profile, profile_bytes.data(), sizeof(Profile));
+    std::error_code error;
+    std::map<u64, std::unique_ptr<StageRecord>> records; // by permutation hash; null: unreadable
+    const auto record = [&](u64 hash) -> StageRecord* {
+        auto& slot = records[hash];
+        if (slot) return slot.get();
+        char name[40];
+        std::snprintf(name, sizeof(name), "0x%016llx.meta", (unsigned long long)hash);
+        const auto meta = ReadAll(dir / name);
+        if (meta.empty()) return nullptr;
+        auto r = std::make_unique<StageRecord>();
+        r->info = std::make_unique<Info>();
+        r->spec.info = r->info.get();
+        Serialization::Archive ar{std::vector<u8>(meta.begin(), meta.end())};
+        try {
+            if (!Vulkan::LoadShaderMeta(ar, *r->info, r->fetch, r->spec, r->perm, hash)) return nullptr;
+        } catch (const std::exception&) {
+            return nullptr;
+        }
+        r->pgm = r->info->pgm_hash;
+        slot = std::move(r);
+        return slot.get();
+    };
+    // `from` with its bindings starting at `start`: a permutation of its program that has that
+    // specialization, else one compiled now from `from`'s state. 0 when neither is possible.
+    std::map<std::tuple<u64, size_t, u32, u32>, u64> made; // (pgm, perm, unified, buffer) -> hash
+    Pools pools;
+    u32 compiled = 0;
+    const auto with_start = [&](StageRecord& from, Backend::Bindings start) -> u64 {
+        const auto made_key = std::make_tuple(from.pgm, from.perm, start.unified, start.buffer);
+        if (const auto it = made.find(made_key); it != made.end()) return it->second;
+        start.user_data = from.spec.start.user_data;
+        StageSpecialization wanted = from.spec;
+        wanted.start = start;
+        const auto used = UsedPerms(dir, from.pgm);
+        // The start compared as the warm-up does: the specialization's own comparison leaves it out
+        // for a stage without guest resources.
+        for (const size_t perm : used) {
+            StageRecord* other = record(HashCombine(from.pgm, u64(perm)));
+            if (other && other->pgm == from.pgm && other->spec == wanted &&
+                other->spec.start.unified == start.unified && other->spec.start.buffer == start.buffer) {
+                return made[made_key] = HashCombine(from.pgm, u64(perm));
+            }
+        }
+        char state_name[48];
+        std::snprintf(state_name, sizeof(state_name), "0x%016llx_%zu", (unsigned long long)from.pgm, from.perm);
+        const fs::path state_path = dir / (std::string(state_name) + Native::StateExtension);
+        LoadedCapture cap;
+        if (cap.Load(state_path)) return made[made_key] = 0;
+        Gcn::fetch_override = cap.fetch.empty() && cap.header.fetch_sgpr != ~0u && from.spec.fetch_shader_data
+                                  ? &*from.spec.fetch_shader_data
+                                  : nullptr;
+        ShaderParams params = cap.Params();
+        Info info(HwStage(cap.header.hw_stage), SwStage(cap.header.sw_stage), params);
+        RuntimeInfo runtime_info = cap.Runtime();
+        const auto program = TranslateProgram(cap.code, pools, info, runtime_info, profile);
+        Backend::Bindings bindings = start;
+        const auto spv = Backend::SPIRV::EmitSPIRV(profile, runtime_info, program, bindings);
+        StageSpecialization spec(info, runtime_info, profile, start);
+        if (!(spec == wanted)) return made[made_key] = 0; // the state compiles otherwise now
+        size_t perm = used.empty() ? 0 : *used.rbegin() + 1;
+        if (perm >= 4096) return made[made_key] = 0;
+        const u64 hash = HashCombine(from.pgm, u64(perm));
+        char name[48];
+        std::snprintf(name, sizeof(name), "0x%016llx_%zu", (unsigned long long)from.pgm, perm);
+        const auto meta = Vulkan::SerializeShaderMeta(info, spec, hash, perm);
+        const auto state = ReadAll(state_path);
+        if (!WriteAtomically(dir / (std::string(name) + Native::StateExtension), state.data(), state.size()) ||
+            !WriteAtomically(dir / (std::string(name) + ".spv"), spv.data(), spv.size() * sizeof(u32)) ||
+            !WriteAtomically(MetaPath(dir, from.pgm, perm), meta.data(), meta.size())) {
+            return made[made_key] = 0;
+        }
+        ++compiled;
+        return made[made_key] = hash;
+    };
+
+    std::vector<fs::path> keys;
+    for (const auto& entry : fs::directory_iterator(dir, error)) {
+        if (entry.path().extension() == ".key") keys.push_back(entry.path());
+    }
+    std::sort(keys.begin(), keys.end());
+    u32 fixed = 0, failed = 0;
+    for (const auto& path : keys) {
+        const auto bytes = ReadAll(path);
+        u32 version = 0, is_compute = 1;
+        if (bytes.size() >= 8) {
+            std::memcpy(&version, bytes.data(), 4);
+            std::memcpy(&is_compute, bytes.data() + 4, 4);
+        }
+        if (!(version == 5 || version == 6) || is_compute != 0) continue;
+        auto hashes = KeyStageHashes(bytes);
+        Backend::Bindings expected{};
+        bool changed = false, ok = true;
+        for (size_t stage = 0; stage < hashes.size() && stage < 5 && ok; ++stage) {
+            if (!hashes[stage]) continue;
+            StageRecord* r = record(hashes[stage]);
+            if (!r) {
+                ok = false;
+                break;
+            }
+            for (const auto& image : r->info->images) {
+                ok = ok && image.mip_fallback_mode != MipStorageFallbackMode::DynamicIndex;
+            }
+            if (!ok) break;
+            if (r->spec.start.unified != expected.unified || r->spec.start.buffer != expected.buffer) {
+                const u64 target = with_start(*r, expected);
+                if (!target) {
+                    ok = false;
+                    break;
+                }
+                hashes[stage] = target;
+                changed = true;
+            }
+            expected.buffer += u32(r->info->buffers.size());
+            expected.unified += u32(r->info->buffers.size() + r->info->images.size() + r->info->samplers.size());
+        }
+        if (!changed) continue;
+        if (!ok) {
+            ++failed;
+            continue;
+        }
+        // The key again with the new stages, under the name the engine gives it (g_ and its hash);
+        // the pipeline's state after the key stays as it was. The file of that name is written over:
+        // the engine's own save of the same pipeline is the same key, and a seeded key keeps its
+        // catalog name while its stages are renumbered (SeedCache), so that name may hold a key
+        // with old stages.
+        Serialization::Archive ar{std::vector<u8>(bytes.begin() + 8, bytes.end())};
+        Vulkan::GraphicsPipelineKey key;
+        if (!key.Deserialize(ar)) {
+            ++failed;
+            continue;
+        }
+        const std::vector<u8> rest(ar.CurrPtr(), ar.CurrPtr() + ar.Remaining());
+        Serialization::Archive check;
+        key.Serialize(check);
+        if (check.TakeOff().size() + rest.size() + 8 != bytes.size()) {
+            ++failed; // the key does not read back as it was written: left as it is
+            continue;
+        }
+        for (size_t stage = 0; stage < hashes.size() && stage < key.stage_hashes.size(); ++stage) {
+            key.stage_hashes[stage] = hashes[stage];
+        }
+        Serialization::Archive out;
+        key.Serialize(out);
+        std::vector<u8> written(bytes.begin(), bytes.begin() + 8);
+        const auto key_bytes = out.TakeOff();
+        written.insert(written.end(), key_bytes.begin(), key_bytes.end());
+        written.insert(written.end(), rest.begin(), rest.end());
+        char name[48];
+        std::snprintf(name, sizeof(name), "g_0x%016llx.key",
+                      (unsigned long long)std::hash<Vulkan::GraphicsPipelineKey>{}(key));
+        const fs::path target = dir / name;
+        if (!WriteAtomically(target, written.data(), written.size())) {
+            ++failed;
+            continue;
+        }
+        if (target != path) fs::remove(path, error);
+        ++fixed;
+    }
+    std::printf("\n@FIXED %u %u %u\n", fixed, compiled, failed);
+    return 0;
+}
+
 /// Parent: batches in child processes; a permutation that crashes the compiler is left out and
 /// the next batch starts after it.
 int RecompileCache(const fs::path& self, const fs::path& dir, const fs::path& only = {}) {
@@ -983,10 +1175,26 @@ int RecompileCache(const fs::path& self, const fs::path& dir, const fs::path& on
             std::printf("  %u: %s\n", n, why.c_str());
         }
     }
+    // Keys of a stage compiled beside another fragment shader, made buildable (FixKeys), in a child.
+    unsigned fixed = 0, fix_compiled = 0, fix_failed = 0;
+    {
+#ifdef _WIN32
+        DWORD fix_code = 0;
+        const std::string fix_out = RunSelf(self, L"--fix-keys \"" + dir.wstring() + L"\"", fix_code);
+#else
+        int fix_code = 0;
+        const std::string fix_out = RunSelf(self, "--fix-keys " + ShellQuote(dir.string()), fix_code);
+#endif
+        if (const auto at = fix_out.find("@FIXED "); at != std::string::npos) {
+            std::sscanf(fix_out.c_str() + at, "@FIXED %u %u %u", &fixed, &fix_compiled, &fix_failed);
+        }
+        (void)fix_code;
+    }
     std::printf("Shader cache: %zu shaders recompiled for this engine, %zu left out (changed or "
                 "without a state), %zu the compiler refused, %u pipeline keys without their shaders "
-                "removed\n",
-                kept, left, crashed, orphan_keys);
+                "removed, %u keys of an older engine made buildable at the start (%u shaders compiled "
+                "for them, %u not)\n",
+                kept, left, crashed, orphan_keys, fixed, fix_compiled, fix_failed);
     return 0;
 }
 
@@ -2789,7 +2997,7 @@ int main(int argc, char** argv) {
     if (argc >= 3 && (std::strcmp(argv[1], "--recompile-batch") == 0 || std::strcmp(argv[1], "--one") == 0 ||
                       std::strcmp(argv[1], "--walk-null") == 0 || std::strcmp(argv[1], "--census-one") == 0 ||
                       std::strcmp(argv[1], "--tables-one") == 0 ||
-                      std::strcmp(argv[1], "--curves-one") == 0)) {
+                      std::strcmp(argv[1], "--curves-one") == 0 || std::strcmp(argv[1], "--fix-keys") == 0)) {
         // A child the compiler ends (an assertion's breakpoint, a fault) is gone at once: Windows'
         // error reporting took seconds for each, over a minute for a cache with 17 of them.
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
@@ -2802,6 +3010,9 @@ int main(int argc, char** argv) {
 #endif
     if (argc >= 3 && std::strcmp(argv[1], "--check-cache") == 0) {
         return CheckCache(argv[2]);
+    }
+    if (argc >= 3 && std::strcmp(argv[1], "--fix-keys") == 0) {
+        return FixKeys(argv[2]);
     }
     if (argc >= 4 && std::strcmp(argv[1], "--export-catalog") == 0) {
         return ExportCatalog(argv[2], argv[3]);

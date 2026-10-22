@@ -107,15 +107,41 @@ def catalog_vendor(catalog):
         return 0
 
 
+def cache_vendor(folder):
+    """The vendor of the GPU the engine last ran a cache on: its driver cache beside the folder
+    ("BPBC", the vendor at 8); 0 before the first start."""
+    try:
+        with open(str(folder) + '.vkcache', 'rb') as f:
+            header = f.read(12)
+    except OSError:
+        return 0
+    return int.from_bytes(header[8:12], 'little') if len(header) == 12 and header[:4] == b'BPBC' else 0
+
+
 def seed(cache, catalogs, game, eboot, lab):
     if os.environ.get('BB_SHADER_CATALOG', '1') == '0' or not lab.is_file() or not catalogs.is_dir():
         return
-    for catalog in sorted(p for p in catalogs.iterdir() if p.is_dir()):
-        target = cache / catalog.name
+    # A game's catalog per GPU vendor (start/main.cpp SeedGpuCache): shader-catalog/<game> and
+    # shader-catalog/<vendor>/<game>. One per game: of the vendor the engine last ran the cache on,
+    # else of this PC's adapters NVIDIA first, then AMD, then Intel.
+    by_game = {}
+    for entry in sorted(p for p in catalogs.iterdir() if p.is_dir()):
+        if (entry / 'profile.bin').is_file():
+            by_game.setdefault(entry.name, []).append(entry)
+            continue
+        for sub in sorted(p for p in entry.iterdir() if p.is_dir() and (p / 'profile.bin').is_file()):
+            by_game.setdefault(sub.name, []).append(sub)
+    present = gpu_vendors()
+    for name, candidates in sorted(by_game.items()):
+        target = cache / name
+        vendor = cache_vendor(target) or next((v for v in (0x10DE, 0x1002, 0x8086) if v in present), 0)
+        catalog = next((c for c in candidates if vendor and catalog_vendor(c) == vendor), None)
+        if catalog is None:
+            continue
         # The first start has no cache yet, so no profile of this GPU (the engine writes it): the
-        # catalog's own is used when a display adapter is of the catalog's vendor; another GPU of
-        # that vendor has its cache started again by the engine and seeded at the next start.
-        if not target.exists() and (catalog / 'profile.bin').is_file() and catalog_vendor(catalog) in gpu_vendors():
+        # catalog's own is used; another GPU of that vendor has its cache started again by the
+        # engine and seeded at the next start.
+        if not target.exists():
             target.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(catalog / 'profile.bin', target / 'profile.bin')
             log(f"GPU cache {catalog.name}: first start; the shader catalog's GPU profile used until the engine checks it")

@@ -797,6 +797,9 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
 
 bool Runtime::IsBufferAccessed(const VideoCore::Buffer* handle, u64 offset, u64 size,
                                bool check_read_access) {
+    if (aliased) {
+        return true;
+    }
     const AddressRange range = {
         .resource = reinterpret_cast<u64>(handle),
         .range_start = offset,
@@ -823,6 +826,16 @@ u64 Runtime::WatchBufferWrites(const VideoCore::Buffer* handle, u64 offset, u64 
 bool Runtime::BufferUnwritten(u64 token) const {
     const auto& watch = buffer_watches[token % buffer_watches.size()];
     return token != 0 && watch.token == token && !watch.written;
+}
+
+void Runtime::NoteAliasedAccess(const VideoCore::Buffer* handle, u64 offset, u64 size) {
+    aliased = AliasedAccess{reinterpret_cast<u64>(handle), offset, offset + size};
+    for (auto& watch : buffer_watches) {
+        if (!watch.written) {
+            watch.written = true;
+            --live_watches;
+        }
+    }
 }
 
 void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size,
@@ -870,6 +883,10 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
         barrier_tracker.InsertRange(range, access);
         memo = {range.resource, range.range_start, range.range_end, access_epoch, u32(access)};
     };
+    if (aliased && !aliased->recorded && range.resource == aliased->resource &&
+        offset < aliased->end && aliased->start < offset + size) {
+        aliased->recorded = true;
+    }
     if (src_access & WRITE_MASK) {
         insert(Access::Write);
         if (live_watches != 0) {
@@ -892,6 +909,11 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
 
 void Runtime::FlushBarriers() {
     BeforeImageAccess();
+    // bbport BB_CHUNK_BUFFERS: an aliased access is done with once this barrier follows it (or
+    // after a few barriers without it: a binding taken for residency only is never accessed).
+    if (aliased && (aliased->recorded || ++aliased->flushes > 4)) {
+        aliased.reset();
+    }
     vk::DependencyInfo dep_info{};
 
     if (memory_barrier.srcStageMask) {

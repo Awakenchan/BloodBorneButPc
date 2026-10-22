@@ -128,6 +128,87 @@ Bytes MirrorLayout(const Bytes& raw) {
     return b;
 }
 
+// Ebrietas' trail effect (scripts/engine_assets.py EFFECT_FIXES, which says why): f001251720.fxr in
+// Upper Cathedral Ward's and the chalice dungeons' effect binders becomes the Fishing Hamlet's
+// f001454436.fxr. Hashes: the 1.09 .dcx, it unpacked, the result unpacked; and the entries.
+struct EffectFix {
+    const char* binder;
+    const char* packed_sha;
+    const char* input_sha;
+    const char* output_sha;
+};
+const char* const kEffectSource = "dvdroot_ps4/sfx/frpg_sfxbnd_m36.ffxbnd.dcx";
+const char* const kEffectSourceName = "f001454436.fxr";
+const char* const kEffectSourceSha = "990644087f325191d34fd2f4b633a9f7c6a63ce9d71786c4289a7cae5cdfb4e0";
+const char* const kEffectName = "f001251720.fxr";
+const char* const kEffectSha = "988c55ba0f689bc0b4f8e7a9f9b184ef8cd9bcd4601b2c925387ff5ce3fc9f0b";
+const EffectFix kEffectFixes[] = {
+    {"dvdroot_ps4/sfx/frpg_sfxbnd_m24_02.ffxbnd.dcx", "6cab7031c5fafba95ed71c4ddb86e590b77b2d669988e8b53bed159e1dbc1015",
+     "b0bd083145a753a667c4021a3f817879646b1f8b84201e2774daa17e1c5b0e99",
+     "fae6b9639fb02b34188a3dd262b2695f7667812749f984f1eb2fd2ab298a9e9b"},
+    {"dvdroot_ps4/sfx/frpg_sfxbnd_m29a.ffxbnd.dcx", "0466ebd7125cc705e341cab18e18c3d1282000a8d54b0628d47da992daed0fd6",
+     "085f2d3d60d54e50fa981c7aad89ca42f47b3a733a78b40ee98f572883ce122b",
+     "8348b2b7f110feb7ca0a444e8331886b85fe24ba422b8b9909cdc5d551ffcb07"},
+};
+constexpr std::size_t kBnd4Entry = 0x24; // flags, -1, packed and unpacked size, data offset (u32), id, name offset
+
+struct BinderEntry {
+    std::size_t header, offset, size;
+    std::string name; // the file name, without its folders
+};
+
+/// The files of a BND4 with 0x24-byte entries (format 0x74: sizes, 32-bit offsets, ids, UTF-16
+/// names), as the game's effect binders are.
+std::vector<BinderEntry> BinderEntries(const Bytes& b) {
+    if (b.size() < 0x40 || std::memcmp(b.data(), "BND4", 4) || Load<std::int64_t>(b.data() + 0x20) != std::int64_t(kBnd4Entry) ||
+        b[0x30] != 1 || b[0x31] != 0x74)
+        throw Error("Unexpected effect binder layout");
+    const std::int32_t count = Load<std::int32_t>(b.data() + 0x0c);
+    if (count < 0 || 0x40 + std::size_t(count) * kBnd4Entry > b.size()) throw Error("Unexpected effect binder layout");
+    std::vector<BinderEntry> entries;
+    for (std::int32_t i = 0; i < count; ++i) {
+        const std::size_t at = 0x40 + std::size_t(i) * kBnd4Entry;
+        const std::int64_t packed = Load<std::int64_t>(b.data() + at + 8), unpacked = Load<std::int64_t>(b.data() + at + 16);
+        const std::uint32_t offset = Load<std::uint32_t>(b.data() + at + 24);
+        const std::int32_t name_at = Load<std::int32_t>(b.data() + at + 32);
+        if (packed != unpacked || packed < 0 || offset + std::uint64_t(packed) > b.size() || name_at < 0 ||
+            std::size_t(name_at) >= b.size())
+            throw Error("Unexpected effect binder entry");
+        std::string name;
+        for (std::size_t p = std::size_t(name_at); p + 1 < b.size() && (b[p] || b[p + 1]); p += 2) {
+            const char c = b[p + 1] ? '?' : char(b[p]);
+            name = c == '\\' || c == '/' ? std::string() : name + c;
+        }
+        entries.push_back({at, offset, std::size_t(packed), name});
+    }
+    return entries;
+}
+
+Bytes BinderFile(const Bytes& b, const std::string& name) {
+    for (const BinderEntry& e : BinderEntries(b))
+        if (e.name == name) return Bytes(b.begin() + std::ptrdiff_t(e.offset), b.begin() + std::ptrdiff_t(e.offset + e.size));
+    throw Error(name + " is not in the effect binder");
+}
+
+/// The binder with `name` holding `data`: appended 16-byte aligned, its entry's sizes and offset
+/// pointed at it; the other entries and the name table stay put.
+Bytes ReplaceBinderFile(const Bytes& b, const std::string& name, const Bytes& data) {
+    const auto entries = BinderEntries(b);
+    const auto found = std::find_if(entries.begin(), entries.end(), [&](const BinderEntry& e) { return e.name == name; });
+    if (found == entries.end() ||
+        std::count_if(entries.begin(), entries.end(), [&](const BinderEntry& e) { return e.name == name; }) != 1)
+        throw Error(name + " is not in the effect binder once");
+    const std::size_t offset = (b.size() + 15) & ~std::size_t(15);
+    if (offset + data.size() > 0xffffffffu) throw Error("effect binder too large");
+    Bytes out = b;
+    out.resize(offset);
+    out.insert(out.end(), data.begin(), data.end());
+    Store<std::int64_t>(out.data() + found->header + 8, std::int64_t(data.size()));
+    Store<std::int64_t>(out.data() + found->header + 16, std::int64_t(data.size()));
+    Store<std::uint32_t>(out.data() + found->header + 24, std::uint32_t(offset));
+    return out;
+}
+
 std::wstring Quote(const std::wstring& argument) {
     if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) return argument;
     std::wstring out = L"\"";
@@ -240,6 +321,58 @@ fs::path PrepareMirror(const fs::path& game, const fs::path& elf, const fs::path
     }
     WriteFile(destination, DcxPack(rewritten));
     return fs::canonical(destination);
+}
+
+std::vector<std::pair<std::string, fs::path>> PrepareEffectFixes(const fs::path& game, const fs::path& cache,
+                                                                 std::vector<std::string>& notes) {
+    const fs::path root = cache / "effect-fixes";
+    std::optional<Bytes> replacement;
+    std::vector<std::pair<std::string, fs::path>> fixed;
+    std::error_code error;
+    for (const EffectFix& fix : kEffectFixes) {
+        if (!fs::is_regular_file(game / Path(fix.binder), error)) continue; // not installed
+        const Bytes packed = ReadFile(game / Path(fix.binder));
+        const std::string file = Utf8(Path(fix.binder).filename());
+        std::optional<Bytes> raw;
+        if (Sha256Hex(packed) != fix.packed_sha) {
+            raw = DcxUnpack(packed);
+            if (Sha256Hex(*raw) != fix.input_sha) {
+                notes.push_back(file + " is not the 1.09 file (a mod changes it): left as it is");
+                continue;
+            }
+        }
+        // A prepared binder is kept while it matches the hash written beside it (of its .dcx).
+        const fs::path destination = root / Path(fix.binder);
+        fs::path stamp = destination;
+        stamp += L".sha256";
+        try {
+            if (Trim(ReadText(stamp)) == Sha256Hex(ReadFile(destination))) {
+                fixed.emplace_back(fix.binder, fs::canonical(destination));
+                continue;
+            }
+        } catch (const std::exception&) {
+        }
+        if (!raw) raw = DcxUnpack(packed);
+        if (Sha256Hex(BinderFile(*raw, kEffectName)) != kEffectSha) throw Error(std::string("Unexpected ") + kEffectName + " in " + file);
+        if (!replacement) {
+            replacement = BinderFile(DcxUnpack(ReadFile(game / Path(kEffectSource))), kEffectSourceName);
+            if (Sha256Hex(*replacement) != kEffectSourceSha) throw Error(std::string("Unexpected ") + kEffectSourceName);
+        }
+        const Bytes result = ReplaceBinderFile(*raw, kEffectName, *replacement);
+        if (Sha256Hex(result) != fix.output_sha) throw Error(file + " does not match the verified result");
+        const Bytes out = DcxPack(result);
+        fs::create_directories(destination.parent_path());
+        fs::path temporary = destination;
+        temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+        WriteFile(temporary, out);
+        if (!MoveFileExW(temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            fs::remove(temporary, error);
+            throw Error("cannot write " + Utf8(destination));
+        }
+        WriteText(stamp, Sha256Hex(out) + "\n");
+        fixed.emplace_back(fix.binder, fs::canonical(destination));
+    }
+    return fixed;
 }
 
 fs::path PrepareMenuAssets(const fs::path& game, const fs::path& elf, const fs::path& cache, const fs::path& tool,

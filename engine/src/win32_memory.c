@@ -21,6 +21,13 @@ static MapViewOfFile3Fn map_view3;
 static UnmapViewOfFile2Fn unmap_view2;
 static HANDLE section;
 static uintptr_t space_start, space_end;
+/* BB_POOL_LAZY=1: the pool section reserves its size and pages are committed as they are mapped,
+ * through the pool's own view (every view of a page sees it committed). A committed pool charged
+ * Windows its whole size at the start (5056 or 9152 MiB plus 1 GiB of flexible memory), while
+ * the game's logs show it touching 1-3 GiB at the start and 2.5-6 GiB in play. */
+static int lazy;
+static unsigned char *pool_view;
+static uint64_t pool_bytes;
 typedef struct { uintptr_t start, end; uint64_t phys; } View;
 static View *views;
 static size_t view_count, view_capacity;
@@ -48,6 +55,9 @@ int win_mem_space(uintptr_t start, uintptr_t end) {
     return 0;
 }
 int win_mem_section(uint64_t size, void **backing) {
+    const char *lazy_env = getenv("BB_POOL_LAZY");
+    lazy = lazy_env && lazy_env[0] == '1';
+    pool_bytes = size;
     /* bbport: bb-start made this section (its commit charged there) and passes it on as an
      * inherited handle, "handle:bytes", so the size it was checked at is the size the game gets. */
     const char *given = getenv("BB_POOL_SECTION");
@@ -58,6 +68,7 @@ int win_mem_section(uint64_t size, void **backing) {
         if (handle && bytes == size) {
             section = (HANDLE)(uintptr_t)handle;
             *backing = MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, size);
+            pool_view = *backing;
             if (*backing) return 0;
             fprintf(stderr, "Runtime: the pool bb-start made cannot be mapped (Windows error %lu); making one\n",
                     GetLastError());
@@ -67,12 +78,38 @@ int win_mem_section(uint64_t size, void **backing) {
         }
         section = NULL; /* a stale handle (another process's value) is not ours to close */
     }
-    section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_COMMIT,
+    section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL,
+                                 PAGE_EXECUTE_READWRITE | (lazy ? SEC_RESERVE : SEC_COMMIT),
                                  (DWORD)(size >> 32), (DWORD)size, NULL);
     if (!section) { report("creating the memory pool section", 0, size); return -1; }
     *backing = MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, size);
     if (!*backing) { report("mapping the memory pool", 0, size); return -1; }
+    pool_view = *backing;
+    if (lazy) {
+        fprintf(stderr, "Runtime: the game's memory (%llu MiB) is committed as it is mapped "
+                        "(BB_POOL_LAZY=1)\n", (unsigned long long)(size >> 20));
+    }
     return 0;
+}
+int win_mem_commit(uint64_t phys, uint64_t size) {
+    if (!lazy || !pool_view || !size || phys >= pool_bytes) return 0;
+    if (size > pool_bytes - phys) size = pool_bytes - phys;
+    if (VirtualAlloc(pool_view + phys, size, MEM_COMMIT, PAGE_READWRITE)) return 0;
+    fprintf(stderr, "Runtime: Windows has no memory left to commit for the game's %llu MiB at %#llx "
+                    "(error %lu): close other programs or let Windows grow the page file\n",
+            (unsigned long long)(size >> 20), (unsigned long long)phys, GetLastError());
+    return -1;
+}
+void win_mem_zero(uint64_t phys, uint64_t size) {
+    if (!lazy) { memset(pool_view + phys, 0, size); return; }
+    MEMORY_BASIC_INFORMATION info;
+    for (uint64_t at = phys, end = phys + size; at < end;) {
+        if (!VirtualQuery(pool_view + at, &info, sizeof(info))) return;
+        uint64_t next = (uint64_t)((unsigned char *)info.BaseAddress + info.RegionSize - pool_view);
+        if (next > end) next = end;
+        if (info.State == MEM_COMMIT) memset(pool_view + at, 0, next - at);
+        at = next;
+    }
 }
 static DWORD page_mode(int prot) {
     switch (prot & 7) {
@@ -149,6 +186,9 @@ int win_mem_release(uintptr_t a, uintptr_t b, WinMemRestore restore) {
     return 0;
 }
 int win_mem_map(uintptr_t a, uintptr_t b, uint64_t phys, int prot, WinMemRestore restore) {
+    /* BB_POOL_LAZY: committed before it is mapped, so protections and Windows' own reads into
+     * the mapping (file reads) find every page there. */
+    if (win_mem_commit(phys, b - a)) { SetLastError(ERROR_COMMITMENT_LIMIT); return -1; }
     if (win_mem_release(a, b, restore)) return -1;
     if (map_view(a, b, phys)) { report("mapping", a, b); return -1; }
     return (prot & 7) == 3 ? 0 : win_mem_protect(a, b, prot);

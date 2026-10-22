@@ -130,6 +130,27 @@ static const char *mod_file_for(const char *guest) {
     const ModFile *found=bsearch(&probe,mod_files,mod_file_count,sizeof(*mod_files),mod_file_compare);
     return found ? found->host : NULL;
 }
+/* bbport: game files bb-start rebuilt from the player's own (start/assets.cpp PrepareEffectFixes:
+ * Ebrietas' trail effect), "game path<TAB>host file" lines in BB_FILE_FIXES, each mounted over its
+ * /app0 path. Only made from the 1.09 files; a mod file for the path (BB_MOD_FILES) still wins. */
+static void file_fixes_load(void) {
+    const char *list=getenv("BB_FILE_FIXES");
+    FILE *f=list && *list ? fopen(list,"rb") : NULL;
+    if (!f) return;
+    char line[2048],guest[1100];
+    int mounted=0;
+    while (fgets(line,sizeof(line),f)) {
+        line[strcspn(line,"\r\n")]=0;
+        char *tab=strchr(line,'\t');
+        if (!tab || tab==line || !tab[1]) continue;
+        *tab=0;
+        snprintf(guest,sizeof(guest),"/app0/%s",line);
+        if (!runtime_file_mount(guest,tab+1)) ++mounted;
+        else printf("Runtime: the fixed %s cannot be mounted\n",line);
+    }
+    fclose(f);
+    if (mounted) printf("Runtime: %d game files fixed (BB_FILE_FIXES)\n",mounted);
+}
 void runtime_file_configure(const char *app0,const char *user) {
     char path[600];
     stream_configure(app0);
@@ -137,6 +158,7 @@ void runtime_file_configure(const char *app0,const char *user) {
     snprintf(user_root,sizeof(user_root),"%s",user);
     runtime_file_mount("/app0",app0);
     runtime_file_mount("/hostapp",app0);
+    file_fixes_load();
     const char *writable[]={"temp0","download0","data"};
     mkdir(user,0755);
     /* bbport: a saves folder the engine cannot write in shows only as the game's "cannot create

@@ -50,6 +50,9 @@ namespace BloodborneLauncher.Views
                 L.T("Which NVIDIA model DLSS runs. Applied on the next launch"), Choices.DlssModels, "dlss_preset");
             IniToggle(SymbolRegular.ArrowMove24, L.T("Object motion vectors"), L.T("Less ghosting on characters; costs about 10% FPS"), "object_motion");
             IniToggle(SymbolRegular.DataUsage24, L.T("Show FPS"), null, "show_fps");
+            IniToggle(SymbolRegular.Wrench24, L.T("Note while shaders build"),
+                L.T("\"Building shaders\" in a corner while the game builds shaders for a place it shows for the first time. Also in game: Insert or L3 + R3"),
+                "compile_note");
             // The FPS counter's look (live in game too: Insert or L3 + R3 › Other).
             IniCombo(SymbolRegular.PositionToFront24, L.T("FPS counter position"), null, new Choice[]
             {

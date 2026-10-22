@@ -151,12 +151,18 @@ private:
         VmaAllocation allocation{};
         vk::ImageView view{};
     };
-    void CreateHdrTarget(HdrTarget& target, vk::Extent2D extent, const char* name);
+    /// `format`: the SDR surface format when undefined (the composite, the menu layer).
+    void CreateHdrTarget(HdrTarget& target, vk::Extent2D extent, const char* name,
+                         vk::Format format = vk::Format::eUndefined);
     void DestroyHdrTarget(const HdrTarget& target);
     /// The targets at the swapchain's size; the old ones go once the GPU is past them.
     void EnsureHdrTargets(vk::Extent2D extent);
-    /// Records the frame (letterboxed), the menu and the HDR encode into the swapchain image.
-    void PresentHdr(vk::CommandBuffer cmdbuf, Frame* frame, vk::Extent2D extent);
+    /// bbport: DLSS-G in HDR: the HUD-less frame's SDR composite and its HDR encode (the back
+    /// buffer's format), made the first time a frame needs them and at a new size.
+    void EnsureDlssHdrTargets(vk::Extent2D extent);
+    /// Records the frame (letterboxed), the menu and the HDR encode into the swapchain image;
+    /// with `dlss_inputs` also the HUD-less frame's encode for DLSS-G (DlssFrameGenHdr).
+    void PresentHdr(vk::CommandBuffer cmdbuf, Frame* frame, vk::Extent2D extent, bool dlss_inputs);
     /// One line when the HDR output's mode starts or changes; in native mode one when frames
     /// stop or start having a gain map (at most every 5 s, with the switches in between).
     void LogHdrState(bool scrgb, int mode, bool native_frame);
@@ -175,6 +181,11 @@ private:
     HostPasses::HdrOutputPass hdr_pass; ///< bbport: HDR output encode (present thread)
     HdrTarget hdr_game{}, hdr_overlay{}; ///< bbport: HDR output's SDR composite and menu layer
     vk::Extent2D hdr_extent{};
+    HdrTarget dlss_hdr_composite{}, dlss_hdr_hudless{}; ///< bbport: EnsureDlssHdrTargets
+    vk::Extent2D dlss_hdr_extent{};
+    /// bbport: while a generated frame is presented, the real frame whose gain map it uses
+    /// (PresentGenerated, PresentHdr; present thread).
+    const Frame* hdr_gain_source = nullptr;
     int hdr_logged_mode = -1;   ///< bbport: LogHdrState (present thread)
     int hdr_native_state = -1;  ///< native mode: the last frame had a gain map (1) or not (0)
     int hdr_logged_native = -1; ///< ... as last logged

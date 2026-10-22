@@ -22,6 +22,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/renderer_vulkan/vk_streamline.h"
 
 namespace Vulkan {
 
@@ -227,8 +228,11 @@ std::optional<FrameGenerator::Job> FrameGenerator::Prepare(vk::Extent2D display,
         why = problem ? problem : "DLSS Frame Generation is not loaded (restart with it selected)";
     } else if (!dlss && !Enabled()) {
         why = "paused (presenting could not keep up)";
-    } else if (hdr) {
-        why = "HDR output is on (not supported yet)";
+    } else if (hdr && dlss && !DlssFrameGenHdr()) {
+        // FSR 3.1 interpolates the 8-bit frame before the HDR encode, which then encodes the
+        // generated frame with the real one's gain map (Presenter::PresentHdr); a 10-bit frame
+        // is refused below.
+        why = "HDR output is on (BB_DLSSG_HDR=0)";
     } else if (other_scaler) {
         why = "the presenter's FSR 1 scaling is on";
     } else if (view_format != vk::Format::eR8G8B8A8Unorm &&

@@ -50,6 +50,9 @@ unsigned char* runtime_memory_backing(uint64_t* direct_size) {
     *direct_size = 0;
     return nullptr;
 }
+#ifdef _WIN32
+int win_mem_commit(uint64_t, uint64_t) { return 0; } // src/win32_memory.c (BB_POOL_LAZY)
+#endif
 int runtime_memory_vma_info(uintptr_t, int*, int*, uintptr_t*) { std::abort(); }
 int runtime_memory_direct_phys(uintptr_t, uint64_t*, uintptr_t*) { std::abort(); }
 void runtime_wait_report(double) {}

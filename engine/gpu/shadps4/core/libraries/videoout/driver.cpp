@@ -1201,8 +1201,65 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         // 480 ticks a second took a core from the game's threads on 6-8 core CPUs.
         const auto max_spin = std::min<std::chrono::nanoseconds>(std::chrono::microseconds(1500),
                                                                  vblank_period / 8);
+        // Flips locked to the display's vblanks (LanternPacing::VblankPacing; BB_VBLANK_PACING=0
+        // turns it off): on a fixed refresh display whose refresh is a whole number N of frame
+        // limits (60 FPS on 60, 120, 180 or 240 Hz), the flip period is N measured refreshes and
+        // each slot sits just past a vblank, so every frame is shown for exactly N refreshes. A
+        // cadence of its own drifts against the display's clock and its flips cross vblanks now
+        // and then: a frame up a refresh longer, the next one shorter (judder at 60 FPS on 180 Hz).
+        // Not with Immediate (tearing, no vblank to wait for) or while frame generation paces the
+        // frames it adds; G-Sync and FreeSync refresh on the flips, and the watch reports nothing.
+        const bool lock_allowed = LanternPacing::VblankPacing() &&
+                                  EmulatorSettings.GetPresentMode() != "Immediate";
+        bool locked = false;
+        int lock_reports = 0;
+        const auto lock_to_vblank = [&] {
+            std::optional<LanternPacing::VblankTime> vblank;
+            if (lock_allowed && frame_limit &&
+                !BbSettings::Get().frame_gen_active.load(std::memory_order_relaxed)) {
+                vblank = LanternPacing::Vblank();
+            }
+            u32 refreshes = 0;
+            double hz = 0;
+            if (vblank && vblank->period.count() > 0) {
+                hz = 1e9 / double(vblank->period.count());
+                const double nominal = Frontend::DisplayRefreshHz();
+                const double ratio = hz / double(frame_limit);
+                const double n = std::round(ratio);
+                // The display's own mode (not a variable refresh that happens to sit still), and
+                // the limit a whole share of it.
+                if (nominal > 0 && std::abs(hz - nominal) < nominal * 0.005 && n >= 1 &&
+                    std::abs(ratio - n) < n * 0.01) {
+                    refreshes = u32(n);
+                }
+            }
+            if ((refreshes != 0) != locked && lock_reports < 8) {
+                ++lock_reports;
+                if (refreshes) {
+                    std::printf("VideoOut: flips locked to the display's vblanks (%.3f Hz, %u "
+                                "refresh%s a frame)\n", hz, refreshes, refreshes == 1 ? "" : "es");
+                } else {
+                    std::printf("VideoOut: flips keep their own clock (no steady vblanks to lock to)\n");
+                }
+            }
+            if (!refreshes) {
+                if (locked) {
+                    flips.SetPeriod(pace_of());
+                }
+                locked = false;
+                return;
+            }
+            locked = true;
+            flips.SetPeriod(vblank->period * refreshes);
+            // Past the vblank by more than the sixteenth of a period a flip may come early (Ready),
+            // so an early flip is not shown a refresh sooner; at most half a refresh.
+            const auto offset = std::min<std::chrono::nanoseconds>(
+                flips.Period() / 16 + std::chrono::microseconds(300), vblank->period / 2);
+            flips.Align(vblank->last, vblank->period, offset);
+        };
         const auto take_flip = [&](const Request& request, Clock::time_point now) {
             flips.Taken(now);
+            lock_to_vblank();
             Flip(request);
             FRAME_END;
         };

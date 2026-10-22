@@ -84,8 +84,9 @@ class NativeUiTests(unittest.TestCase):
 
     def test_output_other_than_1080p_scales_the_scene(self):
         self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}))
-        # Steam Deck: below 1080p the scene is still the preset's fraction of the output.
-        for preset, expected in [(0, (1280, 720)), (2, (752, 424)), (4, (428, 240))]:
+        # Steam Deck: below 1080p the scene is still the preset's fraction of the output, down to
+        # 640x360 (Ultra Performance at 720p would be 428x240).
+        for preset, expected in [(0, (1280, 720)), (2, (752, 424)), (4, (640, 360))]:
             with self.subTest(preset=preset):
                 self.assertEqual(scaled_sizes({'output_res': '1280x720', 'preset': str(preset)}),
                                  (expected, (1280, 720)))

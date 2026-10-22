@@ -407,6 +407,10 @@ private:
                             const IndirectDraw& indirect);
     /// Everything of an indirect dispatch after the pipeline selection.
     void DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr args, u32 size);
+    /// bbport (BB_INDIRECT_CLAMP, on by default): the group counts at `offset` in `buffer` copied
+    /// by the GPU into the stream buffer, each clamped to maxComputeWorkGroupCount; returns where
+    /// the dispatch reads them (the game's own counts when the stream buffer has no room).
+    std::pair<vk::Buffer, u64> ClampDispatchArgs(const VideoCore::Buffer* buffer, u64 offset);
     /// Hands a draw (or, with `cs`, a dispatch) to the recording thread.
     void PostDraw(const Pipeline* pipeline, const PreparedDraw* used_prepared, bool is_indexed,
                   u32 index_offset, const AmdGpu::ComputeProgram* cs = nullptr,

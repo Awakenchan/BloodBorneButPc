@@ -313,6 +313,25 @@
         <Setter Property="Background" Value="{DynamicResource SidebarItemSelectedBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
     </Style>
+    <!-- The sidebar in the Modern layout (Settings › Navigation: Sidebar): the tabs' look, the
+         chosen page filled as a chosen tab is. -->
+    <Style Selector="RadioButton.SidebarItem.Glass">
+        <Setter Property="Height" Value="30" />
+        <Setter Property="Padding" Value="12,0" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Background="{TemplateBinding Background}" CornerRadius="15" Padding="{TemplateBinding Padding}">
+                    <ContentPresenter Content="{TemplateBinding Content}" VerticalAlignment="Center" />
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="RadioButton.SidebarItem.Glass:checked">
+        <Setter Property="Background" Value="{DynamicResource SegmentSelectedBrush}" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
     <Style Selector="TextBlock.SidebarHeader">
         <Setter Property="FontSize" Value="9.5" />
         <Setter Property="FontWeight" Value="SemiBold" />

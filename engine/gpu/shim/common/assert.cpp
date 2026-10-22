@@ -6,6 +6,10 @@
 #include "common/logging/log.h"
 #include <chrono>
 #include <thread>
+#ifndef _WIN32
+#include <execinfo.h>
+#include <unistd.h>
+#endif
 
 // bb-probe (probe.c): set while the port restarts itself through run.sh. The device fd is closed
 // before exec; Vulkan calls failing then are not errors: this thread waits for the exec instead.
@@ -19,6 +23,15 @@ void assert_fail_impl() {
     }
     std::fflush(stdout);
     std::fputs("STOP: GPU library assertion failed (see GPU log above)\n", stderr);
+#ifndef _WIN32
+    // bbport: where it failed (Windows writes a crash dump instead): module+offset per frame, for
+    // addr2line against the package's libraries.
+    void* frames[32];
+    const int count = backtrace(frames, 32);
+    std::fputs("  call stack:\n", stderr);
+    std::fflush(stderr);
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+#endif
     std::_Exit(23);
 }
 

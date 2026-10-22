@@ -61,10 +61,7 @@ int AllocChunk(u64 phys, u64 size) {
     const vk::BufferCreateInfo buffer_ci{
         .pNext = &external,
         .size = size,
-        .usage = vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst |
-                 vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer |
-                 vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer |
-                 vk::BufferUsageFlagBits::eIndirectBuffer,
+        .usage = ChunkUsage,
         .sharingMode = vk::SharingMode::eExclusive,
     };
     const auto [buffer_result, buffer] = device.createBuffer(buffer_ci);
@@ -121,6 +118,10 @@ int AllocChunk(u64 phys, u64 size) {
     return fd;
 }
 } // namespace
+
+vk::ExternalMemoryHandleTypeFlagBits ChunkHandleType() {
+    return vk::ExternalMemoryHandleTypeFlagBits::eDmaBufEXT;
+}
 
 bool PcModelGpu(const Vulkan::Instance& instance) {
     static const bool ok = [&] {

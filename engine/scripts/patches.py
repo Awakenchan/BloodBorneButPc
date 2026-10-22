@@ -323,6 +323,9 @@ def scaled_sizes(settings):
     scale=1.0
     if settings.get('upscaler','fsr3')!='off':
         scale=preset_scale(settings)
+    # A scene of at least 640x360 (start/patches.cpp ScaledSizes): 428x240 (Ultra Performance at a
+    # 720p output) showed the world in half the picture on a ROG Ally.
+    scale=max(1.0,min(scale,out[0]/640,out[1]/360))
     # Multiples of 4: the game's render targets are padded to them, and a scene of 854 got a
     # 856-wide target whose last columns it never drew - a shimmering line at the right and
     # bottom edges once upscaled (1708x960, 856x536 at 1440p and 1600p).

@@ -183,6 +183,7 @@ add_host_shader(frame_gen_compose.comp frame_gen_compose_comp)
 add_host_shader(frame_gen_depth.comp frame_gen_depth_comp)
 add_host_shader(dlss_ui_alpha.comp dlss_ui_alpha_comp)
 add_host_shader(buffer_multi_copy.comp buffer_multi_copy_comp)
+add_host_shader(indirect_clamp.comp indirect_clamp_comp)
 add_host_shader(depth_resample.frag depth_resample_frag)
 add_host_shader(depth_resample.frag depth_stencil_resample_frag HAS_STENCIL=1)
 add_host_shader(depth_resample.frag depth_stencil_bits_frag STENCIL_BITS=1)
@@ -353,6 +354,13 @@ target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
 
+# bbport: indirect_clamp.comp as Rasterizer::ClampDispatchArgs records it, then an indirect
+# dispatch from its output (run it under the validation layer); plain Vulkan, no bbgpu.
+add_executable(indirect-clamp-test EXCLUDE_FROM_ALL ../tests/test_indirect_clamp.cpp)
+target_include_directories(indirect-clamp-test PRIVATE ${SHADER_INCLUDE})
+target_compile_options(indirect-clamp-test PRIVATE -UNDEBUG -Wall -Werror)
+target_link_libraries(indirect-clamp-test PRIVATE Vulkan::Vulkan)
+add_dependencies(indirect-clamp-test host_shaders)
 # bbport: native HDR output's shaders on a synthetic frame (docs/hdr.md); plain Vulkan, no bbgpu.
 add_executable(hdr-native-shader-test EXCLUDE_FROM_ALL ../tests/test_hdr_native.cpp)
 target_include_directories(hdr-native-shader-test PRIVATE ${SHADER_INCLUDE})

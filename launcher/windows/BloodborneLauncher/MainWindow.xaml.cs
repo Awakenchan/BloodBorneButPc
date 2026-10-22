@@ -56,8 +56,9 @@ namespace BloodborneLauncher
             _directPlay = args.Contains("--play");
             if (_directPlay)
                 WindowState = WindowState.Minimized;
-            Sidebar.Visibility = SettingRow.Classic ? Visibility.Visible : Visibility.Collapsed;
-            TabStrip.Visibility = SettingRow.Classic ? Visibility.Collapsed : Visibility.Visible;
+            // Cheats beside Mods & patches, once the engine applies them (as More's Cheats tab).
+            ClassicCheats.Visibility = CheatsPage.Supported ? Visibility.Visible : Visibility.Collapsed;
+            ApplyNavigation();
             if (!SettingRow.Classic)
                 ApplyGlass();
             LauncherTheme.Apply(ws.Settings, glass: !SettingRow.Classic);
@@ -70,7 +71,7 @@ namespace BloodborneLauncher
             ws.UpdateStateChanged += () =>
             {
                 TitleUpdate.Visibility = ws.Update != null ? Visibility.Visible : Visibility.Collapsed;
-                if (ws.Update != null) TitleUpdateText.Text = L.F($"Update {ws.Update.Tag}");
+                if (ws.Update != null) TitleUpdate.ToolTip = L.F($"{ws.Update.Name} is available");
             };
 
             Loaded += async (_, _) =>
@@ -83,9 +84,9 @@ namespace BloodborneLauncher
                     ws.SaveSoon();
                 }
                 if (ws.Settings.Bool("check_updates"))
-                    _ = ws.CheckForUpdatesAsync(quiet: true);
+                    _ = CheckForUpdatesAtStartAsync();
                 await Task.Yield();
-                (SettingRow.Classic ? ClassicPlay : PlayItem).IsChecked = true;
+                (_sidebarNav ? ClassicPlay : PlayItem).IsChecked = true;
                 UpdatePlayButton();
                 // --test-trophy: a sample notification, to check how it looks over the game.
                 if (Environment.GetCommandLineArgs().Contains("--test-trophy"))
@@ -124,6 +125,63 @@ namespace BloodborneLauncher
         }
 
         private bool _directPlay, _directKeepOpen;
+
+        /// <summary>The pages in the sidebar (Classic, or Settings › Navigation: Sidebar) rather than
+        /// the tabs across the top.</summary>
+        private bool _sidebarNav;
+
+        /// <summary>Settings › Navigation (live): the Modern layout's tabs across the top, or the
+        /// sidebar with the pages in groups (GAME, EXTRAS, SYSTEM), in the tabs' look. Classic always
+        /// has the sidebar. The page shown stays, marked in the other one (More's sections are
+        /// entries of their own in the sidebar).</summary>
+        public void ApplyNavigation()
+        {
+            var sidebar = SettingRow.Classic || Workspace.Current.Settings.Str("ui_navigation") == "sidebar";
+            var switching = IsLoaded && sidebar != _sidebarNav;
+            _sidebarNav = sidebar;
+            Sidebar.Visibility = sidebar ? Visibility.Visible : Visibility.Collapsed;
+            TabStrip.Visibility = sidebar ? Visibility.Collapsed : Visibility.Visible;
+            if (!SettingRow.Classic)
+            {
+                // A pane over the backdrop, as the tab strip is.
+                Sidebar.Margin = new Thickness(12, 12, 0, 12);
+                Sidebar.CornerRadius = new CornerRadius(14);
+                Sidebar.BorderThickness = new Thickness(1);
+                Sidebar.SetResourceReference(Border.BackgroundProperty, "PillTrackBrush");
+                Sidebar.SetResourceReference(Border.BorderBrushProperty, "GlassPaneStrokeBrush");
+                // Settings once, in the LANTERN group (Classic has it at the bottom too).
+                ClassicSettingsBottom.Visibility = Visibility.Collapsed;
+                var style = (Style)FindResource("GlassSidebarItem");
+                foreach (var item in SettingSearch.Descendants(Sidebar).OfType<System.Windows.Controls.RadioButton>())
+                    item.Style = style;
+            }
+            if (!switching)
+                return;
+            var shown = PageFrame.Content?.GetType();
+            if (shown == typeof(MorePage) && _pages.TryGetValue(typeof(MorePage), out var more))
+                shown = ((MorePage)more).ShownPage ?? typeof(PlayPage);
+            // More holds Mods, Cheats, Engine and Log pages of its own: the ones of the navigation
+            // left are dropped, so the other makes its own with the settings as they are now.
+            foreach (var type in new[] { typeof(MorePage), typeof(ModsPage), typeof(CheatsPage), typeof(EnginePage), typeof(OutputPage) })
+                _pages.Remove(type);
+            _searchPagesReady = null; // made again for the search when its box is next focused
+            var nav = sidebar ? (FrameworkElement)Sidebar : TabStrip;
+            var target = SettingSearch.Descendants(nav).OfType<System.Windows.Controls.RadioButton>()
+                .LastOrDefault(i => Equals(i.Tag, shown) && i.Visibility == Visibility.Visible);
+            if (target != null)
+            {
+                // Still checked from before the last switch: shown again all the same.
+                if (target.IsChecked == true)
+                    SidebarItem_Checked(target, new RoutedEventArgs());
+                target.IsChecked = true;
+                return;
+            }
+            // A page of More's (Mods, Cheats, Engine, Log) back on the tabs: More, at that section.
+            var key = shown == typeof(ModsPage) ? "mods" : shown == typeof(CheatsPage) ? "cheats"
+                : shown == typeof(EnginePage) ? "engine" : shown == typeof(OutputPage) ? "output" : null;
+            if (key != null) Show(key);
+            else (sidebar ? ClassicPlay : PlayItem).IsChecked = true;
+        }
 
         /// <summary>--play: starts the game; the launcher closes when it ends normally, and opens when
         /// the start did not happen, the game crashed (the crash dialog first) or The Hunter's Dream
@@ -502,13 +560,14 @@ namespace BloodborneLauncher
         /// <summary>Shows a page: a tab ("online", "advanced": Settings), or one of More's ("output", "mods", "engine").</summary>
         public void Show(string page)
         {
-            var item = SettingRow.Classic
+            var item = _sidebarNav
                 ? page switch
                 {
                     "output" => ClassicOutput,
                     "online" => ClassicOnline,
                     "advanced" => ClassicSettings,
                     "mods" => ClassicMods,
+                    "cheats" when CheatsPage.Supported => ClassicCheats,
                     "engine" => ClassicEngine,
                     "controls" => ClassicControls,
                     _ => ClassicPlay,
@@ -518,6 +577,7 @@ namespace BloodborneLauncher
                     "online" => OnlineItem,
                     "advanced" => SettingsItem,
                     "output" or "mods" or "engine" => MoreItem,
+                    "cheats" when CheatsPage.Supported => MoreItem,
                     "controls" => ControlsItem,
                     _ => PlayItem,
                 };
@@ -547,7 +607,7 @@ namespace BloodborneLauncher
         {
             // Classic lists Settings twice (top and bottom of the sidebar): the later entry is kept.
             var items = new List<System.Windows.Controls.RadioButton>();
-            foreach (var item in SettingSearch.Descendants(SettingRow.Classic ? Sidebar : TabStrip).OfType<System.Windows.Controls.RadioButton>())
+            foreach (var item in SettingSearch.Descendants(_sidebarNav ? Sidebar : TabStrip).OfType<System.Windows.Controls.RadioButton>())
             {
                 if (item.Tag is not Type) continue;
                 items.RemoveAll(i => Equals(i.Tag, item.Tag));
@@ -628,7 +688,7 @@ namespace BloodborneLauncher
         /// pages: the first search then finds them ready instead of building them all in one go.</summary>
         private async Task MakeSearchPagesAsync()
         {
-            var items = SettingSearch.Descendants(SettingRow.Classic ? Sidebar : TabStrip)
+            var items = SettingSearch.Descendants(_sidebarNav ? Sidebar : TabStrip)
                 .OfType<System.Windows.Controls.RadioButton>()
                 .Select(i => i.Tag).OfType<Type>().Distinct().ToList();
             foreach (var type in items)
@@ -756,6 +816,26 @@ namespace BloodborneLauncher
             await InstallAsync(release, await Updater.NeedsPackageAsync(release));
         }
 
+        /// <summary>The check at start: an update found is offered, Download or Later (Later keeps the
+        /// Update button in the title bar; the next start asks again). Never over the game, a --play
+        /// start or another question.</summary>
+        private async Task CheckForUpdatesAtStartAsync()
+        {
+            var ws = Workspace.Current;
+            try
+            {
+                await ws.CheckForUpdatesAsync(quiet: true);
+                while (Application.Current.Windows.OfType<Prompt>().Any())
+                    await Task.Delay(500);
+                if (ws.Update is not { } release || ws.Game.Running || _directPlay) return;
+                await InstallAsync(release, await Updater.NeedsPackageAsync(release));
+            }
+            catch (Exception e)
+            {
+                ws.Log(L.T("Could not check for updates: ") + e.GetBaseException().Message, LogLevel.Warn);
+            }
+        }
+
         /// <summary>An older package's engine: download the latest package and update it in place.</summary>
         public async Task UpdateEngineAsync()
         {
@@ -801,8 +881,12 @@ namespace BloodborneLauncher
                            ? L.T("\n\nThis is an older version: settings it doesn't know are kept but not used, and the launcher may offer the newest version again at start.")
                            : "") +
                        (notes.Length > 0 ? $"\n\n{(chosen && older ? L.T("This version's notes") : L.T("What's new"))}:\n" + notes : "");
-            var verb = chosen ? L.T("Switch") : L.T("Update");
-            if (!Prompt.Confirm(L.F($"{verb} to {release.Name}?"), body, L.F($"{verb} now")))
+            // An update: Download, or Later (the Update button in the title bar stays). A version picked
+            // in Settings › Updates: Switch.
+            var verb = L.T("Switch");
+            if (chosen
+                    ? !Prompt.Confirm(L.F($"{verb} to {release.Name}?"), body, L.F($"{verb} now"))
+                    : Prompt.Choose(L.F($"Update available: {release.Name}"), body, L.T("Later"), L.T("Download")) != 1)
                 return;
 
             TitleUpdate.Visibility = Visibility.Visible;
@@ -823,7 +907,7 @@ namespace BloodborneLauncher
             catch (Exception ex)
             {
                 TitleUpdate.IsEnabled = true;
-                TitleUpdateText.Text = L.F($"Update {release.Tag}");
+                TitleUpdateText.Text = L.T("Update");
                 ws.Log(L.T("Update failed: ") + ex.GetBaseException().Message, LogLevel.Bad);
                 Prompt.Tell(L.T("Update failed"), ex.GetBaseException().Message + L.F($"\n\nYou can download it by hand from {Updater.ReleasesPage}"));
             }

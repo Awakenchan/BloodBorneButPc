@@ -43,6 +43,8 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
+#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/host_shaders/indirect_clamp_comp.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/overlap_diagnostics.h"
 #include "video_core/texture_cache/texture_cache.h"
@@ -2421,6 +2423,95 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
     DispatchIndirectRecord(pipeline, address + offset, size);
 }
 
+std::pair<vk::Buffer, u64> Rasterizer::ClampDispatchArgs(const VideoCore::Buffer* buffer, u64 offset) {
+    struct ClampPipeline {
+        vk::UniqueDescriptorSetLayout set_layout;
+        vk::UniquePipelineLayout layout;
+        vk::UniquePipeline pipeline;
+        std::array<u32, 3> limit{};
+    };
+    static ClampPipeline pipe = [&] {
+        const auto device = instance.GetDevice();
+        ClampPipeline p;
+        std::array<vk::DescriptorSetLayoutBinding, 2> bindings{};
+        for (u32 i = 0; i < bindings.size(); ++i) {
+            bindings[i] = {.binding = i,
+                           .descriptorType = vk::DescriptorType::eStorageBuffer,
+                           .descriptorCount = 1,
+                           .stageFlags = vk::ShaderStageFlagBits::eCompute};
+        }
+        p.set_layout = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = static_cast<u32>(bindings.size()),
+            .pBindings = bindings.data(),
+        }));
+        const vk::PushConstantRange range{.stageFlags = vk::ShaderStageFlagBits::eCompute,
+                                          .offset = 0,
+                                          .size = 4 * sizeof(u32)};
+        p.layout = Check(device.createPipelineLayoutUnique({
+            .setLayoutCount = 1,
+            .pSetLayouts = &*p.set_layout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &range,
+        }));
+        const auto module = CompileSPV(INDIRECT_CLAMP_COMP, device);
+        p.pipeline = Check(device.createComputePipelineUnique(
+            {}, vk::ComputePipelineCreateInfo{
+                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
+                              .module = module,
+                              .pName = "main"},
+                    .layout = *p.layout,
+                }));
+        device.destroyShaderModule(module);
+        const auto& counts = instance.GetPhysicalDevice().getProperties().limits.maxComputeWorkGroupCount;
+        p.limit = {counts[0], counts[1], counts[2]};
+        std::printf("GPU: indirect dispatches read their group counts clamped to %u x %u x %u "
+                    "(BB_INDIRECT_CLAMP=0: as the game wrote them)\n",
+                    p.limit[0], p.limit[1], p.limit[2]);
+        return p;
+    }();
+    // The source range from an aligned offset; the counts are 3 dwords from `first` in it.
+    const u64 align = instance.StorageMinAlignment();
+    const u64 src_offset = Common::AlignDown(offset, align);
+    const u64 src_size = offset - src_offset + 3 * sizeof(u32);
+    auto& stream = buffer_cache.GetStreamBuffer();
+    const auto slot = stream.Reserve(4 * sizeof(u32), align);
+    if (!slot || (offset & 3) != 0) {
+        return {buffer->Handle(), offset};
+    }
+    const std::array<u32, 4> push{pipe.limit[0], pipe.limit[1], pipe.limit[2],
+                                  static_cast<u32>((offset - src_offset) / sizeof(u32))};
+    scheduler.Record([src = buffer->Handle(), dst = stream.Handle(), src_offset, src_size,
+                      dst_offset = *slot, push](vk::CommandBuffer cmdbuf) {
+        const std::array<vk::DescriptorBufferInfo, 2> infos{{
+            {src, src_offset, src_size},
+            {dst, dst_offset, 4 * sizeof(u32)},
+        }};
+        std::array<vk::WriteDescriptorSet, 2> writes{};
+        for (u32 i = 0; i < writes.size(); ++i) {
+            writes[i] = {.dstBinding = i,
+                         .descriptorCount = 1,
+                         .descriptorType = vk::DescriptorType::eStorageBuffer,
+                         .pBufferInfo = &infos[i]};
+        }
+        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *pipe.pipeline);
+        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pipe.layout, 0, writes);
+        cmdbuf.pushConstants(*pipe.layout, vk::ShaderStageFlagBits::eCompute, 0,
+                             static_cast<u32>(sizeof(push)), push.data());
+        cmdbuf.dispatch(1, 1, 1);
+        const vk::MemoryBarrier2 clamped{
+            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eDrawIndirect,
+            .dstAccessMask = vk::AccessFlagBits2::eIndirectCommandRead,
+        };
+        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &clamped});
+    });
+    runtime.AccessBuffer(buffer, offset, 3 * sizeof(u32), vk::PipelineStageFlagBits2::eComputeShader,
+                         vk::AccessFlagBits2::eShaderRead);
+    return {stream.Handle(), *slot};
+}
+
 void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr address,
                                         u32 size) {
     buffer_cache.NewPacket();
@@ -2439,6 +2530,16 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     }
 
     scheduler.EndRendering();
+    // bbport: the counts clamped before the game's pipeline and descriptors are bound (the clamp
+    // binds its own); the crash report keeps reading the game's counts (CopyArgs).
+    static const bool clamp = [] {
+        const char* env = std::getenv("BB_INDIRECT_CLAMP");
+        return !(env && env[0] == '0');
+    }();
+    const std::pair<vk::Buffer, u64> dispatch =
+        clamp ? ClampDispatchArgs(buffer, base) : std::pair<vk::Buffer, u64>{buffer->Handle(), base};
+    const vk::Buffer dispatch_args = dispatch.first;
+    const u64 dispatch_offset = dispatch.second;
     pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
                             {buffer_infos.data(), buffer_infos.size()});
 
@@ -2463,7 +2564,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
         if (handle) { // null: bound by the command before (BindWhenCompiled)
             cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, handle);
         }
-        cmdbuf.dispatchIndirect(args, args_offset);
+        cmdbuf.dispatchIndirect(dispatch_args, dispatch_offset);
     });
     DebugState.IncDispatch();
 

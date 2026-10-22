@@ -35,8 +35,12 @@ bool g_seen_world = false;
 constexpr std::size_t kTargetSites[] = {0x2034840, 0x203485a, 0x203487e, 0x20348b3};
 constexpr std::uint8_t kTargetStore[] = {0x41, 0xc7, 0x44, 0x24, 0x18}; // mov dword [r12+0x18], imm32
 constexpr float kFastTarget = 1.0f / 30.0f;
-bool g_fast_allowed = false, g_fast_on = false;
+bool g_fast_allowed = false, g_fast_on = false, g_fast_this_load = false;
 float g_saved[4]{};
+// The pacer's target when the load began: the restored instructions only set the live target when
+// the game runs them again, which it may not do for minutes after a load (two loads back to back,
+// a lantern travel: FPS stuck at 29 until the next one, 0.9.37 beta 7).
+float g_target_before = 0;
 
 void SetFast(bool on) {
     if (on == g_fast_on || !g_fast_allowed) return;
@@ -47,6 +51,7 @@ void SetFast(bool on) {
         WriteCode(imm, &value, sizeof value);
     }
     g_fast_on = on;
+    g_fast_this_load |= on;
 }
 
 template <typename T> bool Read(std::uint64_t address, T& value) {
@@ -113,6 +118,8 @@ void Tick(std::uint64_t flipper) {
         g_began = now;
         g_frames = 0;
         const Pace p = PaceOf(flipper);
+        // A load that begins while the last one's pace is still set keeps the earlier target.
+        if (p.target != kFastTarget) g_target_before = p.target;
         std::printf("Loading: begins; pacer mode %u, %u vblank(s) a frame, target %.1f ms\n", p.mode, p.vblanks,
                     p.target * 1000.0f);
     } else if (!loading && was) {
@@ -121,6 +128,16 @@ void Tick(std::uint64_t flipper) {
         std::uint32_t running = 0;
         const bool cutscene = Read(base + kSprjRemo, remo) && remo && Read(remo + 8, man) && man &&
                               ((Read(man + 0x168, running) && (running & 1)) || (Read(man + 0xf8, queued) && queued));
+        // The live target back to what it was before the load, if it is still the loading pace this
+        // load set (a cutscene sets its own pace: left alone). The game's own store at +0x18.
+        float live = 0;
+        if (g_fast_this_load && !cutscene && g_target_before > 0 && Read(flipper + 0x18, live) &&
+            live == kFastTarget) {
+            *reinterpret_cast<volatile float*>(flipper + 0x18) = g_target_before;
+            std::printf("Loading: the frame pace back to %.1f ms (the loading pace stayed set)\n",
+                        g_target_before * 1000.0f);
+        }
+        g_fast_this_load = false;
         const Pace p = PaceOf(flipper);
         std::printf("Loading: %.2f s, %llu frames (%.1f ms each)%s; pacer mode %u, %u vblank(s), target %.1f ms\n",
                     seconds, static_cast<unsigned long long>(g_frames),

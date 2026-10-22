@@ -27,7 +27,7 @@ namespace BloodborneLauncher.Core
         public static string ReleasesPage => $"https://github.com/{Repository}/releases";
 
         /// <summary>The engine build this launcher is made for (package.json "engine").</summary>
-        public const string EngineId = "lantern-fps92";
+        public const string EngineId = "lantern-fps93";
 
         public const string ExeName = "Lantern Engine.exe";
         /// <summary>The launcher's name before 0.9.34 beta 8 (now a forwarder to ExeName).</summary>
@@ -44,21 +44,43 @@ namespace BloodborneLauncher.Core
             public bool IsCurrent => Compare(Version, Beta, Current, CurrentBeta) == 0;
         }
 
-        public static Version Current
-        {
-            get
-            {
-                var v = typeof(Updater).Assembly.GetName().Version ?? new Version(0, 0, 0);
-                return new Version(v.Major, v.Minor, Math.Max(0, v.Build));
-            }
-        }
+        public static Version Current => Stamp.Version;
 
         /// <summary>The beta number of this build (from its informational version, "0.9.7-beta.2"), 0 when stable.</summary>
-        public static int CurrentBeta { get; } =
-            TryVersion(typeof(Updater).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "", out _, out var beta)
-                ? beta
-                : 0;
+        public static int CurrentBeta => Stamp.Beta;
+
+        /// <summary>The version this build was stamped with (build.ps1: -p:Version, -p:InformationalVersion).
+        /// A build without one carries .NET's 1.0.0: the Linux launcher of 0.9.37 betas 5-8 was published so,
+        /// called itself v1.0.0 and never saw an update as newer. Such a build takes its package's
+        /// package.json version instead (not a stamped one: a launcher that updates alone keeps an older
+        /// package.json beside it).</summary>
+        private static readonly (Version Version, int Beta) Stamp = ReadStamp();
+
+        private static (Version, int) ReadStamp()
+        {
+            var assembly = typeof(Updater).Assembly;
+            var v = assembly.GetName().Version ?? new Version(0, 0, 0);
+            var informational = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "";
+            var stamped = TryVersion(informational, out _, out var beta) ? beta : 0;
+            var own = new Version(v.Major, v.Minor, Math.Max(0, v.Build));
+            if (own == new Version(1, 0, 0) && (informational == "" || informational.StartsWith("1.0.0", StringComparison.Ordinal)))
+            {
+                try
+                {
+                    var file = Path.Combine(AppContext.BaseDirectory, PackageFile);
+                    if (File.Exists(file) && JsonNode.Parse(File.ReadAllText(file)) is JsonObject o &&
+                        (string?)o["version"] is { } version && TryVersion(version, out var packaged, out var packagedBeta))
+                    {
+                        return (packaged, packagedBeta);
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return (own, stamped);
+        }
 
         /// <summary>This build as players see it: "v0.9.6" or "v0.9.7 beta 2".</summary>
         public static string CurrentLabel => Label(Current, CurrentBeta);

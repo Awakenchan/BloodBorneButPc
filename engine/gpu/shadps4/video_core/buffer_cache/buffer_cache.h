@@ -329,6 +329,49 @@ private:
     /// BB_CHUNK_TEXTURES: texture data read by the GPU straight from the guest memory chunk it is
     /// in (no CPU copy, no VRAM buffer copy), when the range is contiguous there.
     std::optional<std::pair<const Buffer*, u64>> GuestChunkSource(VAddr address, u64 size);
+    /// bbport BB_CHUNK_BUFFERS: how a binding of the game's memory in place reaches the GPU.
+    enum ChunkRoute : u8 {
+        RouteChunk,        ///< its chunk's own buffer
+        RouteOutside,      ///< in place, not within one chunk (or one mapping): the arena
+        RoutePartly,       ///< partly in place, partly in VRAM: the arena
+        RouteImageArena,   ///< texture data in place, not within one chunk: the arena
+        RouteCommandArena, ///< a command processor write in place, not within one chunk: the arena
+        ChunkRoutes,
+    };
+    /// The in-place range [addr, addr + size) of the arena: through `chunk` (its chunk's buffer)
+    /// when there is one, else through the arena, where the runtime keeps barriers on both sides
+    /// of it (Runtime::NoteAliasedAccess). Counted, and with BB_CHUNK_VERIFY checked.
+    std::pair<const Buffer*, u64> RouteInPlace(ChunkRoute arena_route, const Buffer* arena,
+                                               VAddr addr, u64 size, bool is_written);
+    void CountRoute(ChunkRoute route, u64 size, bool is_written) noexcept {
+        chunk_route_calls[route].fetch_add(1, std::memory_order_relaxed);
+        chunk_route_bytes[route].fetch_add(size, std::memory_order_relaxed);
+        if (is_written) {
+            chunk_route_written[route].fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    std::array<std::atomic<u64>, ChunkRoutes> chunk_route_calls{}, chunk_route_bytes{},
+        chunk_route_written{};
+    /// BB_CHUNK_VERIFY: the arena's binding of the range's blocks must be the chunk's memory at the
+    /// chunk route's offsets (every binding); some ranges (16 a second, up to 4 KiB) are copied on
+    /// the GPU through the arena, the chunk and the arena again, and compared when done
+    /// (ProcessChunkChecks; a range the CPU changed between the two arena copies is left out).
+    void VerifyChunkRoute(const Buffer* arena, VAddr addr, u64 size,
+                          std::pair<const Buffer*, u64> chunk);
+    void ProcessChunkChecks();
+    struct ChunkCheck {
+        u64 tick;
+        VAddr addr;
+        u32 size;
+        u32 slot;
+    };
+    static constexpr u32 VerifySlots = 64, VerifyBytes = 4096;
+    std::unique_ptr<Buffer> verify_buffer;
+    std::vector<ChunkCheck> chunk_checks;
+    u64 verify_free_slots = ~0ull; ///< a bit per slot of verify_buffer
+    u32 verify_second = 0, verify_in_second = 0;
+    u64 verify_compared = 0, verify_differed = 0, verify_changed = 0, verify_unmapped = 0;
+    u32 verify_reports = 0;
 
     void DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size);
 
@@ -342,7 +385,9 @@ private:
     const Buffer* UploadCopies(const Buffer* arena, std::span<vk::BufferCopy> copies,
                                size_t total_size_bytes);
 
-    bool SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_addr, u32 size);
+    /// The image over [device_addr, device_addr + size), if any, written into `buffer` at `offset`
+    /// (the arena, or the range's chunk with BB_CHUNK_BUFFERS).
+    bool SynchronizeMemoryFromImage(const Buffer* buffer, u64 offset, VAddr device_addr, u32 size);
 
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;

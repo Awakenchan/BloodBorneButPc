@@ -15,6 +15,7 @@
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 #include "input/input.h"
+#include "lantern_pacing.h"
 
 namespace Frontend {
 
@@ -66,6 +67,17 @@ void UpdateDisplayRefresh(SDL_Window* window) {
     if (mode && mode->refresh_rate > 1.0f) {
         display_refresh_hz.store(u32(mode->refresh_rate + 0.5f), std::memory_order_relaxed);
     }
+#ifdef _WIN32
+    // The display's vblanks, for flips locked to them (lantern_pacing.h, driver.cpp).
+    const HWND hwnd = static_cast<HWND>(
+        SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof(info);
+    if (const HMONITOR monitor = hwnd ? MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) : nullptr;
+        monitor && GetMonitorInfoW(monitor, &info)) {
+        LanternPacing::WatchVblank(info.szDevice);
+    }
+#endif
 }
 } // namespace
 

@@ -697,6 +697,10 @@ std::optional<std::pair<Size, Size>> ScaledSizes(const std::map<std::string, std
     if (out == kOutput || Setting(settings, "upscaler") == "taa") return std::nullopt;
     double scale = 1.0;
     if (Setting(settings, "upscaler").value_or("fsr3") != "off") scale = PresetScale(settings);
+    // A scene of at least 640x360, a third of 1080p: Ultra Performance at a 720p output made 428x240,
+    // where a ROG Ally showed the world in half the picture (0.9.37 beta 7), and the upscaler has
+    // little to work from below it.
+    scale = std::max(1.0, std::min({scale, out.w / 640.0, out.h / 360.0}));
     Size render{std::max(4, Round(out.w / scale / 4) * 4), std::max(4, Round(out.h / scale / 4) * 4)};
     if (render == kOutput) render = {1916, 1076};
     return std::pair{render, out};

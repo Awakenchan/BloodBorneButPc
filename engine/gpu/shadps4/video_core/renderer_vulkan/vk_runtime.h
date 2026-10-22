@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <optional>
 #include "common/types.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/vk_barrier_tracker.h"
@@ -107,6 +108,13 @@ public:
     /// Nothing recorded since WatchBufferWrites wrote the range (false once the watch was dropped).
     [[nodiscard]] bool BufferUnwritten(u64 token) const;
 
+    /// bbport BB_CHUNK_BUFFERS: the range is the game's memory that other commands reach through
+    /// a guest memory chunk's own buffer. Accesses are tracked per buffer, so the two do not see
+    /// each other: until the access through this one is recorded and a barrier follows it, every
+    /// IsBufferAccessed answers yes (a barrier before it and one after), and the image fill
+    /// watches count as written.
+    void NoteAliasedAccess(const VideoCore::Buffer* handle, u64 offset, u64 size);
+
     void FlushBarriers();
 
     /// bbport: runs before this thread changes image state (layouts, pending image
@@ -149,6 +157,12 @@ private:
     std::array<BufferWatch, 8> buffer_watches{};
     u64 next_watch_token = 1;
     u32 live_watches = 0; ///< watches not written yet: AccessBuffer looks only while nonzero
+    struct AliasedAccess {
+        u64 resource = 0, start = 0, end = 0;
+        bool recorded = false; ///< AccessBuffer saw it: the next barrier is the one after it
+        u32 flushes = 0;       ///< barriers before it was seen (a binding never accessed ends it)
+    };
+    std::optional<AliasedAccess> aliased;
 };
 
 } // namespace Vulkan

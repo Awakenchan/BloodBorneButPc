@@ -19,7 +19,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <fstream>
+#include <map>
 
 
 namespace start {
@@ -85,17 +89,21 @@ bool RecompileGpuCache(const fs::path& cache, const fs::path& recompiler) {
 // and draw states, no code): once per catalog, into a cache made on a GPU with the catalog's
 // profile (its first start makes it), the code taken from this PC's game files. Its shaders are
 // then compiled before the start instead of in play. BB_SHADER_CATALOG=0: not used.
-// bbport: whether a display adapter of this PC is of the vendor in a catalog's gpu.txt ("vendor
-// 10DE device 2D05", written by bb-shader-lab --export-catalog).
-bool HasCatalogGpuVendor(const fs::path& gpu_txt) {
+// bbport: the GPU vendor in a catalog's gpu.txt ("vendor 10DE device 2D05", written by
+// bb-shader-lab --export-catalog); 0 without one.
+unsigned CatalogGpuVendor(const fs::path& catalog) {
     std::string text;
     try {
-        text = ReadText(gpu_txt);
+        text = ReadText(catalog / "gpu.txt");
     } catch (const Error&) {
-        return false;
+        return 0;
     }
     unsigned vendor = 0;
-    if (std::sscanf(text.c_str(), "vendor %x", &vendor) != 1 || vendor == 0) return false;
+    return std::sscanf(text.c_str(), "vendor %x", &vendor) == 1 ? vendor : 0;
+}
+
+// bbport: whether a display adapter of this PC is of `vendor`.
+bool HasGpuVendor(unsigned vendor) {
     char wanted[16];
     std::snprintf(wanted, sizeof(wanted), "VEN_%04X", vendor);
     DISPLAY_DEVICEW device{};
@@ -106,29 +114,71 @@ bool HasCatalogGpuVendor(const fs::path& gpu_txt) {
     return false;
 }
 
+// bbport: the vendor of the GPU the engine last ran a cache on: the header of the driver cache it
+// keeps beside the cache folder ("BPBC", the vendor at 8); 0 before its first start.
+unsigned CacheGpuVendor(const fs::path& cache_folder) {
+    fs::path driver_cache = cache_folder;
+    driver_cache += ".vkcache";
+    std::ifstream in(driver_cache, std::ios::binary);
+    char header[12]{};
+    if (!in.read(header, sizeof header) || std::memcmp(header, "BPBC", 4) != 0) return 0;
+    std::uint32_t vendor = 0;
+    std::memcpy(&vendor, header + 8, 4);
+    return vendor;
+}
+
 void SeedGpuCache(const fs::path& cache, const fs::path& catalogs, const fs::path& game, const fs::path& eboot,
                   const fs::path& recompiler) {
     std::error_code error;
     if (Env("BB_SHADER_CATALOG", "1") == "0" || !fs::is_regular_file(recompiler, error)) return;
+    // bbport (0.9.37 beta 9): a game's catalog per GPU vendor: engine\shader-catalog\<game> (made on
+    // NVIDIA) and engine\shader-catalog\<vendor>\<game> (amd). One per game is seeded, of the vendor
+    // the engine last ran this cache on, else (a first start) of this PC's adapters NVIDIA first,
+    // then AMD, then Intel, as the engine picks the faster GPU: a Ryzen APU beside an RTX card must
+    // not get the AMD one's profile, which would leave the NVIDIA one applied to nothing.
+    std::map<fs::path, std::vector<fs::path>> by_game;
     for (const auto& entry : fs::directory_iterator(catalogs, error)) {
         std::error_code e;
-        const fs::path target = cache / entry.path().filename();
-        // bbport (docs/pipeline_compiles.md): the first start has no cache yet, so no profile of
-        // this GPU (the engine writes it): the catalog's own is put there when a display adapter
-        // is of the catalog's GPU vendor, so the first session has the catalog's pipelines too.
-        // Another kind of GPU of that vendor gets its cache started again by the engine
-        // (PipelineCache::WarmUp: another profile), which costs only this seeding's time.
-        if (entry.is_directory(e) && !fs::exists(target, e) && fs::is_regular_file(entry.path() / "profile.bin", e) &&
-            HasCatalogGpuVendor(entry.path() / "gpu.txt")) {
-            fs::create_directories(target, e);
-            fs::copy_file(entry.path() / "profile.bin", target / "profile.bin", e);
-            Log("GPU cache %s: first start; the shader catalog's GPU profile used until the engine checks it",
-                Utf8(entry.path().filename()).c_str());
+        if (!entry.is_directory(e)) continue;
+        if (fs::is_regular_file(entry.path() / "profile.bin", e)) {
+            by_game[entry.path().filename()].push_back(entry.path());
+            continue;
         }
-        if (!entry.is_directory(e) || !fs::is_regular_file(target / "profile.bin", e)) continue;
+        for (const auto& sub : fs::directory_iterator(entry.path(), e))
+            if (sub.is_directory(e) && fs::is_regular_file(sub.path() / "profile.bin", e))
+                by_game[sub.path().filename()].push_back(sub.path());
+    }
+    for (const auto& [game_name, candidates] : by_game) {
+        std::error_code e;
+        const fs::path target = cache / game_name;
+        unsigned vendor = CacheGpuVendor(target);
+        if (!vendor) {
+            for (const unsigned preferred : {0x10DEu, 0x1002u, 0x8086u}) {
+                if (HasGpuVendor(preferred)) {
+                    vendor = preferred;
+                    break;
+                }
+            }
+        }
+        const auto chosen = std::find_if(candidates.begin(), candidates.end(),
+                                         [&](const fs::path& c) { return vendor && CatalogGpuVendor(c) == vendor; });
+        if (chosen == candidates.end()) continue; // none for this GPU's vendor
+        const fs::path& catalog = *chosen;
+        // bbport (docs/pipeline_compiles.md): the first start has no cache yet, so no profile of
+        // this GPU (the engine writes it): the catalog's own is put there, so the first session has
+        // the catalog's pipelines too. Another kind of GPU of that vendor gets its cache started
+        // again by the engine (PipelineCache::WarmUp: another profile), which costs only this
+        // seeding's time.
+        if (!fs::exists(target, e)) {
+            fs::create_directories(target, e);
+            fs::copy_file(catalog / "profile.bin", target / "profile.bin", e);
+            Log("GPU cache %s: first start; the shader catalog's GPU profile used until the engine checks it",
+                Utf8(game_name).c_str());
+        }
+        if (!fs::is_regular_file(target / "profile.bin", e)) continue;
         // The catalog's identity: its files' count and size, as shipped.
         std::uint64_t files = 0, bytes = 0;
-        for (const auto& file : fs::directory_iterator(entry.path(), e)) {
+        for (const auto& file : fs::directory_iterator(catalog, e)) {
             ++files;
             bytes += file.file_size(e);
         }
@@ -136,16 +186,16 @@ void SeedGpuCache(const fs::path& cache, const fs::path& catalogs, const fs::pat
         if (fs::exists(marker, e)) continue;
         std::string output;
         const auto start = std::chrono::steady_clock::now();
-        const int code = RunProgram(recompiler, {L"--seed-cache", entry.path().native(), target.native(),
+        const int code = RunProgram(recompiler, {L"--seed-cache", catalog.native(), target.native(),
                                                  game.native(), eboot.native()}, &output);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         const auto first = output.find("Shader catalog:");
         const auto last = output.rfind("Shader cache:");
         if (first != std::string::npos)
-            Log("GPU cache %s: %s", Utf8(entry.path().filename()).c_str(),
+            Log("GPU cache %s: %s", Utf8(game_name).c_str(),
                 Trim(output.substr(first + 16, output.find('\n', first) - first - 16)).c_str());
         if (code == 0 && last != std::string::npos)
-            Log("GPU cache %s: %s (%.1f s)", Utf8(entry.path().filename()).c_str(),
+            Log("GPU cache %s: %s (%.1f s)", Utf8(game_name).c_str(),
                 Trim(output.substr(last + 14, output.find('\n', last) - last - 14)).c_str(), seconds);
         // Once per catalog, whatever came of it (another GPU's catalog stays unused).
         WriteText(marker, std::to_string(code) + "\n");
@@ -449,6 +499,26 @@ int Main(std::vector<std::wstring> arguments) {
     } catch (const std::exception& e) {
         Log("Engine: enhancement preparation skipped: %s", e.what());
     }
+    // Ebrietas' trail effect replaced as Nexus mod 41 does, from the game as mods leave it
+    // (assets.cpp PrepareEffectFixes); the runtime mounts the files (BB_FILE_FIXES).
+    UnsetEnv("BB_FILE_FIXES");
+    if (Env("BB_EFFECT_FIXES", "") != "0") {
+        try {
+            std::vector<std::string> notes;
+            const auto fixed = PrepareEffectFixes(merged, data / "engine-assets", notes);
+            for (const std::string& note : notes) Log("Engine: Ebrietas effect fix: %s", note.c_str());
+            if (!fixed.empty()) {
+                std::string list;
+                for (const auto& [relative, file] : fixed) list += relative + "\t" + Utf8(file) + "\n";
+                WriteText(out / "file-fixes.txt", list);
+                SetEnv("BB_FILE_FIXES", Utf8(out / "file-fixes.txt"));
+                Log("Engine: Ebrietas' trail effect replaced as Nexus mod 41 does, in %zu effect files "
+                    "(BB_EFFECT_FIXES=0 keeps the game's)", fixed.size());
+            }
+        } catch (const std::exception& e) {
+            Log("Engine: Ebrietas effect fix skipped: %s", e.what());
+        }
+    }
     if (!Env("BB_DISPLAY_SIZE") || Env("BB_DISPLAY_SIZE", "").empty()) {
         if (const auto size = DisplaySize()) {
             SetEnv("BB_DISPLAY_SIZE", std::to_string(size->w) + "x" + std::to_string(size->h));
@@ -531,6 +601,13 @@ int Main(std::vector<std::wstring> arguments) {
         if (const unsigned long error = PoolRefused(9152))
             Log("Memory: Windows refused the 9152 MiB pool before the start (error %lu)", error);
         PoolHandOff(9152);
+    } else if (!dmem) {
+        // bbport: the default pool too: its commit charged here, before bb-probe and the graphics
+        // driver take theirs. Made by the engine only, it was refused a moment after a start whose
+        // PC had enough (RTX 5060, about 7 GB of commit free, error 1455, 2026-10-22).
+        if (const unsigned long error = PoolRefused(5056))
+            Log("Memory: Windows refused the 5056 MiB pool before the start (error %lu)", error);
+        PoolHandOff(5056);
     } else {
         PoolHandOff(0);
     }

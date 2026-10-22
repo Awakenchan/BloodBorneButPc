@@ -395,6 +395,33 @@ bool ChunkTextures() {
     }();
     return on;
 }
+/// bbport BB_CHUNK_BUFFERS=1 (step 6 item 2 of docs/EMULATION_REMOVAL_PLAN.md): a binding of the
+/// game's memory in place that lies in one guest memory chunk is given as that chunk's own buffer
+/// with an offset, not as the arena: the GPU then reaches it without the sparse binding of a host
+/// import, which the Vulkan spec does not allow (the arena's memory types are VRAM only). Ranges
+/// outside one chunk, or only partly in place, go through the arena as before (counted).
+/// BB_CHUNK_VERIFY=1 (turns it on too): each such binding is checked against the arena's binding
+/// of the same blocks, and some ranges are copied through both and compared on the GPU.
+bool ChunkVerify() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_CHUNK_VERIFY");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+bool ChunkBuffers() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_CHUNK_BUFFERS");
+        const bool enabled = (env && env[0] == '1') || ChunkVerify();
+        if (enabled && GuestInPlace()) {
+            std::printf("Guest memory: bindings in one guest memory chunk use its own buffer "
+                        "(BB_CHUNK_BUFFERS=1%s)\n",
+                        ChunkVerify() ? ", checked against the arena: BB_CHUNK_VERIFY=1" : "");
+        }
+        return enabled;
+    }();
+    return on && GuestInPlace();
+}
 bool InPlaceTextures() {
     static const bool on = [] {
         // Off by default: sampled data looked smeared and ghosted with it (2026-10-04).
@@ -1055,9 +1082,6 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             if (dynamic_blocks.Overlaps(first_block, last_block + 1)) {
                 bound_dynamic_bytes.fetch_add(size, std::memory_order_relaxed);
             }
-            if (is_texel_buffer && !is_written) {
-                SynchronizeMemoryFromImage(arena, device_addr, size);
-            }
             TraceBinding(device_addr, size, is_written, is_written ? 0 : 2);
             note_hle(0);
             if (!is_written && !is_texel_buffer) {
@@ -1065,7 +1089,14 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                     return *shadow;
                 }
             }
-            return {arena, arena->Offset(device_addr)};
+            // bbport BB_CHUNK_BUFFERS: through its chunk's own buffer where it lies in one.
+            const auto target =
+                ChunkBuffers() ? RouteInPlace(RouteOutside, arena, device_addr, size, is_written)
+                               : std::pair<const Buffer*, u64>{arena, arena->Offset(device_addr)};
+            if (is_texel_buffer && !is_written) {
+                SynchronizeMemoryFromImage(target.first, target.second, device_addr, size);
+            }
+            return target;
         }
     }
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
@@ -1127,6 +1158,12 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                 WrittenBinding{device_addr, size, scheduler.CurrentTick()};
         }
     }
+    // bbport BB_CHUNK_BUFFERS: partly in place, it is the arena, while the blocks in place are
+    // reached through their chunk by other bindings.
+    if (ChunkBuffers() && IsAnyInPlace(device_addr, size)) {
+        CountRoute(RoutePartly, size, is_written);
+        runtime.NoteAliasedAccess(arena, arena->Offset(device_addr), size);
+    }
     TraceBinding(device_addr, size, is_written, is_written ? 1 : 4);
     return {arena, arena->Offset(device_addr)};
 }
@@ -1144,6 +1181,9 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
         return std::nullopt;
     }
     WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+    if (ChunkBuffers()) {
+        return RouteInPlace(RouteCommandArena, arena, device_addr, size, true);
+    }
     return std::pair<const Buffer*, u64>{arena, arena->Offset(device_addr)};
 }
 
@@ -1173,6 +1213,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
         if (IsInPlace(device_addr, size)) {
             const auto* arena = GetArena(first_block, last_block);
             TraceBinding(device_addr, size, false, 5);
+            if (ChunkBuffers()) {
+                return RouteInPlace(RouteImageArena, arena, device_addr, size, false);
+            }
             return {arena, arena->Offset(device_addr)};
         }
         if (ChunkTextures() && !IsRegionGpuModified(device_addr, size)) {
@@ -2332,6 +2375,31 @@ void BufferCache::ReportResidency(u32 now) {
         bind_max_ns.exchange(0) / 1e6, mib(vram), mib(in_place), mib(dynamic_in_place),
         bound_in_place_bytes.exchange(0) / (frames * 1e6),
         bound_dynamic_bytes.exchange(0) / (frames * 1e6));
+    if (ChunkBuffers()) {
+        std::array<unsigned long long, ChunkRoutes> calls{}, written{};
+        for (u32 route = 0; route < ChunkRoutes; ++route) {
+            calls[route] = chunk_route_calls[route].exchange(0);
+            written[route] = chunk_route_written[route].exchange(0);
+        }
+        std::printf("Chunk buffers, last %u s: %llu bindings in place through their chunk (%llu "
+                    "written, %.1f MB a frame); through the arena: %llu outside one chunk (%llu "
+                    "written), %llu partly in place (%llu written), %llu texture reads, %llu command "
+                    "processor writes\n",
+                    seconds, calls[RouteChunk], written[RouteChunk],
+                    chunk_route_bytes[RouteChunk].exchange(0) / (frames * 1e6), calls[RouteOutside],
+                    written[RouteOutside], calls[RoutePartly], written[RoutePartly],
+                    calls[RouteImageArena], calls[RouteCommandArena]);
+        for (u32 route = RouteOutside; route < ChunkRoutes; ++route) {
+            chunk_route_bytes[route].store(0, std::memory_order_relaxed);
+        }
+        if (ChunkVerify()) {
+            std::printf("Chunk buffers check: %llu ranges compared on the GPU, %llu read differently "
+                        "through the arena and the chunk, %llu changed by the CPU meanwhile; %llu "
+                        "bindings the arena binds elsewhere\n",
+                        (unsigned long long)verify_compared, (unsigned long long)verify_differed,
+                        (unsigned long long)verify_changed, (unsigned long long)verify_unmapped);
+        }
+    }
     std::fflush(stdout);
     promoted_by = {};
     demoted_by = {};
@@ -2349,9 +2417,136 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::GuestChunkSource(VAddr
     auto& buffer = chunk_buffers[chunk->index % chunk_buffers.size()];
     if (!buffer) {
         buffer = std::make_unique<Buffer>(instance, chunk->size, chunk->memory,
+                                          BbGuestMemory::ChunkHandleType(), BbGuestMemory::ChunkUsage,
                                           fmt::format("lantern guest memory {:#x}", chunk->phys));
     }
     return std::pair<const Buffer*, u64>{buffer.get(), phys - chunk->phys};
+}
+
+std::pair<const Buffer*, u64> BufferCache::RouteInPlace(ChunkRoute arena_route, const Buffer* arena,
+                                                        VAddr addr, u64 size, bool is_written) {
+    if (const auto chunk = GuestChunkSource(addr, size)) {
+        CountRoute(RouteChunk, size, is_written);
+        if (ChunkVerify()) {
+            VerifyChunkRoute(arena, addr, size, *chunk);
+        }
+        return *chunk;
+    }
+    CountRoute(arena_route, size, is_written);
+    runtime.NoteAliasedAccess(arena, arena->Offset(addr), size);
+    return {arena, arena->Offset(addr)};
+}
+
+void BufferCache::VerifyChunkRoute(const Buffer* arena, VAddr addr, u64 size,
+                                   std::pair<const Buffer*, u64> chunk) {
+    u64 phys = 0;
+    uintptr_t mapping_end = 0;
+    const BbGuestMemory::Chunk* owner = nullptr;
+    if (!runtime_memory_direct_phys(addr, &phys, &mapping_end) ||
+        (owner = BbGuestMemory::Find(phys)) == nullptr) {
+        return;
+    }
+    // Every block of the range bound in the arena to the chunk's memory, at the offset the chunk
+    // route reads there (an in-place run is one contiguous run of its chunk).
+    const u64 first = addr >> block_shift, last = (addr + size - 1) >> block_shift;
+    for (u64 block = first; block <= last; ++block) {
+        const VAddr at = std::max<VAddr>(addr, block << block_shift);
+        const auto backing = resident_ranges.Find(block);
+        const bool bound = backing != resident_ranges.end();
+        const u64 arena_offset =
+            bound ? ((backing->offset + (block - backing->start)) << block_shift) +
+                        (at - (block << block_shift))
+                  : 0;
+        const u64 chunk_offset = chunk.second + (at - addr);
+        if (bound && backing->memory == owner->memory && arena_offset == chunk_offset) {
+            continue;
+        }
+        ++verify_unmapped;
+        if (verify_reports++ < 8) {
+            std::printf("Chunk buffers: %#llx is bound in the arena to %s at %#llx; its chunk route "
+                        "reads chunk %#llx at %#llx\n",
+                        (unsigned long long)at,
+                        !bound                            ? "nothing"
+                        : backing->memory == owner->memory ? "its chunk"
+                                                           : "other memory",
+                        (unsigned long long)arena_offset, (unsigned long long)owner->phys,
+                        (unsigned long long)chunk_offset);
+        }
+        break;
+    }
+    // The bytes: through the arena, the chunk and the arena again, compared when done.
+    const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
+    if (now != verify_second) {
+        verify_second = now;
+        verify_in_second = 0;
+    }
+    if (verify_in_second >= 16 || verify_free_slots == 0) {
+        return;
+    }
+    ++verify_in_second;
+    if (!verify_buffer) {
+        verify_buffer = std::make_unique<Buffer>(instance, 0, u64{VerifySlots} * 3 * VerifyBytes,
+                                                 MemoryType::HostCached, "lantern chunk verify");
+    }
+    const u32 slot = static_cast<u32>(std::countr_zero(verify_free_slots));
+    verify_free_slots &= ~(u64{1} << slot);
+    const u64 bytes = std::min<u64>(size, VerifyBytes);
+    const u64 base = u64{slot} * 3 * VerifyBytes;
+    const vk::BufferCopy through_arena{arena->Offset(addr), base, bytes};
+    const vk::BufferCopy through_chunk{chunk.second, base + VerifyBytes, bytes};
+    const vk::BufferCopy again{arena->Offset(addr), base + 2 * VerifyBytes, bytes};
+    // The arena copies read the chunk's bytes through the other buffer: barriers on both sides.
+    runtime.NoteAliasedAccess(arena, through_arena.srcOffset, bytes);
+    runtime.CopyBuffer(arena, verify_buffer.get(), std::span{&through_arena, 1});
+    runtime.CopyBuffer(chunk.first, verify_buffer.get(), std::span{&through_chunk, 1});
+    runtime.NoteAliasedAccess(arena, again.srcOffset, bytes);
+    runtime.CopyBuffer(arena, verify_buffer.get(), std::span{&again, 1});
+    scheduler.Record([](vk::CommandBuffer cmdbuf) {
+        const vk::MemoryBarrier2 to_host{
+            .srcStageMask = vk::PipelineStageFlagBits2::eCopy,
+            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eHost,
+            .dstAccessMask = vk::AccessFlagBits2::eHostRead,
+        };
+        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &to_host});
+    });
+    chunk_checks.push_back({scheduler.CurrentTick(), addr, static_cast<u32>(bytes), slot});
+}
+
+void BufferCache::ProcessChunkChecks() {
+    if (chunk_checks.empty()) {
+        return;
+    }
+    std::erase_if(chunk_checks, [&](const ChunkCheck& check) {
+        if (!scheduler.GetWorkSemaphore()->IsFree(check.tick)) {
+            return false;
+        }
+        const u64 base = u64{check.slot} * 3 * VerifyBytes;
+        verify_buffer->Invalidate(base, 3 * VerifyBytes);
+        const u8* through_arena = verify_buffer->mapped_data.data() + base;
+        const u8* through_chunk = through_arena + VerifyBytes;
+        const u8* again = through_arena + 2 * VerifyBytes;
+        if (std::memcmp(through_arena, again, check.size) != 0) {
+            ++verify_changed; // the CPU wrote there meanwhile: nothing to compare
+        } else {
+            ++verify_compared;
+            if (std::memcmp(through_arena, through_chunk, check.size) != 0) {
+                ++verify_differed;
+                if (verify_reports++ < 8) {
+                    u32 at = 0;
+                    while (through_arena[at] == through_chunk[at]) {
+                        ++at;
+                    }
+                    std::printf("Chunk buffers: %#llx+%u reads differently through the arena and "
+                                "its chunk (from +%u: %02x, %02x)\n",
+                                (unsigned long long)check.addr, check.size, at, through_arena[at],
+                                through_chunk[at]);
+                }
+            }
+        }
+        verify_free_slots |= u64{1} << check.slot;
+        return true;
+    });
 }
 
 void BufferCache::NoteAssetWrite(VAddr addr, u64 size) {
@@ -2837,6 +3032,7 @@ void BufferCache::Maintain() {
     ProcessPendingAssets();
     ProcessLateWrites();
     ProcessPromoteFills();
+    ProcessChunkChecks();
 }
 
 void BufferCache::ProcessPendingUnmaps() {
@@ -2913,7 +3109,8 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
     // bbport BB_GUEST_IN_PLACE: the arena is the game's memory there: nothing to upload, no
     // write tracking, and GPU writes need no readback. Images aliasing it still sync.
     if (IsInPlace(device_addr, size)) {
-        return is_texel_buffer && !is_written && SynchronizeMemoryFromImage(arena, device_addr, size);
+        return is_texel_buffer && !is_written &&
+               SynchronizeMemoryFromImage(arena, arena->Offset(device_addr), device_addr, size);
     }
     // Partly in place: only the parts in VRAM are synced. An upload over a block in place would
     // write an older copy of the game's memory back into it after the game wrote it again.
@@ -3014,7 +3211,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
         runtime.CopyFromGuestChunk(chunk_buffer, arena, std::span{&copy, 1});
     }
     if (is_texel_buffer && !is_written) {
-        return SynchronizeMemoryFromImage(arena, device_addr, size);
+        return SynchronizeMemoryFromImage(arena, arena->Offset(device_addr), device_addr, size);
     }
     return false;
 }
@@ -3102,12 +3299,13 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
     return staging.buffer;
 }
 
-bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_addr, u32 size) {
+bool BufferCache::SynchronizeMemoryFromImage(const Buffer* buffer, u64 offset, VAddr device_addr,
+                                             u32 size) {
     BB_SECTION(VramImage);
     if (auto type = texture_cache.IsMeta(device_addr)) {
         if (*type == TextureCache::MetaType::HTile) {
             static constexpr u32 ZmaskUncompressed = 0xf;
-            runtime.FillBuffer(arena, arena->Offset(device_addr), size, ZmaskUncompressed);
+            runtime.FillBuffer(buffer, offset, size, ZmaskUncompressed);
             return true;
         } else {
             LOG_WARNING(Render_Vulkan, "Unhandled metadata type {}", magic_enum::enum_name(*type));
@@ -3132,7 +3330,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
     ASSERT_MSG(device_addr == image.info.guest_address,
                "Texel buffer aliases image subresources {:x} : {:x}", device_addr,
                image.info.guest_address);
-    const u64 arena_offset = arena->Offset(device_addr);
+    const u64 arena_offset = offset;
 
     // bbport (BB_IMAGE_TILE_MEMO): left out when the range already holds the image as it is.
     // The image: no write access since (Runtime::Transit counts them in write_seq; every GPU
@@ -3152,7 +3350,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
     const bool proxy_stale = runtime.scene_targets && runtime.scene_targets->NativeStale(image);
     if (memo_on) {
         for (auto& memo : tile_memos) {
-            if (memo.address != device_addr || memo.size != size || memo.arena != arena ||
+            if (memo.address != device_addr || memo.size != size || memo.arena != buffer ||
                 memo.arena_offset != arena_offset) {
                 continue;
             }
@@ -3190,7 +3388,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
         const u32 width = std::max(image.info.size.width >> mip, 1u);
         const u32 height = std::max(image.info.size.height >> mip, 1u);
         const u32 depth = std::max(image.info.size.depth >> mip, 1u);
-        if (arena_offset + mip_info.offset + mip_info.size > arena->size_bytes) {
+        if (arena_offset + mip_info.offset + mip_info.size > buffer->size_bytes) {
             break;
         }
         buffer_copies.push_back(vk::BufferImageCopy{
@@ -3211,7 +3409,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
         return false;
     }
     auto& tile_manager = texture_cache.GetTileManager();
-    tile_manager.TileImage(image, buffer_copies, arena, arena_offset);
+    tile_manager.TileImage(image, buffer_copies, buffer, arena_offset);
     if (memo_on) {
         // After the fill: its own writes are not watched, the resolve of a proxy it caused is
         // in write_seq. Images with CPU writes pending are filled every time.
@@ -3219,13 +3417,13 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
             tile_memos[tile_memo_next++ % tile_memos.size()] = {
                 .address = device_addr,
                 .size = size,
-                .arena = arena,
+                .arena = buffer,
                 .arena_offset = arena_offset,
                 .image_uid = image.image_uid,
                 .backing = image.backing,
                 .write_seq = image.write_seq,
                 .flags = static_cast<u32>(image.flags),
-                .watch = runtime.WatchBufferWrites(arena, arena_offset, watched_size),
+                .watch = runtime.WatchBufferWrites(buffer, arena_offset, watched_size),
                 .residency = ResidencyGeneration(),
                 .write_tick = WriteTicks().Newest(device_addr, watched_size),
             };

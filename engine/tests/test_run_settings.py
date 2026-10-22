@@ -73,8 +73,9 @@ class RestartResolutionTests(unittest.TestCase):
 
     def test_outputs_other_than_1080p_patch_the_render_size_and_restarts_recompute_it(self):
         rows = self.run_restarts()
-        # 720p Quality, 720p Ultra Performance after a restart, then 1080p (live host targets).
-        self.assertEqual([row['BB_RENDER_RES'] for row in rows], ['852x480', '428x240', None])
+        # 720p Quality, 720p Ultra Performance after a restart (at least 640x360), then 1080p
+        # (live host targets).
+        self.assertEqual([row['BB_RENDER_RES'] for row in rows], ['852x480', '640x360', None])
         self.assertEqual([row['BB_OUTPUT_RES'] for row in rows], ['1280x720', '1280x720', None])
         self.assertEqual([row['BB_AUTO_RENDER_RES'] for row in rows], ['1', '1', None])
 

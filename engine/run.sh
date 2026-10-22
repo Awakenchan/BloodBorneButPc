@@ -66,6 +66,13 @@ fi
 "$PYTHON" scripts/link_libc.py "$game" --out "$out"
 "$PYTHON" scripts/link_modules.py "$game" --out "$out"
 "$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
+# The engine's own features (the executable's identity, which every engine hook checks: keyboard
+# and mouse, PC menus, camera, widescreen...; the Dream mirror and PC menus), as bb-start.exe does
+# on Windows. Never taken from the caller's environment.
+unset BB_DREAM_MIRROR_ASSET BB_ENGINE_IMAGE_SHA256 BB_FILE_FIXES BB_PC_MENU_ASSETS BB_REBIRTH_ASSET
+while IFS= read -r line; do
+    if [[ $line == env:* ]]; then export "${line#env:}"; else printf '%s\n' "$line"; fi
+done < <("$PYTHON" scripts/engine_features.py "$game" --out "$out" --data "$data" --config "$BB_CONFIG")
 # Sizes chosen below for the previous launch are recomputed after an in-game restart.
 if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
     unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES

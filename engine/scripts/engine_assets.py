@@ -160,6 +160,119 @@ def prepare_mirror(game, elf_path, cache):
     return destination.resolve()
 
 
+SFX = Path('dvdroot_ps4/sfx')
+# Ebrietas' trail effect, f001251720.fxr, in Upper Cathedral Ward's effects (m24_02) and in the
+# chalice dungeons' (m29a, her chalice fight): on the engine its rock particles pile up to
+# thousands of draws a frame in her rock attacks (90 to 40 FPS; with the game's 160 MiB GPU range
+# allocator, the device lost before 0.9.37 beta 8). Nexus mod 41 ("SFX Fix") replaces it with a
+# byte copy of f001454436.fxr from the Fishing Hamlet's effects (m36); this makes the same change
+# from the player's own files. Each binder is the 1.09 one (the .dcx as shipped, or its unpacked
+# bytes) or is left as it is: a mod that changes it wins.
+EFFECT_NAME = 'f001251720.fxr'
+EFFECT_SHA = '988c55ba0f689bc0b4f8e7a9f9b184ef8cd9bcd4601b2c925387ff5ce3fc9f0b'
+EFFECT_SOURCE = (SFX / 'frpg_sfxbnd_m36.ffxbnd.dcx', 'f001454436.fxr',
+                 '990644087f325191d34fd2f4b633a9f7c6a63ce9d71786c4289a7cae5cdfb4e0')
+EFFECT_FIXES = (
+    # binder; sha256 of the 1.09 .dcx, of it unpacked, and of the result unpacked
+    (SFX / 'frpg_sfxbnd_m24_02.ffxbnd.dcx',
+     '6cab7031c5fafba95ed71c4ddb86e590b77b2d669988e8b53bed159e1dbc1015',
+     'b0bd083145a753a667c4021a3f817879646b1f8b84201e2774daa17e1c5b0e99',
+     'fae6b9639fb02b34188a3dd262b2695f7667812749f984f1eb2fd2ab298a9e9b'),
+    (SFX / 'frpg_sfxbnd_m29a.ffxbnd.dcx',
+     '0466ebd7125cc705e341cab18e18c3d1282000a8d54b0628d47da992daed0fd6',
+     '085f2d3d60d54e50fa981c7aad89ca42f47b3a733a78b40ee98f572883ce122b',
+     '8348b2b7f110feb7ca0a444e8331886b85fe24ba422b8b9909cdc5d551ffcb07'),
+)
+BND4_ENTRY = 0x24  # flags, -1, packed and unpacked size (i64), data offset (u32), id, name offset
+
+
+def binder_entries(bnd):
+    """(header offset, name, data offset, size) of each file in a BND4 with 0x24-byte entries
+    (format 0x74: sizes, 32-bit offsets, ids, UTF-16 names), as the game's sfx binders are."""
+    if bnd[:4] != b'BND4' or struct.unpack_from('<q', bnd, 0x20)[0] != BND4_ENTRY or bnd[0x30:0x32] != b'\x01\x74':
+        raise ValueError('Unexpected effect binder layout')
+    count = struct.unpack_from('<i', bnd, 0x0c)[0]
+    entries = []
+    for i in range(count):
+        at = 0x40 + i * BND4_ENTRY
+        packed, unpacked, offset, _, name_at = struct.unpack_from('<qqIii', bnd, at + 8)
+        if packed != unpacked or offset + packed > len(bnd):
+            raise ValueError('Unexpected effect binder entry')
+        end = name_at
+        while bnd[end:end + 2] != b'\0\0':
+            end += 2
+        entries.append((at, bnd[name_at:end].decode('utf-16-le'), offset, packed))
+    return entries
+
+
+def replace_entry(bnd, name, data):
+    """The binder with `name` (its file name) holding `data`: appended 16-byte aligned, its
+    entry's sizes and offset pointed at it. The other entries and the name table stay put."""
+    found = [e for e in binder_entries(bnd) if e[1].replace('\\', '/').rsplit('/', 1)[-1] == name]
+    if len(found) != 1:
+        raise ValueError(f'{name} is not in the effect binder once')
+    at = found[0][0]
+    offset = (len(bnd) + 15) & ~15
+    out = bytearray(bnd) + bytes(offset - len(bnd)) + data
+    struct.pack_into('<qqI', out, at + 8, len(data), len(data), offset)
+    return bytes(out)
+
+
+def binder_file(bnd, name):
+    for _, entry, offset, size in binder_entries(bnd):
+        if entry.replace('\\', '/').rsplit('/', 1)[-1] == name:
+            return bnd[offset:offset + size]
+    raise ValueError(f'{name} is not in the effect binder')
+
+
+def prepare_effect_fixes(game, cache, log=print):
+    """The fixed effect binders under cache/effect-fixes, as (game path, file) pairs for the
+    runtime (BB_FILE_FIXES); empty when none applies. A prepared binder is kept while it matches
+    the hash written beside it (<binder>.sha256, of its .dcx)."""
+    game = Path(game)
+    root = Path(cache) / 'effect-fixes'
+    source, source_name, source_sha = EFFECT_SOURCE
+    replacement = None
+    fixed = []
+    for relative, packed_sha, input_sha, output_sha in EFFECT_FIXES:
+        try:
+            packed = (game / relative).read_bytes()
+        except OSError:
+            continue  # not installed
+        raw = None
+        if sha(packed) != packed_sha:
+            raw = dcx_unpack(packed)
+            if sha(raw) != input_sha:
+                log(f'Engine: Ebrietas effect fix: {relative.name} is not the 1.09 file (a mod changes it): left as it is')
+                continue
+        destination = root / relative
+        stamp = destination.with_name(destination.name + '.sha256')
+        try:
+            if stamp.read_text(encoding='ascii').strip() == sha(destination.read_bytes()):
+                fixed.append((relative, destination.resolve()))
+                continue
+        except OSError:
+            pass
+        raw = raw if raw is not None else dcx_unpack(packed)
+        if sha(binder_file(raw, EFFECT_NAME)) != EFFECT_SHA:
+            raise ValueError(f'Unexpected {EFFECT_NAME} in {relative.name}')
+        if replacement is None:
+            replacement = binder_file(dcx_unpack((game / source).read_bytes()), source_name)
+            if sha(replacement) != source_sha:
+                raise ValueError(f'Unexpected {source_name} in {source.name}')
+        result = replace_entry(raw, EFFECT_NAME, replacement)
+        if sha(result) != output_sha:
+            raise ValueError(f'{relative.name} does not match the verified result')
+        out = dcx_pack(result)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(destination.name + f'.{os.getpid()}.tmp')
+        temporary.write_bytes(out)
+        os.replace(temporary, destination)
+        stamp.write_text(sha(out) + '\n', encoding='ascii')
+        fixed.append((relative, destination.resolve()))
+    return fixed
+
+
 def prepare_menu_assets(game, elf_path, cache, tool, rebirth=False):
     """Generate bbhost's native option movie and messages from the player's own dump.
 

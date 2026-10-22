@@ -7,8 +7,15 @@
 #include <stdint.h>
 /* Reserves [start,end) once as a placeholder: nothing else in the process can take it. */
 int win_mem_space(uintptr_t start, uintptr_t end);
-/* Pagefile-backed section of size bytes (the physical pool) and a host view of all of it. */
+/* Pagefile-backed section of size bytes (the physical pool) and a host view of all of it.
+ * BB_POOL_LAZY=1: the section only reserves; win_mem_map commits what is mapped. */
 int win_mem_section(uint64_t size, void **backing);
+/* BB_POOL_LAZY: the pool's pages [phys, phys+size) committed (a no-op on a committed pool and on
+ * pages committed before). 0, or -1 when Windows has no commit left for them. */
+int win_mem_commit(uint64_t phys, uint64_t size);
+/* Zeroes the pool's pages [phys, phys+size) that are committed; pages never committed read as
+ * zero once they are. */
+void win_mem_zero(uint64_t phys, uint64_t size);
 /* Called for each piece of a view that had to be remapped around a removed range; it must
  * re-apply the pieces' protection (a fresh view is read/write). */
 typedef void (*WinMemRestore)(uintptr_t start, uintptr_t end);

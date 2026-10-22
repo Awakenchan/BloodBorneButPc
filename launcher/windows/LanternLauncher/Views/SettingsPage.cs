@@ -21,8 +21,8 @@ namespace BloodborneLauncher.Views
         private readonly TextBlock _versionHint;
         private IReadOnlyList<Updater.Release>? _releases;
         private bool _versionsLoading;
-        private readonly StackPanel _themeColour = new(), _picture = new();
-        private TextBlock _pictureHint = null!;
+        private readonly StackPanel _themeColour = new(), _picture = new(), _iconPicture = new();
+        private TextBlock _pictureHint = null!, _iconPictureHint = null!;
 
         public SettingsPage() : base(L.T("Settings"), L.T("The Lantern Engine, how the game is started, and keeping this launcher up to date."))
         {
@@ -51,6 +51,13 @@ namespace BloodborneLauncher.Views
                     else if (layout is ComboBox box) box.SelectedIndex = index;
                     reverting = false;
                 });
+
+            // The Modern layout's pages: tabs across the top, or a sidebar in groups (live).
+            if (!SettingRow.Classic)
+                ComboRow(SymbolRegular.TextBulletListSquare24, L.T("Navigation"), L.T("Tabs across the top, or a sidebar with the pages in groups"),
+                    new[] { new Choice(L.T("Tabs"), "tabs"), new Choice(L.T("Sidebar"), "sidebar") },
+                    () => S.Str("ui_navigation") == "sidebar" ? "sidebar" : "tabs", v => S.Set("ui_navigation", v),
+                    changed: () => MainWindow.Instance?.ApplyNavigation());
 
             SettingCombo(SymbolRegular.PaintBrush24, L.T("Theme"), L.T("The accent colour, and a faint tint of it in the launcher's surfaces"),
                 LauncherTheme.Themes, "ui_theme", changed: () =>
@@ -113,7 +120,14 @@ namespace BloodborneLauncher.Views
                 new[] { new Choice(L.T("Strong"), "strong"), new Choice(L.T("Light"), "light"), new Choice(L.T("Off"), "off") },
                 "ui_background_blur", changed: () => MainWindow.Instance?.ApplyBackdrop());
             SettingCombo(SymbolRegular.Image24, L.T("App icon"), L.T("The launcher's and the game window's icon. The game window takes it at its next start"),
-                AppIcon.Choices, "app_icon", changed: () => MainWindow.Instance?.ApplyIcon());
+                AppIcon.Choices, "app_icon", changed: () =>
+                {
+                    ShowAppearance();
+                    MainWindow.Instance?.ApplyIcon();
+                });
+            Add(Card(SymbolRegular.ImageEdit24, L.T("Icon picture"), L.T("A PNG, JPG, BMP or ICO; square pictures look best"),
+                SmallButton(L.T("Choose"), SymbolRegular.FolderOpen24, (_, _) => ChooseIcon()), out _iconPictureHint), _iconPicture);
+            Body.Children.Add(_iconPicture);
             SettingCombo(SymbolRegular.Window24, L.T("Window buttons"), L.T("macOS: the red, yellow and green dots. Windows: – □ ✕"),
                 new[] { new Choice("macOS", "mac"), new Choice("Windows", "windows") },
                 "ui_window_buttons", changed: () => MainWindow.Instance?.ApplyWindowButtons());
@@ -382,6 +396,25 @@ namespace BloodborneLauncher.Views
             var own = S.Str("ui_background_image");
             SetHint(_pictureHint, own.Length == 0 ? L.T("None chosen yet: the game artwork shows")
                 : File.Exists(own) ? own : L.F($"{own} is missing: the game artwork shows"));
+            _iconPicture.IsVisible = S.Str("app_icon") == "custom";
+            SetHint(_iconPictureHint, S.Str("app_icon_image") is { Length: > 0 } icon && File.Exists(AppIcon.CustomFile)
+                ? icon : L.T("None chosen yet: the build's own lantern shows"));
+        }
+
+        /// <summary>Your picture for the app icon, made into an icon file at once (the picture may move later).</summary>
+        private void ChooseIcon()
+        {
+            var file = Ui.OpenFile(L.T("Icon picture"), L.T("Pictures|*.png;*.jpg;*.jpeg;*.bmp;*.ico|All files|*.*"));
+            if (file == null) return;
+            if (!AppIcon.MakeCustom(file))
+            {
+                Prompt.Tell(L.T("Icon picture"), L.F($"{Path.GetFileName(file)} could not be read as a picture."));
+                return;
+            }
+            S.Set("app_icon_image", file);
+            Ws.SaveSoon();
+            ShowAppearance();
+            MainWindow.Instance?.ApplyIcon();
         }
 
         private void ChoosePicture()

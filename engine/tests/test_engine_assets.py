@@ -80,6 +80,47 @@ class EngineAssetTests(unittest.TestCase):
             self.assertFalse((root / 'cache/pc-menus/manifest.json').exists())
             self.assertTrue(all(p.read_bytes() == b'original' for p in game.rglob('*') if p.is_file()))
 
+    @staticmethod
+    def binder(files):
+        """A BND4 laid out as the game's effect binders: 0x24-byte entries, UTF-16 names, data
+        16-byte aligned after the names."""
+        count = len(files)
+        names = b''.join(('N:\\sfx\\effect\\' + n).encode('utf-16-le') + b'\0\0' for n, _ in files)
+        headers_end = 0x40 + 0x24 * count + len(names)
+        header = bytearray(b'BND4' + bytes(4) + b'\0\0\x01\0' + struct.pack('<iq', count, 0x40) + b'07D7R6\0\0'
+                           + struct.pack('<qq', 0x24, headers_end) + b'\x01\x74\0\0' + bytes(12))
+        entries, data, at, name_at = bytearray(), bytearray(), (headers_end + 15) & ~15, 0x40 + 0x24 * count
+        for i, (name, body) in enumerate(files):
+            entries += struct.pack('<B3xiqqIii', 0x40, -1, len(body), len(body), at + len(data), i, name_at)
+            name_at += len(('N:\\sfx\\effect\\' + name).encode('utf-16-le')) + 2
+            data += body + bytes(-len(body) % 16)
+        out = bytes(header) + bytes(entries) + names
+        return out + bytes(-len(out) % 16) + bytes(data)
+
+    def test_effect_binder_entry_is_replaced_in_place_of_its_data(self):
+        bnd = self.binder([('f000000001.fxr', b'first'), ('f001251720.fxr', b'trail effect'), ('f000000003.fxr', b'third')])
+        out = engine_assets.replace_entry(bnd, 'f001251720.fxr', b'the replacement effect')
+        self.assertEqual(out[:len(bnd)], bnd[:0x40 + 0x24] + out[0x40 + 0x24:0x40 + 0x48] + bnd[0x40 + 0x48:])
+        self.assertEqual(len(out) % 16, 6)  # appended at a 16-byte boundary
+        self.assertEqual(engine_assets.binder_file(out, 'f001251720.fxr'), b'the replacement effect')
+        self.assertEqual(engine_assets.binder_file(out, 'f000000001.fxr'), b'first')
+        self.assertEqual(engine_assets.binder_file(out, 'f000000003.fxr'), b'third')
+        with self.assertRaisesRegex(ValueError, 'not in the effect binder once'):
+            engine_assets.replace_entry(bnd, 'f009999999.fxr', b'x')
+        with self.assertRaisesRegex(ValueError, 'layout'):
+            engine_assets.binder_entries(b'BND3' + bnd[4:])
+
+    def test_effect_fix_leaves_a_modded_binder_alone(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binder = root / 'game' / engine_assets.EFFECT_FIXES[0][0]
+            binder.parent.mkdir(parents=True)
+            binder.write_bytes(engine_assets.dcx_pack(self.binder([('f001251720.fxr', b'a mod\'s effect')])))
+            lines = []
+            self.assertEqual(engine_assets.prepare_effect_fixes(root / 'game', root / 'cache', log=lines.append), [])
+            self.assertIn('not the 1.09 file', lines[0])
+            self.assertFalse((root / 'cache').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -60,12 +60,14 @@ namespace BloodborneLauncher.Core
             ["cheat_bullets_amount"] = 20,
             ["update_channel"] = "", // empty: beta builds follow beta, others stable
             ["ui_layout"] = "modern",
+            ["ui_navigation"] = "tabs", // tabs | sidebar (Modern layout; Classic has the sidebar)
             ["ui_theme"] = "default",
             ["ui_theme_colour"] = "#C41E3A",
             ["ui_background"] = "game", // game | custom | none
             ["ui_background_image"] = "",
             ["ui_background_blur"] = "strong", // strong | light | off
-            ["app_icon"] = "auto", // auto | red | blue | j3loo (AppIcon)
+            ["app_icon"] = "auto", // auto | red | blue | j3loo | custom (AppIcon)
+            ["app_icon_image"] = "", // custom: the picture chosen (AppIcon.CustomFile holds it as an icon)
             ["ui_window_buttons"] = "mac", // mac | windows
             ["ui_window_buttons_side"] = "usual", // usual (mac left, windows right) | left | right
             ["fsr4_balanced"] = false,

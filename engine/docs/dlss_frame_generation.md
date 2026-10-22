@@ -119,9 +119,12 @@ guest flip ─► GPU command thread ──────────────�
 - **Off frames.** Menus, movies, loading screens and frames without the upscaler have no inputs:
   DLSS-G's mode goes to off (resources kept) and comes back with the next game frame. The
   in-game menu open also turns it off. Window resizes and fullscreen switches turn it off first.
-- **HDR output** is not supported with DLSS-G yet (as with FSR 3.1 frame generation): the HUD-less
-  frame would need the HDR encode too.
-- **Fallback.** No RTX 40/50, old driver, HAGS off, missing DLLs, OptiScaler loaded, HDR on: the
+- **HDR output** (0.9.37 beta 9): the HUD-less frame goes through the same HDR encode as the back
+  buffer's frame (`Presenter::PresentHdr`), so DLSS-G gets both in the swapchain's HDR format;
+  `BB_DLSSG_HDR=0` turns it off with HDR. FSR 3.1 frame generation interpolates the 8-bit frame
+  before the encode, and the generated frame is encoded with the real frame's gain map in native
+  mode.
+- **Fallback.** No RTX 40/50, old driver, HAGS off, missing DLLs, OptiScaler loaded: the
   menu says why, the log names the Streamline result, and Frame generation offers FSR 3.1.
 
 ## OptiScaler's options against the engine's

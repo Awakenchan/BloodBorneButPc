@@ -858,6 +858,14 @@ void DlssFrameGen::SetMode(bool on) {
 #endif
 }
 
+bool DlssFrameGenHdr() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_DLSSG_HDR");
+        return !(env && env[0] == '0');
+    }();
+    return on;
+}
+
 void DlssFrameGen::BeforePresent(const DlssFrameInfo* info, bool menu_open, bool hdr) {
 #ifdef _WIN32
     if (!Streamline::Loaded() || !info || info->index == 0) {
@@ -875,7 +883,7 @@ void DlssFrameGen::BeforePresent(const DlssFrameInfo* info, bool menu_open, bool
     }
     auto& s = BbSettings::Get();
     const bool wanted = s.frame_gen.load(std::memory_order_relaxed) == BbSettings::FrameGenDlss;
-    const bool on = wanted && info->inputs && tag_ui && !menu_open && !hdr;
+    const bool on = wanted && info->inputs && tag_ui && !menu_open && (!hdr || DlssFrameGenHdr());
     if (info->inputs) {
         options_render = {info->render_width, info->render_height};
     }
@@ -1002,6 +1010,14 @@ void DlssFrameGen::AfterPresent(const DlssFrameInfo* info) {
     }
     if (const VkResult error = last_api_error.exchange(VK_SUCCESS); error != VK_SUCCESS) {
         std::printf("DLSS Frame Generation: present returned %d\n", int(error));
+    }
+    // bbport: dynamic multi frame generation as the running feature reports it. At device
+    // creation, before DLSS-G has a swapchain, an RTX 5080 (beta 7) got up to 5 generated frames
+    // but no dynamic mode, and the menu's switch stayed disabled.
+    if (state.bIsDynamicMFGSupported == sl::Boolean::eTrue && s.dlss_fg_max_frames.load() > 1 &&
+        !s.dlss_fg_dynamic_supported.exchange(true)) {
+        std::printf("DLSS Frame Generation: dynamic multi frame generation available\n");
+        std::fflush(stdout);
     }
     // Frames presented per game frame, smoothed (Streamline counts since the last query).
     presented_avg = presented_avg * 0.95 + double(state.numFramesActuallyPresented) * 0.05;

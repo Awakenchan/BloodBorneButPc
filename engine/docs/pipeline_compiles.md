@@ -180,6 +180,54 @@ Seeded into an empty cache with this PC's profile (15 s):
 22 programs of the catalog are not in the game's shader bundles or the executable (another
 file holds them); their 21 keys are not seeded.
 
+## The catalog grown from a player's (0.9.37 beta 9)
+
+The shipped catalog again, from the dev cache after a play session (113 pipelines compiled in play
+in an area the old catalog did not cover) with a player's RTX 4060 catalog seeded in (303
+permutations added, 556 keys), exported: 1104 states, 1085 keys (was 732 / 531). Seeded into an
+empty cache with this PC's profile, then `--check-cache`:
+
+| catalog | permutations kept | keys after the seed | built at the start |
+|---|---|---|---|
+| shipped in beta 8 | 627 | 510 | 431 |
+| beta 9 | 937 | 960 | 806 |
+
+What the start left out was nearly all one kind: keys made by engines up to beta 6, whose vertex
+module was compiled beside another fragment shader (`a stage compiled after another fragment shader
+(binding start)`: 77 in the old catalog, 150 in the new one). Such a pipeline was built once in play
+on every PC the catalog seeded.
+
+`bb-shader-lab --fix-keys <cache>` (run by every `--recompile-cache` and `--seed-cache`, so by
+bb-start after a compiler change and at every seeding, in a child process) rewrites them: each
+stage whose bindings do not start where the key's earlier stages end is given a permutation of its
+program that does (the specialization's own comparison leaves the start out for a stage without
+guest resources, so the start is compared as the warm-up does), compiled from its state when the
+cache has none, and the key is written again under the name the engine gives it. Of the 150, 145
+had such a permutation already and 5 were compiled; 79 keys turned out to be pipelines the cache
+had under their right stages too. The catalog was exported again after it:
+
+| catalog | keys after the seed | built at the start |
+|---|---|---|
+| shipped in beta 8 | 510 | 431 |
+| beta 9, keys rewritten | 877 | 869 |
+
+The 8 left are keys whose fragment shader reads the motion vectors their vertex shader does not
+write.
+
+## A catalog per GPU vendor (0.9.37 beta 9)
+
+The catalogs: `engine\shader-catalog\<game>` (NVIDIA, as before) and
+`engine\shader-catalog\amd\<game>`, made from a player's RX 7800 XT catalog (vendor 1002, device
+747E): seeded into an empty cache with its own profile (the lab compiles on the CPU; no AMD GPU
+needed), 929 permutations, 125 keys rewritten by `--fix-keys`, `--check-cache` 771 of 771 keys
+built at the start, 0 layouts that do not match, then exported (942 states, 771 keys; the states
+carry no game code). bb-start (`SeedGpuCache`) and the Linux start (`scripts/gpu_cache.py`) seed one
+catalog per game: of the vendor the engine last ran that cache on (the driver cache beside it,
+`<game>.vkcache`, "BPBC" with the vendor at 8), else on a first start of this PC's adapters NVIDIA
+first, then AMD, then Intel, as the engine picks the faster GPU. A laptop with a Ryzen APU and an
+RTX card must not get the AMD catalog's profile on its first start: the NVIDIA one would then be
+marked applied to a cache the engine starts again. Intel has no catalog yet.
+
 ## Remaining (not done)
 
 - **The catalog covers what the dev played.** Areas nobody captured still compile in play. Export

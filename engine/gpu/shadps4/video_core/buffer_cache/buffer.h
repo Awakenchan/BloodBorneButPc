@@ -111,9 +111,11 @@ struct UniqueBuffer {
 struct Buffer {
     explicit Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes_,
                     MemoryType mem_type, std::string_view debug_name = "");
-    /// bbport BB_GUEST_IN_PLACE: a buffer over memory owned elsewhere (a guest memory chunk,
-    /// exported as a dma-buf): transfers and texel/storage reads, no device address.
+    /// bbport BB_GUEST_IN_PLACE: a buffer over memory owned elsewhere (a guest memory chunk: a
+    /// dma-buf on Linux, a host import on Windows), with that memory's handle type and the usage
+    /// its own buffer has; no device address.
     explicit Buffer(const Vulkan::Instance& instance, u64 size_bytes_, vk::DeviceMemory memory,
+                    vk::ExternalMemoryHandleTypeFlagBits handle_type, vk::BufferUsageFlags usage,
                     std::string_view debug_name);
 
     Buffer& operator=(const Buffer&) = delete;

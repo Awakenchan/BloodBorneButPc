@@ -16,7 +16,7 @@ Source: [Google Fonts, revision a85815a42757630ce188fdad368c2dfc444d4773](https:
 - Generated with fontTools 4.67.0 (`varLib.instancer` followed by `subset`),
   retaining all name records and changing name IDs 1/3/4/6/16 to the new family
   and PostScript names. No fontTools dependency is needed to build the engine.
-- Contributed by 123456qewret (LanternEngine pull request 71).
+- Contributed by 123456qewret (LanternEngine pull request 71; 41 characters added in pull request 73).
 
 When adding translations, include any new characters in the subset (the menu shows a
 placeholder for a character outside it). Redistributed engine packages must retain the font

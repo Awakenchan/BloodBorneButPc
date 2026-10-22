@@ -168,7 +168,7 @@ static int pool(void) {
 /* Released physical pages read as zero when they are reused. */
 static void punch(uint64_t phys, uint64_t size) {
 #ifdef _WIN32
-    memset(backing_base+phys,0,size);
+    win_mem_zero(phys,size); /* committed pages only (BB_POOL_LAZY) */
 #else
     fallocate(pool_fd,FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE,(off_t)phys,(off_t)size);
 #endif

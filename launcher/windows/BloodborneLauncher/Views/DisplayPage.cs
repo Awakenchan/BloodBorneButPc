@@ -127,6 +127,9 @@ namespace BloodborneLauncher.Views
             // bbport: the FPS counter (was on the Graphics page among the upscaler settings).
             Group(L.T("FPS counter"));
             IniToggle(SymbolRegular.DataUsage24, L.T("Show FPS"), L.T("Also in game: Insert or L3 + R3"), "show_fps");
+            IniToggle(SymbolRegular.Wrench24, L.T("Note while shaders build"),
+                L.T("\"Building shaders\" in a corner while the game builds shaders for a place it shows for the first time. Also in game: Insert or L3 + R3"),
+                "compile_note");
             IniCombo(SymbolRegular.PositionToFront24, L.T("FPS counter position"), null, new Choice[]
             {
                 new(L.T("Top right"), "0"), new(L.T("Top left"), "1"), new(L.T("Bottom right"), "2"), new(L.T("Bottom left"), "3"), new(L.T("Top centre"), "4"),

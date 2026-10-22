@@ -19,6 +19,9 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 
 extern "C" unsigned char* runtime_memory_backing(uint64_t* direct_size);
+// src/win32_memory.c: BB_POOL_LAZY commits the pool's pages as they are mapped; an import pins
+// pages, so a chunk is committed whole first (a no-op on a committed pool).
+extern "C" int win_mem_commit(uint64_t phys, uint64_t size);
 
 namespace BbGuestMemory {
 namespace {
@@ -32,12 +35,6 @@ std::mutex mutex;
 std::array<Chunk*, MaxChunks> chunks{}; // by chunk number: phys / ChunkSize
 std::array<bool, MaxChunks> failed{};
 std::atomic<u64> chunk_bytes{0};
-
-constexpr auto ChunkUsage =
-    vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst |
-    vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer |
-    vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer |
-    vk::BufferUsageFlagBits::eIndirectBuffer;
 
 std::uint32_t PickType(std::uint32_t bits) {
     const auto props = vk_instance->GetPhysicalDevice().getMemoryProperties();
@@ -101,6 +98,10 @@ bool Import(void* pointer, u64 size, vk::Buffer& buffer, vk::DeviceMemory& memor
     return true;
 }
 } // namespace
+
+vk::ExternalMemoryHandleTypeFlagBits ChunkHandleType() {
+    return vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT;
+}
 
 bool PcModelGpu(const Vulkan::Instance& instance) {
     static const bool ok = [&] {
@@ -197,8 +198,9 @@ void ImportChunk(u64 n) {
     const u64 size = std::min(ChunkSize, direct_size - n * ChunkSize);
     vk::Buffer buffer;
     vk::DeviceMemory memory;
-    const char* step = "";
-    if (!Import(backing + n * ChunkSize, size, buffer, memory, &step)) {
+    const char* step = "committing its pages";
+    if (win_mem_commit(n * ChunkSize, size) != 0 ||
+        !Import(backing + n * ChunkSize, size, buffer, memory, &step)) {
         {
             std::scoped_lock lk{mutex};
             failed[n] = true;

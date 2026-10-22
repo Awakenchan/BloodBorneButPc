@@ -51,6 +51,9 @@ namespace BloodborneLauncher.Views
 
         public IEnumerable<string> SectionKeys => Sections.Select(s => s.Key);
 
+        /// <summary>The page of the section shown (Settings › Navigation keeps it when it switches).</summary>
+        public Type? ShownPage => _current >= 0 ? Sections[_current].Page : null;
+
         /// <summary>Makes a section's page without showing it (the settings search, in the background).</summary>
         public void MakeSection(string key)
         {

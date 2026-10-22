@@ -16,6 +16,17 @@ class Instance;
 }
 
 namespace BbGuestMemory {
+/// The usage of every buffer over a chunk's memory: its own (Chunk::buffer) and the buffer cache's
+/// (BB_CHUNK_BUFFERS, chunk textures and uploads), the set each driver bound at the chunk's import.
+inline constexpr vk::BufferUsageFlags ChunkUsage =
+    vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst |
+    vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer |
+    vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer |
+    vk::BufferUsageFlagBits::eIndirectBuffer;
+/// The external memory handle type of the chunks' memory, which a buffer bound to it must name:
+/// a dma-buf on Linux, a host allocation (VK_EXT_external_memory_host) on Windows.
+vk::ExternalMemoryHandleTypeFlagBits ChunkHandleType();
+
 struct Chunk {
     std::uint64_t phys = 0; ///< first byte of direct memory it holds
     std::uint64_t size = 0;

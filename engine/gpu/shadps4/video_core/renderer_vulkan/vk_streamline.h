@@ -31,6 +31,11 @@ namespace Vulkan {
 
 class Instance;
 
+/// bbport: DLSS-G with HDR output: the presenter encodes the frame without its UI as it encodes
+/// the back buffer (PresentHdr), so the two differ only in the UI, and hands it over as with SDR.
+/// BB_DLSSG_HDR=0: no generated frames with HDR output, as before 0.9.37 beta 9.
+bool DlssFrameGenHdr();
+
 /// One game frame's DLSS-G inputs: with its presentation frame to the swap thread.
 struct DlssFrameInfo {
     u32 index = 0;      ///< Streamline's frame index (0: Streamline is not loaded)

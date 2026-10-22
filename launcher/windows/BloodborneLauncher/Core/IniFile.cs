@@ -18,6 +18,7 @@ namespace BloodborneLauncher.Core
             ("sharpness", "0.50"),
             ("object_motion", "1"),
             ("show_fps", "1"),
+            ("compile_note", "1"),
             ("output_res", "1920x1080"),
             ("model_lod", "0"),
             ("camera_tuning", "original"),

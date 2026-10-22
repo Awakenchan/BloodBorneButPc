@@ -175,7 +175,10 @@ unsigned long PoolRefused(std::uint64_t mib) {
     // engine's own section failed with error 1450 a few seconds after).
     const std::uint64_t size = (mib + 1024) << 20;
     SECURITY_ATTRIBUTES inherit{sizeof inherit, nullptr, TRUE};
-    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, &inherit, PAGE_EXECUTE_READWRITE | SEC_COMMIT,
+    // BB_POOL_LAZY=1 (win32_memory.c): a reserved section, committed as the game maps it.
+    const bool lazy = Env("BB_POOL_LAZY", "") == "1";
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, &inherit,
+                                        PAGE_EXECUTE_READWRITE | (lazy ? SEC_RESERVE : SEC_COMMIT),
                                         DWORD(size >> 32), DWORD(size), nullptr);
     PoolAnswer& answer = answers[mib];
     answer.error = section ? 0 : GetLastError();

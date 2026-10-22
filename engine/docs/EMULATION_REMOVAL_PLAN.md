@@ -170,3 +170,43 @@ The self-check verifies the import, but not the sparse binding itself (only
 needed: chunk buffers without the sparse arena. Since 0.9.37 beta 4 the PC model is the default;
 binding imports into the sparse arena is outside the Vulkan spec on every driver tested
 (docs/COMPATIBILITY.md, "Known driver behaviour"), so item 2 is also a compatibility fix.
+
+Item 2, part one (`BB_CHUNK_BUFFERS=1`, off by default; after 0.9.37 beta 7):
+- `ObtainBuffer`, `ObtainBufferForImage` and `CommandWriteTarget` give a range in place that lies in
+  one chunk and one mapping as the chunk's own buffer with an offset (`RouteInPlace`); a texel
+  buffer filled from an image is filled there too. Ranges outside one chunk, and ranges only partly
+  in place, still go through the arena. The barrier tracker keys accesses by buffer, so the arena and
+  the chunk do not see each other's accesses: such an arena access makes the runtime answer "barrier
+  needed" until a barrier follows it (`Runtime::NoteAliasedAccess`).
+- Counted once a minute ("Chunk buffers, last 60 s: ..."): bindings through their chunk, and the
+  arena's by reason (outside one chunk, partly in place, texture reads, command processor writes,
+  with how many are written). These counts decide part two.
+- `BB_CHUNK_VERIFY=1` (turns it on too): every chunk binding is checked against the arena's binding of
+  its blocks (the chunk's memory at the same offset), and 16 ranges a second are copied on the GPU
+  through the arena, the chunk and the arena again, and compared ("Chunk buffers check: ...").
+- The buffer cache's buffer over a chunk (texture reads, copy-backs) was made with the dma-buf handle
+  type on Windows too, where the memory is a host import; it now names the chunk's handle type
+  (`BbGuestMemory::ChunkHandleType`) and has the chunk buffer's usage (`ChunkUsage`), on every
+  path, the switch aside.
+- `tools/chunk_buffer_probe.cpp` makes these calls alone under the validation layer. lavapipe,
+  2026-10-22: the chunk and the chunk route 0 errors, the data right both ways; beta 7's buffer over
+  the chunk `VUID-vkBindBufferMemory-memory-02985`; the arena's binding of the import
+  `VUID-VkSparseMemoryBind-memory-02731` (the arena is not made for external memory), and the GPU
+  read other bytes through it than the CPU had written.
+
+The pool committed as it is mapped (`BB_POOL_LAZY=1`, off by default; 0.9.37 beta 9): the pool
+section only reserves its size (bb-start's section too) and `win_mem_map` commits what the game
+maps, through the pool's own view (`win_mem_commit`; a chunk import commits its 256 MiB first). The
+committed pool charges Windows its whole size at the start (5056 or 9152 MiB plus 1 GiB of flexible
+memory). First run (RTX 5060, 2026-10-22, about 6 GB of commit free): the game maps its graphics
+heap whole at the start (2415 MiB at 0x42c00000), Windows refused it (error 1455) and the game
+crashed right after, where the committed pool is refused by bb-start's check before the game starts.
+So it only saves what the game never maps (about 1.9 GB of the 6080 MiB pool): the game's heaps,
+about 4.2 GB mapped at the start, are its own working set, as on the PS4. Before it can be the
+default, bb-start must still check the commit the start needs (the heaps), and a refused commit must
+end the start with that message instead of a crash.
+
+Part two, the sparse binding itself gone: blocks in place are no longer bound in the arena; the page
+table (shaders that read memory by address) points at the chunks (device addresses on the imports);
+ranges outside one chunk or partly in place take another way (a GPU copy for reads; VRAM or a copy
+back for writes). It waits for part one's counts from a real session.
