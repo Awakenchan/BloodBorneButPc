@@ -25,6 +25,11 @@ const char* const kIntelTonemap = "Intel Black Tonemap Fix";
 const char* const kSfxWorkaround = "Intel 12th Gen+ SFX workaround";
 const char* const kHeapPatch = "Increased Graphics Heap Sizes";
 constexpr std::uint64_t kHeapSizes = 0x4736dd8;  // image offset: the two graphics heap sizes
+// The game's GX range allocator (scripts/patches.py GX_REGION_*): the GX manager's default 128 MiB
+// (mov dword [rbx+0x88], 0x8000000) plus 32 MiB, carved at start from the graphics heaps.
+constexpr std::uint64_t kGxRegion = 0x1d9933d;
+constexpr std::uint64_t kGxHeapPs4 = 0x8ef00000;  // GFX_GraphicsPrivate at the PS4 size (kHeapSizes)
+constexpr unsigned kGxRegionGame = 160, kGxRegionDefault = 288, kGxRegionMax = 416;  // MiB
 
 using Write = std::pair<std::uint64_t, Bytes>;  // image offset, bytes
 using Writes = std::vector<Write>;
@@ -911,6 +916,35 @@ PatchResult CompilePatches(const PatchRequest& request) {
     result.heap_patch = std::any_of(writes.begin(), writes.end(), [&](const Write& w) {
         return w.first < kHeapSizes + 16 && w.first + w.second.size() > kHeapSizes;
     });
+    // The GX range allocator: GPU memory for buffers the CPU updates (per-draw shader parameters,
+    // CPU-deformed vertices). Ebrietas' trail effect drove its 160 MiB to 0.5 MB free right before
+    // her device losses, and two per-frame passes (0xeb75e0, 0x21d921d) write through stale
+    // pointers when it is full. BB_GX_REGION_MB=<MiB> (160-416, default 288; 0 keeps the game's).
+    // With the heaps at the PS4 size GFX_GraphicsPrivate grows by as much: the 5056 MiB pool holds
+    // it (the game's direct memory ends near 4.6 GB), so heap_patch above stays as it was.
+    if (Env("BB_OTHER_EDITION", "") != "1") {
+        const std::string value = Env("BB_GX_REGION_MB", "");
+        unsigned mib = kGxRegionDefault;
+        if (!value.empty() && std::all_of(value.begin(), value.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            mib = unsigned(std::min<unsigned long long>(std::strtoull(value.c_str(), nullptr, 10), 100000));
+        const Bytes code = Concat({FromHex("c78388000000"), Le<std::uint32_t>(0x8000000)});
+        if (mib <= kGxRegionGame) {
+            Log("Patches: the GX range allocator at the game's %u MiB (BB_GX_REGION_MB)", kGxRegionGame);
+        } else if (OriginalBytes(elf, kGxRegion, code.size()) != code ||
+                   (!result.heap_patch && OriginalBytes(elf, kHeapSizes, 8) != Le<std::uint64_t>(kGxHeapPs4))) {
+            Log("Patches: the GX range allocator left at the game's size: this executable differs there");
+        } else {
+            mib = std::min(mib, kGxRegionMax);
+            writes.emplace_back(kGxRegion + 6, Le<std::uint32_t>((mib - kGxRegionGame + 128) << 20));
+            if (result.heap_patch) {
+                Log("Patches: the GX range allocator %u MiB (the game's %u)", mib, kGxRegionGame);
+            } else {
+                writes.emplace_back(kHeapSizes, Le<std::uint64_t>(kGxHeapPs4 + (std::uint64_t(mib - kGxRegionGame) << 20)));
+                Log("Patches: the GX range allocator %u MiB (the game's %u), the graphics heap %llu MiB", mib,
+                    kGxRegionGame, (unsigned long long)((kGxHeapPs4 >> 20) + mib - kGxRegionGame));
+            }
+        }
+    }
     Bytes blob;
     Append(blob, "BBPATCH2", 8);
     Append<std::uint64_t>(blob, kBase);

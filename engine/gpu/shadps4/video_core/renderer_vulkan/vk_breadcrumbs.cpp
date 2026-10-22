@@ -12,7 +12,9 @@
 #include <memory>
 #include <mutex>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
+#include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include <vector>
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -435,11 +437,28 @@ void Report(const char* title, const char* where);
 
 void ReportDeviceLost(const char* where) {
     static std::atomic_flag reported = ATOMIC_FLAG_INIT;
+    static std::atomic<bool> done{false};
     if (reported.test_and_set()) {
+        // Another thread is printing it, and both callers end the process right after: wait for
+        // the report (a device lost on the submit thread and the GPU signal thread at once cut it
+        // off mid-line), but not for good.
+        for (int i = 0; i < 500 && !done.load(std::memory_order_acquire); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
         return;
     }
     if (enabled) {
         Report("at device lost", where);
+    }
+    // The game's GPU range allocators (BB_FRAME_STATS, bbport_guest_hooks): Ebrietas' rock effect
+    // took one from ~165 MB free to under 1 MB right before its device losses.
+    for (std::size_t i = 0; i < BbStats::range_allocators.size(); ++i) {
+        if (const u64 allocator = BbStats::range_allocators[i].load()) {
+            std::printf("GPU range allocator %#llx at device lost: %llu live, %.1f MB free\n",
+                        static_cast<unsigned long long>(allocator),
+                        static_cast<unsigned long long>(BbStats::range_live[i].load()),
+                        BbStats::range_bytes[i].load() / 1e6);
+        }
     }
     ReportDeviceFault();
     if (const auto& opti = OptiScaler::Detect(); opti.loaded) {
@@ -453,6 +472,8 @@ void ReportDeviceLost(const char* where) {
         }
         std::fflush(stdout);
     }
+    std::fflush(stdout);
+    done.store(true, std::memory_order_release);
 }
 
 vk::UniqueDebugUtilsMessengerEXT CreateAddressReport(vk::Instance instance) {
@@ -569,7 +590,10 @@ void Report(const char* title, const char* where) {
             std::fflush(stdout);
             DumpPrograms(stream, id);
         }
-        for (u64 next = id + 2; next <= std::min(last, id + 4); ++next) {
+        // After a STUCK entry the one right behind it is the first later one (the GPU may run it
+        // beside the stuck one; Ebrietas' reports never showed it); a finished one printed it as
+        // "next".
+        for (u64 next = id + ((value & 1) ? 2 : 1); next <= std::min(last, id + 4); ++next) {
             PrintEntry(stream, next, "later");
         }
     }

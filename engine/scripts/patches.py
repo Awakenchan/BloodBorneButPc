@@ -210,6 +210,19 @@ HEAP_PATCH='Increased Graphics Heap Sizes'
 RENDER_POOL_SITES=(0x2195c09,0x2195c46)
 RENDER_POOL_CODE=bytes.fromhex('ba00000400')
 RENDER_POOL_SIZE=0x100000
+# The game's GX range allocator: GPU memory for buffers the CPU updates (per-draw shader parameters,
+# CPU-deformed vertices; mode 3 of the GX buffer map 0x2169c30). Its region is the GX manager's
+# default 128 MiB (mov dword [rbx+0x88], 0x8000000 at 0x1d9933d) plus 32 MiB, carved at start from
+# GFX_GraphicsPrivateMix (the two graphics heaps). Ebrietas' trail effect (f001251720 in m24_02)
+# drove it to 0.5 MB free right before her device losses, and two per-frame passes (0xeb75e0,
+# 0x21d921d) write through stale pointers when it is full. BB_GX_REGION_MB=<MiB> sizes it (160-416,
+# default 288; 0 keeps the game's 160); with the heaps at the PS4 size GFX_GraphicsPrivate grows
+# by as much, which the 5056 MiB pool holds (the game's direct memory ends near 4.6 GB).
+GX_REGION_SITE=0x1d9933d
+GX_REGION_CODE=bytes.fromhex('c78388000000')+struct.pack('<I',0x8000000)
+GX_REGION_GAME,GX_REGION_DEFAULT,GX_REGION_MAX=160,288,416
+GX_HEAP_SITE=0x4736dd8  # GFX_GraphicsPrivate's size in the heap table (kHeapSizes in start/patches.cpp)
+GX_HEAP_PS4=0x8ef00000
 
 
 def intel_cpu(cpuinfo='/proc/cpuinfo'):
@@ -458,6 +471,27 @@ def render_pool_writes(elf):
         print('Patches: render pools left at the game\'s size: this executable differs there',flush=True)
         return []
     return [(site+1,struct.pack('<I',RENDER_POOL_SIZE)) for site in RENDER_POOL_SITES]
+
+
+def gx_region_writes(elf, heaps_written, env=os.environ):
+    """The writes that enlarge the GX range allocator (and, unless another write already sizes the
+    graphics heaps, GFX_GraphicsPrivate by as much), when the executable has the standard bytes."""
+    value=env.get('BB_GX_REGION_MB','').strip()
+    mib=int(value) if value.isdigit() else GX_REGION_DEFAULT
+    if mib<=GX_REGION_GAME:
+        print(f'Patches: the GX range allocator at the game\'s {GX_REGION_GAME} MiB (BB_GX_REGION_MB)',flush=True)
+        return []
+    mib=min(mib,GX_REGION_MAX)
+    if original_bytes(elf,GX_REGION_SITE,len(GX_REGION_CODE))!=GX_REGION_CODE or \
+       (not heaps_written and original_bytes(elf,GX_HEAP_SITE,8)!=struct.pack('<Q',GX_HEAP_PS4)):
+        print('Patches: the GX range allocator left at the game\'s size: this executable differs there',flush=True)
+        return []
+    out=[(GX_REGION_SITE+6,struct.pack('<I',(mib-GX_REGION_GAME+128)<<20))]
+    if not heaps_written:
+        out.append((GX_HEAP_SITE,struct.pack('<Q',GX_HEAP_PS4+((mib-GX_REGION_GAME)<<20))))
+    print(f'Patches: the GX range allocator {mib} MiB (the game\'s {GX_REGION_GAME})'+
+          ('' if heaps_written else f', the graphics heap {(GX_HEAP_PS4>>20)+mib-GX_REGION_GAME} MiB'),flush=True)
+    return out
 
 
 
@@ -734,6 +768,9 @@ def main():
     heap_bytes={offset+i for offset,data in compile_patches(a.xml,[HEAP_PATCH],a.app_version,segments)
                 for i in range(len(data))}
     heaps=any(offset+i in heap_bytes for offset,data in writes for i in range(len(data)))
+    # After that test: the GX region's own 128 MiB on GFX_GraphicsPrivate fits the usual pool.
+    writes+=gx_region_writes(elf,any(offset<GX_HEAP_SITE+16 and offset+len(data)>GX_HEAP_SITE
+                                     for offset,data in writes))
     (a.out/'patches-info.json').write_text(json.dumps({'heap_patch':heaps,'ui_size':f'{ui[0]}x{ui[1]}'})+'\n',encoding='utf-8')
     # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
     # relocated slots (60/90 FPS++ replace function pointers).

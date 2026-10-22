@@ -34,7 +34,8 @@ namespace BloodborneLauncher.Core
             ["fps_mode"] = "60",
             ["draw_pipe"] = "",
             ["readbacks"] = "",
-            ["frame_stats"] = false,
+            // Beta builds: on (Load switches older files once), so crash logs carry the frame stats.
+            ["frame_stats"] = Updater.CurrentBeta > 0,
             ["gpu_profile"] = false,
             ["vk_validation"] = false,
             ["extra_env"] = "",
@@ -126,6 +127,11 @@ namespace BloodborneLauncher.Core
                     // GB of 2486 MiB: evictions, re-uploads and tiled write-backs every frame).
                     if (Updater.CurrentBeta > 0 && !saved.ContainsKey("vram_budget_beta_on"))
                         _data["exp_vram_budget"] = true;
+                    // 0.9.37 beta 8: beta builds write the frame statistics into the log, switched
+                    // on once. Ebrietas' device losses were told apart only in the one log that had
+                    // them (the game's GPU range allocator nearly empty); most reports came without.
+                    if (Updater.CurrentBeta > 0 && !saved.ContainsKey("frame_stats_beta_on"))
+                        _data["frame_stats"] = true;
                     // Beta 9.9: occlusion culling off once (9.8 switched it on for everyone; floors
                     // and objects appeared late or flickered). On again only by choice.
                     if (!saved.ContainsKey("occlusion_off_99"))
@@ -157,7 +163,10 @@ namespace BloodborneLauncher.Core
             }
             // Saved with the next change: from then on the player's own choice stays.
             if (Updater.CurrentBeta > 0)
+            {
                 _data["vram_budget_beta_on"] = true;
+                _data["frame_stats_beta_on"] = true;
+            }
             _data["legacy_shaders_default_98"] = true;
             _data["occlusion_off_99"] = true;
             _data[PerfDefaultsMarker] = true;

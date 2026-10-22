@@ -394,6 +394,60 @@ class RenderPoolTests(unittest.TestCase):
         self.assertEqual(len(patches.render_pool_writes(elf)), 2)
 
 
+def segments_elf(parts):
+    """An ELF with one loaded segment per (image offset, bytes) part."""
+    phoff = 64
+    elf = bytearray(phoff + 56 * len(parts))
+    struct.pack_into('<Q', elf, 0x20, phoff)
+    struct.pack_into('<HH', elf, 0x36, 56, len(parts))
+    for i, (vaddr, data) in enumerate(parts):
+        struct.pack_into('<IIQQQQQQ', elf, phoff + 56 * i, 1, 5, len(elf), vaddr, vaddr, len(data), len(data), 0x4000)
+        elf += data
+    return bytes(elf)
+
+
+class GxRegionTests(unittest.TestCase):
+    STANDARD = [(patches.GX_REGION_SITE, patches.GX_REGION_CODE),
+                (patches.GX_HEAP_SITE, struct.pack('<QQ', 0x8ef00000, 0x37600000))]
+
+    def writes(self, parts=None, heaps_written=False, **env):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return patches.gx_region_writes(segments_elf(parts or self.STANDARD), heaps_written, env)
+
+    def test_the_region_and_the_heap_grow_together(self):
+        self.assertEqual(self.writes(), [(patches.GX_REGION_SITE + 6, struct.pack('<I', 256 << 20)),
+                                         (patches.GX_HEAP_SITE, struct.pack('<Q', 0x8ef00000 + (128 << 20)))])
+
+    def test_enlarged_heaps_keep_their_size(self):
+        self.assertEqual(self.writes(heaps_written=True),
+                         [(patches.GX_REGION_SITE + 6, struct.pack('<I', 256 << 20))])
+
+    def test_the_switch_sizes_it_within_bounds(self):
+        self.assertEqual(self.writes(BB_GX_REGION_MB='0'), [])
+        self.assertEqual(self.writes(BB_GX_REGION_MB='160'), [])
+        self.assertEqual(self.writes(BB_GX_REGION_MB='224')[0][1], struct.pack('<I', 192 << 20))
+        self.assertEqual(self.writes(BB_GX_REGION_MB='9999'),
+                         [(patches.GX_REGION_SITE + 6, struct.pack('<I', 384 << 20)),
+                          (patches.GX_HEAP_SITE, struct.pack('<Q', 0x8ef00000 + (256 << 20)))])
+
+    def test_a_differing_executable_is_left_alone(self):
+        other = bytearray(patches.GX_REGION_CODE)
+        other[-1] = 0x04
+        self.assertEqual(self.writes([(patches.GX_REGION_SITE, bytes(other)), self.STANDARD[1]]), [])
+        self.assertEqual(self.writes([self.STANDARD[0], (patches.GX_HEAP_SITE, bytes(16))]), [])
+
+    def test_the_verified_executable_has_the_standard_bytes(self):
+        elf_path = ROOT / 'out/eboot.elf'
+        if not elf_path.is_file():
+            self.skipTest('no prepared eboot.elf')
+        elf = elf_path.read_bytes()
+        from engine_assets import EBOOT_SHA, sha
+        if sha(elf) not in EBOOT_SHA:
+            self.skipTest('out/eboot.elf is not the verified 1.09 executable')
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(len(patches.gx_region_writes(elf, False, {})), 2)
+
+
 class HeapPoolTests(unittest.TestCase):
     """An external resolution patch above 1080p enlarges the game's heaps with a 1080p output:
     patches-info.json tells run_windows.py to give the game the larger memory pool."""
