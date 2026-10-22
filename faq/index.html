@@ -419,9 +419,13 @@
       <summary>Why was my Discord message deleted, or why was I muted?</summary>
       <div class="answer">
         <p>The Discord's bot deletes messages with these words and <b>mutes the sender for 60 minutes</b>, because they are how people ask for pirated game files:</p>
-        <p><code>dump</code> <code>download</code> <code>game files</code> <code>how to download files</code> <code>rom</code> <code>boot</code> <code>eboot</code> <code>eboot.bin</code> (any message with "eboot" in it counts).</p>
+        <ul>
+          <li>Anywhere in a message, even inside another word: <code>eboot</code> <code>eboot.bin</code></li>
+          <li>As a word on its own: <code>dump</code> <code>download</code> <code>game files</code> <code>how to download files</code> <code>rom</code> <code>boot</code></li>
+        </ul>
         <ul>
           <li>Say "game folder" or "my copy of the game" instead.</li>
+          <li>"Download" counts too, even for the launcher: say "get it from the releases page".</li>
           <li>Send logs as a file, not pasted lines: <span class="path">More › Log › Export…</span>, or <span class="path">Copy report</span> after a crash (Discord turns a long paste into a file). Log lines contain some of these words.</li>
         </ul>
       </div>
@@ -895,40 +899,28 @@
     </details>
   </section>
 
+  <!-- The newest beta's release notes replace this section when the page loads (the script at the
+       end, from GitHub's releases); what is written here shows without them (no JavaScript, offline,
+       GitHub's hourly limit). -->
   <section id="beta-current">
-    <h2>Current beta: 0.9.37 beta 7</h2>
-    <p class="lead">What it changes since beta 6.</p>
-
+    <h2>Current beta: 0.9.37 beta 8</h2>
+    <p class="lead">What it changes since beta 7.</p>
+    <div id="beta-notes">
     <details open>
       <summary>Fixed</summary>
       <div class="answer">
         <ul>
-          <li><b>AMD: the game closed at every start on beta 6</b> (black screen, 0xC0000409).</li>
-          <li><b>Shaders reading the wrong buffers</b> on every GPU: about 15% of cached pipelines. It can cause stretched geometry, flicker and GPU crashes ("The graphics driver stopped responding"), mostly on NVIDIA and older AMD cards.</li>
-          <li>Widescreen without an upscaler: 21:9 and other screens got black bars in play.</li>
-          <li>Stuck at the background FPS after switching back to the game.</li>
-          <li>AMD: an "Unimplemented PM4 type 0" crash.</li>
-          <li>Mods on exFAT or FAT32 drives.</li>
-          <li>Custom trophy sounds: the volume slider, and 24-bit and float WAV files.</li>
-          <li>The launcher copied to the desktop now opens the installed one.</li>
-          <li>The Debug Menu message says what is wrong with the fonts and where they go.</li>
-          <li>"Cannot create save file": the log says at the start why the saves folder can't be written.</li>
-          <li>Linux: stopping the game from the launcher now closes it properly (the shader cache is saved).</li>
+          <li><b>Ebrietas: the game crashing in her second phase</b> ("The graphics driver stopped responding"). Her effects fill a memory area the game keeps for graphics data; it is now 288 MiB instead of the game's 160.</li>
+          <li><b>Crash reports in the log were cut off</b> when the GPU crashed: they now finish and show more of what led to the crash.</li>
         </ul>
       </div>
     </details>
 
     <details open>
-      <summary>New</summary>
+      <summary>Changed</summary>
       <div class="answer">
         <ul>
-          <li>Several keys per action and key combinations (Controls, the <b>+</b> button).</li>
-          <li>Mouse sensitivity from -10 to 20.</li>
-          <li>Trophy pictures, and trophy sounds in MP3 and MP4/M4A.</li>
-          <li>DLSS dynamic frame generation (RTX 50) and a DLSS model <b>Auto</b> choice.</li>
-          <li>FSR 3.1 tuning in the in-game menu.</li>
-          <li>A <b>Building shaders</b> note while shaders are built in play.</li>
-          <li>Linux: the launcher updates itself, and DLSS Super Resolution is included.</li>
+          <li>Beta builds write frame statistics into the log (<span class="path">Settings › Frame statistics in the log</span>), so a crash log carries what is needed to find the cause.</li>
         </ul>
       </div>
     </details>
@@ -937,11 +929,13 @@
       <summary>Not tested yet</summary>
       <div class="answer">
         <ul>
-          <li>Not yet played on AMD, Intel or older NVIDIA cards by the developer; checked under the Vulkan validation layer instead. Your reports from those cards help most.</li>
-          <li>DLSS on Linux and the Linux self-update have not run on a real Linux PC yet.</li>
+          <li>The Ebrietas fight itself has not been run by the developer with this beta.</li>
+          <li>Not started on AMD, Intel or an older NVIDIA card. Linux: built and its tests run, not played on a real Linux PC.</li>
         </ul>
       </div>
     </details>
+    </div>
+    <p class="lead"><a href="https://github.com/Awakenchan/LanternEngine/releases">All releases and their notes</a></p>
   </section>
 
   <section id="beta-report">
@@ -1078,6 +1072,82 @@
   window.addEventListener('resize', mark);
 
   if (!follow(location.hash, false)) mark();
+})();
+
+// Current beta: the newest release on GitHub, so this page follows every release by itself. Its
+// notes are Markdown: "### Fixed" headings, "- " bullets, **bold**, `code` and links. Anything
+// that fails leaves the section written above.
+(function () {
+  var section = document.getElementById('beta-current');
+  var notes = document.getElementById('beta-notes');
+  if (!section || !notes || !window.fetch) return;
+
+  function escape(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function inline(text) {
+    return escape(text)
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2">$2</a>');
+  }
+  function version(release) {
+    return (release.name || release.tag_name || '').replace(/^v/, '');
+  }
+  // The notes as the section's blocks: what comes before the first heading as lead paragraphs,
+  // then one block per heading, the first two open.
+  function render(body) {
+    var lead = [], blocks = [], block = null;
+    body.replace(/\r/g, '').split('\n').forEach(function (line) {
+      var heading = line.match(/^#{2,4}\s+(.*)/);
+      var item = line.match(/^\s*[-*]\s+(.*)/);
+      if (heading) {
+        block = { title: heading[1], items: [], text: [] };
+        blocks.push(block);
+      } else if (item) {
+        (block ? block.items : lead).push(item[1]);
+      } else if (line.trim()) {
+        if (block && block.items.length) block.items[block.items.length - 1] += ' ' + line.trim();
+        else (block ? block.text : lead).push(line.trim());
+      }
+    });
+    var html = lead.map(function (p) { return '<p class="lead">' + inline(p) + '</p>'; }).join('');
+    blocks.forEach(function (b, i) {
+      html += '<details' + (i < 2 ? ' open' : '') + '><summary>' + inline(b.title) + '</summary><div class="answer">' +
+        b.text.map(function (p) { return '<p>' + inline(p) + '</p>'; }).join('') +
+        (b.items.length ? '<ul>' + b.items.map(function (li) { return '<li>' + inline(li) + '</li>'; }).join('') + '</ul>' : '') +
+        '</div></details>';
+    });
+    return blocks.length ? html : '';
+  }
+
+  fetch('https://api.github.com/repos/Awakenchan/LanternEngine/releases?per_page=10', {
+    headers: { Accept: 'application/vnd.github+json' }
+  }).then(function (response) {
+    return response.ok ? response.json() : null;
+  }).then(function (releases) {
+    if (!releases || !releases.length) return;
+    releases = releases.filter(function (r) { return !r.draft; });
+    var newest = releases[0];
+    var title = section.querySelector('h2');
+    var lead = section.querySelector('h2 + .lead');
+    if (newest && !newest.prerelease) {
+      // A stable release came after the last beta: it has everything the beta had.
+      title.textContent = 'No beta right now';
+      lead.innerHTML = 'The newest version is the stable <a href="' + escape(newest.html_url) + '">' +
+        escape(version(newest)) + '</a>; on the beta channel the launcher installs it too.';
+      notes.innerHTML = '';
+      return;
+    }
+    var html = newest && newest.body ? render(newest.body) : '';
+    if (!html) return;
+    title.textContent = 'Current beta: ' + version(newest);
+    var before = releases[1];
+    lead.innerHTML = before ? 'What it changes since ' + escape(version(before)) +
+      ' (<a href="' + escape(newest.html_url) + '">release notes</a>).' : '';
+    notes.innerHTML = html;
+  }).catch(function () {});
 })();
 </script>
 </body>
