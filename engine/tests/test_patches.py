@@ -24,7 +24,6 @@ SEGMENTS = [(0, 0x6000000)]
 
 
 def immediate(writes, address):
-    # The XML splits a 9-byte MOV imm32 + NOP into 4+4+1 byte writes.
     data = bytearray(9)
     for offset, value in writes:
         if address <= offset < address + 9:
@@ -84,31 +83,37 @@ class NativeUiTests(unittest.TestCase):
 
     def test_output_other_than_1080p_scales_the_scene(self):
         self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}))
-        # Steam Deck: below 1080p the scene is still the preset's fraction of the output, down to
-        # 640x360 (Ultra Performance at 720p would be 428x240).
         for preset, expected in [(0, (1280, 720)), (2, (752, 424)), (4, (640, 360))]:
             with self.subTest(preset=preset):
                 self.assertEqual(scaled_sizes({'output_res': '1280x720', 'preset': str(preset)}),
                                  (expected, (1280, 720)))
         self.assertEqual(scaled_sizes({'output_res': '3840x2160', 'preset': '3'}),
                          ((1916, 1076), (3840, 2160)))
-        # TAA is native-only and uses the live host targets.
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
 
 
 class DebugPatchTests(unittest.TestCase):
-    def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
+    def test_debug_menu_is_optional_and_compatible_with_the_frame_rate_patches(self):
         on = {key: '1' for key in DEFAULT_OFF}
-        self.assertEqual(effect_patches({'debug_camera': '0', 'debug_menu': '0', **on}), [])
-        camera = effect_patches({'debug_camera': '1'})
-        writes = compile_patches(XML, camera, '01.09', SEGMENTS)
-        self.assertGreater(len(writes), 0)
-        camera_bytes = {offset+i: byte for offset, data in writes for i, byte in enumerate(data)}
-        for patch in ('Uncap FPS++', '60 FPS++', '90 FPS++', 'Restore Debug Menu (READ NOTES)'):
+        self.assertEqual(effect_patches({'debug_menu': '0', **on}), [])
+        menu = compile_patches(XML, effect_patches({'debug_menu': '1'}), '01.09', SEGMENTS)
+        self.assertGreater(len(menu), 0)
+        menu_bytes = {offset+i: byte for offset, data in menu for i, byte in enumerate(data)}
+        for patch in ('60 FPS++', '90 FPS++', 'Uncap FPS++', 'Sprint Fix (High FPS)', 'Skip Intro',
+                      'Restore Debug Camera', 'Enable Screen Space Reflections (READ NOTE)'):
             for offset, data in compile_patches(XML, [patch], '01.09', SEGMENTS):
                 for i, byte in enumerate(data):
-                    if offset+i in camera_bytes:
-                        self.assertEqual(camera_bytes[offset+i], byte, patch)
+                    self.assertNotIn(offset+i, menu_bytes, patch)
+
+    def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
+        camera = compile_patches(XML, effect_patches({'debug_camera': '1'}), '01.09', SEGMENTS)
+        self.assertGreater(len(camera), 0)
+        camera_bytes = {offset+i for offset, data in camera for i in range(len(data))}
+        for patch in ('Uncap FPS++', '60 FPS++', '90 FPS++', 'Restore Debug Menu (READ NOTES)',
+                      'Enable Screen Space Reflections (READ NOTE)'):
+            for offset, data in compile_patches(XML, [patch], '01.09', SEGMENTS):
+                for i in range(len(data)):
+                    self.assertNotIn(offset+i, camera_bytes, patch)
 
     def test_missing_effect_keys_follow_the_engine_defaults(self):
         self.assertEqual(effect_patches({}), ['Disable Chromatic Aberration', 'Disable DoF',
@@ -165,7 +170,6 @@ class ExternalPatchTests(unittest.TestCase):
             found = external_patches(folder)
             self.assertEqual([key for key, _, _ in found],
                              ['extra.xml/On', 'extra.xml/Off', 'extra.xml/Mask'])
-            # The file's isEnabled; the mask patch is skipped as a whole.
             writes = compile_external(external_selection(found, None), SEGMENTS)
             self.assertEqual(writes, [(0x1000, bytes.fromhex('9090'))])
             config = folder / 'patches.json'
@@ -235,7 +239,7 @@ class SiteCheckTests(unittest.TestCase):
             names = ['Fast A', 'Fast B', 'Other']
             self.assertEqual(patches.checked_patches(xml, names, '01.09', segments, elf, ('Fast A', 'Fast B')), names)
             changed = bytearray(elf)
-            changed[64 + 56 + 0x11] ^= 0xff  # one byte under "Fast A"
+            changed[64 + 56 + 0x11] ^= 0xff
             self.assertEqual(patches.checked_patches(xml, names, '01.09', segments, bytes(changed), ('Fast A', 'Fast B')),
                              ['Other'])
             self.assertEqual(patches.checked_patches(xml, names, '01.09', segments, bytes(changed)), ['Fast B', 'Other'])
@@ -247,14 +251,22 @@ class SiteCheckTests(unittest.TestCase):
             xml = Path(directory) / 'Bloodborne.xml'
             self.assertEqual(patches.checked_patches(xml, ['Other'], '01.09', [], elf), ['Other'])
 
-    def test_shipped_table_covers_the_fps_presets_and_effects(self):
+    def test_shipped_table_covers_every_built_in_patch(self):
         xml = ROOT / 'patches/Bloodborne.xml'
         table = json.loads(patches.site_table_path(xml).read_text(encoding='utf-8'))
-        names = {name for preset in patches.FPS_PRESETS.values() for name in preset}
-        names |= {name for off, on in patches.EFFECTS.values() for name in (off, on) if name}
-        for name in sorted(names):
+        names = [meta.get('Name') for meta in ET.parse(xml).getroot().iter('Metadata')]
+        self.assertEqual(sorted(table), sorted(names))
+        for name in names:
             writes = patches.compile_patches(xml, [name], '01.09', [(0, 1 << 40)])
             self.assertEqual(len(table[name]), len(writes), name)
+
+    def test_every_patch_the_engine_names_is_built_in(self):
+        names = {meta.get('Name') for meta in ET.parse(XML).getroot().iter('Metadata')}
+        used = {name for preset in patches.FPS_PRESETS.values() for name in preset}
+        used |= {name for off, on in patches.EFFECTS.values() for name in (off, on) if name}
+        used |= set(patches.MODEL_LOD.values()) | {patches.SCALED_BASE, patches.INTEL_TONEMAP, patches.SFX_WORKAROUND,
+                                                   patches.HEAP_PATCH, RESOLUTION_TEMPLATE}
+        self.assertEqual(sorted(used - names), [])
 
     def test_the_verified_executable_matches_the_table(self):
         elf_path = ROOT / 'out/eboot.elf'
@@ -274,7 +286,6 @@ class ScaledRateTests(unittest.TestCase):
     WIDE = [(0, 1 << 40)]
 
     def test_the_formulas_rebuild_90_fps(self):
-        # At 90 every frame-rate value is the patch's own.
         writes = patches.compile_patches(XML, [patches.SCALED_BASE], '01.09', self.WIDE)
         self.assertEqual(patches.rate_scaled(writes, 90), writes)
 
@@ -285,66 +296,140 @@ class ScaledRateTests(unittest.TestCase):
                 self.assertEqual(values[0x2434840][5:], struct.pack('<f', 1 / fps))
                 self.assertEqual(struct.unpack('<i', values[0x1929676])[0], fps // 6)
                 self.assertEqual(struct.unpack('<I', values[0x25629F0][1:])[0], 990000 // fps)
-                # The character's frame time keeps 90's pace (0.0125 there).
                 self.assertEqual(values[0x1CBDB42][6:10], struct.pack('<f', 0.0125 * 90 / fps))
                 writes = patches.compile_patches(XML, [patches.SCALED_BASE], '01.09', self.WIDE)
                 self.assertEqual(len(patches.rate_scaled(writes, fps)), len(writes))
 
 
-class FrameRateFixTests(unittest.TestCase):
+CLOTH_SCALE, CLOTH_STIFFNESS = 0x575A90C, 0x4D3BD00
+CLOTH_LEFT_OUT = ((0xB6FBD4, 0xB6FBD8), (0xB73F84, 0xB73F8D), (0xB73FA8, 0xB73FC1), (0x4D3BD10, 0x4D3BD20))
+
+
+def f32(value):
+    return struct.pack('<f', value)
+
+
+def shaped_list():
+    """A frame-rate list with every shape the corrections handle, as patch addresses."""
+    return [
+        (0x26FB39F, f32(60.0)), (0x4CAD7FC, f32(60.0)),
+        (0xB6E67A, bytes.fromhex('bb01000000909090909090')),
+        (0x183A4D7, f32(0.05)), (0x183A4E1, f32(0.05)), (0x183A649, f32(0.698132)),
+        (0x183FF29, bytes.fromhex('41c7859c010000') + f32(0.05)), (0x183FF6B, bytes.fromhex('e90b010000')),
+        (0x183DC96, bytes.fromhex('e9d6050000')), (0x183DCFE, b'\0'),
+        (0x4D25E68, f32(0.025)), (0x4D25E94, f32(1 / 30)),
+        (patches.STATUS_STEP_FIRST, bytes.fromhex('09e4a903')),
+        (0x1000, b'\x90'),
+    ]
+
+
+class FrameRateCorrectionTests(unittest.TestCase):
     WIDE = [(0, 1 << 40)]
 
-    def fixed(self, preset, fps):
-        writes = patches.compile_patches(XML, preset, '01.09', self.WIDE)
-        if fps in (120, 144):
-            writes = patches.rate_scaled(writes, fps)
-        return {o + EBOOT_BASE: d for o, d in patches.frame_rate_fixes(writes, fps)}
+    def corrected(self, fps, writes=None, elf=None):
+        writes = shaped_list() if writes is None else writes
+        out = patches.corrected_frame_rate([(a - EBOOT_BASE, d) for a, d in writes], fps, elf)
+        return [(o + EBOOT_BASE, d) for o, d in out]
 
-    def value(self, image, at):
+    def weight(self, image, at):
         return struct.unpack('<f', image[at])[0]
 
-    def test_effects_keep_the_data_rate(self):
-        for preset, fps in ((['60 FPS++'], 60), ([patches.SCALED_BASE], 90), (['Uncap FPS++'], None)):
-            with self.subTest(fps=fps):
-                image = self.fixed(preset, fps)
-                for at in patches.EFFECT_RATE_SITES:
-                    self.assertNotIn(at, image)
+    def camera_fix(self, on):
+        previous = os.environ.pop('BB_CAMERA_FIX', None)
+        if on:
+            os.environ['BB_CAMERA_FIX'] = '1'
+        self.addCleanup(lambda: os.environ.update(BB_CAMERA_FIX=previous) if previous is not None
+                        else os.environ.pop('BB_CAMERA_FIX', None))
 
-    def test_cloth_above_60_follows_kyos_1_3(self):
+    def test_effect_data_keeps_its_30_a_second(self):
+        for fps in (60, 90, 144, None):
+            with self.subTest(fps=fps):
+                self.assertFalse(set(patches.EFFECT_DATA_RATE) & dict(self.corrected(fps)).keys())
+
+    def shipped(self, name, fps):
+        writes = patches.compile_patches(XML, [name], '01.09', self.WIDE)
+        if fps in (120, 144):
+            writes = patches.rate_scaled(writes, fps)
+        return dict((o + EBOOT_BASE, d) for o, d in patches.corrected_frame_rate(writes, fps))
+
+    def test_cloth_stiffness_follows_the_frame_time(self):
+        for name, fps in (('60 FPS++', 60), (patches.SCALED_BASE, 90), (patches.SCALED_BASE, 120),
+                          (patches.SCALED_BASE, 144), ('Uncap FPS++', None)):
+            with self.subTest(name=name, fps=fps):
+                image = self.shipped(name, fps)
+                self.assertIn(image[CLOTH_SCALE], (f32(1.0), f32((60 / 90) ** 2)))
+                self.assertNotIn(CLOTH_STIFFNESS, image)
+                self.assertFalse([at for at in image for lo, hi in CLOTH_LEFT_OUT if lo <= at < hi])
+                self.assertEqual(image[0xB6E67A][:5], bytes.fromhex('bb01000000'))
+
+    def test_the_camera_keeps_the_lists_values_without_the_switch(self):
+        self.camera_fix(False)
+        listed = dict(shaped_list())
+        image = dict(self.corrected(90))
+        for at in (0x183A4D7, 0x183FF29, 0x4D25E68, 0x183DC96, 0x183DCFE):
+            self.assertEqual(image[at], listed[at])
+        self.assertNotIn(patches.CAMERA_LOCK_BLEND[0], image)
+
+    def test_the_switch_converts_the_cameras_weights_to_the_rate(self):
+        self.camera_fix(True)
+        at60 = dict(self.corrected(60))
+        self.assertAlmostEqual(self.weight(at60, 0x183A4D7), 0.05)
+        self.assertAlmostEqual(self.weight(at60, 0x4D25E68), 1 - 0.9 ** 0.5, places=6)
+        self.assertAlmostEqual(self.weight(at60, 0x4D25E94), 1 - (1 - 1 / 30) ** 0.5, places=6)
         for fps in (90, 120, 144):
             with self.subTest(fps=fps):
-                image = self.fixed([patches.SCALED_BASE], fps)
-                self.assertEqual(image[patches.CLOTH_STIFFNESS], struct.pack('<f', (60 / fps) ** 2) * 4)
-                for lo, hi in patches.CLOTH_LEFT_OUT:
-                    self.assertFalse([at for at in image if lo <= at < hi])
-        self.assertIn(0xB6FBD4, self.fixed(['60 FPS++'], 60))  # 60 keeps its list's cloth
-
-    def test_camera_kept_as_the_list_has_it_by_default(self):
-        os.environ.pop('BB_CAMERA_FIX', None)
-        at60 = self.fixed(['60 FPS++'], 60)
-        plain = {o + EBOOT_BASE: d for o, d in patches.compile_patches(XML, ['60 FPS++'], '01.09', self.WIDE)}
-        self.assertEqual(at60.get(0x4D25E68), plain.get(0x4D25E68))
-
-    def test_camera_weights_follow_the_rate(self):
-        os.environ['BB_CAMERA_FIX'] = '1'
-        self.addCleanup(os.environ.pop, 'BB_CAMERA_FIX', None)
-        at60 = self.fixed(['60 FPS++'], 60)
-        self.assertAlmostEqual(self.value(at60, 0x183A4D7), 0.05)  # Kyo's 60 values stay at 60
-        self.assertAlmostEqual(self.value(at60, 0x4D25E68), 1 - 0.9 ** 0.5, places=6)
-        self.assertAlmostEqual(self.value(at60, 0x4D25E94), 1 - (1 - 1 / 30) ** 0.5, places=6)
-        for fps in (90, 120, 144):
-            with self.subTest(fps=fps):
-                image = self.fixed([patches.SCALED_BASE], fps)
-                frames = 60 / fps
-                self.assertAlmostEqual(self.value(image, 0x183A4D7), 1 - 0.95 ** frames, places=6)  # +0x1a4
-                self.assertAlmostEqual(self.value(image, 0x183A4E1), 0.05 ** frames, places=6)  # +0x1a8 kept
-                self.assertAlmostEqual(self.value(image, 0x183A649), 0.698132, places=5)  # an angle
+                image = dict(self.corrected(fps))
+                n = 60 / fps
+                self.assertAlmostEqual(self.weight(image, 0x183A4D7), 1 - 0.95 ** n, places=6)
+                self.assertAlmostEqual(self.weight(image, 0x183A4E1), 0.05 ** n, places=6)
+                self.assertAlmostEqual(self.weight(image, 0x183A649), 0.698132, places=5)
                 store = image[0x183FF29]
                 self.assertEqual(store[:7], bytes.fromhex('41c7859c010000'))
-                self.assertAlmostEqual(struct.unpack('<f', store[7:])[0], 1 - 0.95 ** frames, places=6)
-                self.assertAlmostEqual(self.value(image, patches.CAMERA_PARAM_EASE[0]), 1 - 0.95 ** (30 / fps), places=6)
+                self.assertAlmostEqual(struct.unpack('<f', store[7:])[0], 1 - 0.95 ** n, places=6)
+                self.assertEqual(image[0x183FF6B], bytes.fromhex('e90b010000'))
+                self.assertAlmostEqual(self.weight(image, patches.CAMERA_LOCK_BLEND[0]), 1 - 0.95 ** (30 / fps),
+                                       places=6)
 
-    def test_30_runs_the_game_without_a_frame_rate_patch(self):
+    def test_per_frame_weights(self):
+        self.assertAlmostEqual(patches.per_frame(0.3, 1), 0.3)
+        self.assertAlmostEqual(patches.per_frame(0.5, 2), 0.75)
+        self.assertAlmostEqual(patches.per_frame(0.5, 2, patches.CAMERA_PITCH_KEPT), 0.25)
+        self.assertEqual(patches.per_frame(0.7, 2, patches.CAMERA_PITCH_ANGLE), 0.7)
+        self.assertEqual(patches.per_frame(1.5, 2), 1.5)
+
+    def test_uncapped_loses_only_the_effect_rate_and_gains_the_second_status_step(self):
+        at, _game, frame_time = patches.STATUS_STEP_SECOND
+        self.assertEqual(self.corrected(None),
+                         [w for w in shaped_list() if w[0] not in patches.EFFECT_DATA_RATE] + [(at, frame_time)])
+
+    def test_both_status_steps_read_the_frame_time(self):
+        at, game, frame_time = patches.STATUS_STEP_SECOND
+        first = (patches.STATUS_STEP_FIRST, bytes.fromhex('09e4a903'))
+        self.assertEqual(self.corrected(120, [first]), [first, (at, frame_time)])
+        self.assertEqual(self.corrected(60, []), [])
+        code = bytearray(at - EBOOT_BASE + 4)
+        self.assertEqual(self.corrected(60, [first], fake_elf(bytes(code))), [first])
+        code[at - EBOOT_BASE:] = game
+        self.assertEqual(self.corrected(60, [first], fake_elf(bytes(code))), [first, (at, frame_time)])
+
+    def test_the_shipped_lists_come_out_as_the_corrections_require(self):
+        names = {meta.get('Name') for meta in ET.parse(XML).getroot().iter('Metadata')}
+        cases = [(name, fps) for name, fps in (('60 FPS++', 60), (patches.SCALED_BASE, 90), (patches.SCALED_BASE, 120),
+                                               (patches.SCALED_BASE, 144), ('Uncap FPS++', None)) if name in names]
+        self.assertTrue(cases)
+        at, _game, frame_time = patches.STATUS_STEP_SECOND
+        for name, fps in cases:
+            with self.subTest(name=name, fps=fps):
+                writes = patches.compile_patches(XML, [name], '01.09', self.WIDE)
+                if fps in (120, 144):
+                    writes = patches.rate_scaled(writes, fps)
+                image = [(o + EBOOT_BASE, d) for o, d in patches.corrected_frame_rate(writes, fps)]
+                keys = {a for a, _ in image}
+                self.assertFalse(keys & set(patches.EFFECT_DATA_RATE))
+                if patches.STATUS_STEP_FIRST in keys:
+                    self.assertIn((at, frame_time), image)
+
+    def test_30_runs_without_a_frame_rate_patch(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
             elf = ROOT / 'out/eboot.elf'
@@ -357,21 +442,43 @@ class FrameRateFixTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn('FPS++', result.stdout)
 
-    def test_uncapped_keeps_its_list_but_the_effects(self):
-        writes = patches.compile_patches(XML, ['Uncap FPS++'], '01.09', self.WIDE)
-        fixed = patches.frame_rate_fixes(writes, None)
-        at, _was, now = patches.EFFECT_STEP_SECOND
-        self.assertEqual(fixed, [w for w in writes if w[0] + EBOOT_BASE not in patches.EFFECT_RATE_SITES] +
-                         [(at - EBOOT_BASE, now)])
 
-    def test_status_effects_follow_the_frame_time_twice(self):
-        # Issue 15: the second advance of a character's effects (0x1cbc50d) reads the frame's
-        # time wherever a list points the first (0x1cbc4f7) at it; the list's own 1/60 was right at 60 only.
-        at, _was, now = patches.EFFECT_STEP_SECOND
-        for name in ('60 FPS++', '90 FPS++', 'Uncap FPS++'):
-            writes = patches.compile_patches(XML, [name], '01.09', self.WIDE)
-            self.assertIn((at - EBOOT_BASE, now), patches.frame_rate_fixes(writes, 120))
-        self.assertEqual(patches.frame_rate_fixes([], 60), [])
+class OldHuntersTests(unittest.TestCase):
+    def dlc(self, value):
+        previous = os.environ.pop('BB_DLC', None)
+        if value is not None:
+            os.environ['BB_DLC'] = value
+        self.addCleanup(lambda: os.environ.update(BB_DLC=previous) if previous is not None
+                        else os.environ.pop('BB_DLC', None))
+
+    def code(self, call):
+        offset = patches.EDITION_CALL[0]
+        return fake_elf(bytes(offset) + call + bytes(11))
+
+    def test_the_switch_makes_the_edition_one(self):
+        offset, call, edition_one = patches.EDITION_CALL
+        self.dlc('1')
+        self.assertEqual(patches.old_hunters_writes(self.code(call)), [(offset, edition_one)])
+        with contextlib.redirect_stdout(io.StringIO()) as log:
+            self.assertEqual(patches.old_hunters_writes(self.code(b'\x90' * 5)), [])
+        self.assertIn('left alone', log.getvalue())
+
+    def test_off_without_the_switch(self):
+        for value in (None, '0'):
+            with self.subTest(value=value):
+                self.dlc(value)
+                self.assertEqual(patches.old_hunters_writes(self.code(patches.EDITION_CALL[1])), [])
+
+    def test_the_verified_executable_has_the_call(self):
+        elf_path = ROOT / 'out/eboot.elf'
+        if not elf_path.is_file():
+            self.skipTest('no prepared eboot.elf')
+        elf = elf_path.read_bytes()
+        from engine_assets import EBOOT_SHA, sha
+        if sha(elf) not in EBOOT_SHA:
+            self.skipTest('out/eboot.elf is not the verified 1.09 executable')
+        offset, call, _ = patches.EDITION_CALL
+        self.assertEqual(patches.original_bytes(elf, offset, len(call)), call)
 
 
 class RenderPoolTests(unittest.TestCase):
@@ -460,13 +567,16 @@ class HeapPoolTests(unittest.TestCase):
         shutil.copy(ROOT / 'patches/Bloodborne.xml', root / 'xml/Bloodborne.xml')
         (root / 'out').mkdir()
         elf = bytearray(fake_elf(bytes(0x100)))
-        struct.pack_into('<Q', elf, 64 + 40, 0x6000000)  # memsz: the whole image, as zeros
+        struct.pack_into('<Q', elf, 64 + 40, 0x6000000)
         (root / 'out/eboot.elf').write_bytes(bytes(elf))
         (root / 'ext').mkdir()
         if external:
-            shutil.copy(ROOT / 'patches/Bloodborne.xml', root / 'ext/community.xml')
-        (root / 'patches.json').write_text(json.dumps(
-            {'enabled': ['community.xml/Resolution Patch 2560x1080 (21:9)']}))
+            (root / 'ext/community.xml').write_text(
+                '<Patch><TitleID><ID>CUSA03173</ID></TitleID><Metadata Title="Bloodborne" Name="Wide" '
+                'AppVer="01.09" AppElf="eboot.bin"><PatchList>'
+                '<Line Type="bytes32" Address="0x02196A6B" Value="0x000A00B8"/>'
+                '<Line Type="bytes" Address="0x04B36DDA" Value="00f7"/></PatchList></Metadata></Patch>')
+        (root / 'patches.json').write_text(json.dumps({'enabled': ['community.xml/Wide']}))
         (root / 'lantern.ini').write_text('')
         subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--xml', str(root / 'xml/Bloodborne.xml'),
                         '--out', str(root / 'out'), '--fps', '30', '--settings', str(root / 'lantern.ini'),
@@ -515,12 +625,96 @@ class BuiltInSelectionTests(unittest.TestCase):
         self.assertFalse(patches.managed_builtin(patches.HEAP_PATCH))
 
     def test_a_switched_on_builtin_past_the_eboot_is_left_out_not_fatal(self):
-        xml = Path(patches.__file__).resolve().parent.parent / 'patches/Bloodborne.xml'
         segments = [(0, 0x06000000 - patches.EBOOT_BASE)]
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            self.assertFalse(patches.placeable(xml, 'Performance Patch (perf increase)', '01.09', segments))
-        self.assertIn('0x0603AD1A is outside the eboot', err.getvalue())
-        self.assertTrue(patches.placeable(xml, 'No Rally Decay', '01.09', segments))
+        with tempfile.TemporaryDirectory() as directory:
+            xml = Path(directory) / 'Bloodborne.xml'
+            xml.write_text('<Patch><Metadata Name="Past" AppVer="01.09"><PatchList>'
+                           '<Line Type="bytes" Address="0x0603AD1A" Value="00"/></PatchList></Metadata></Patch>')
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertFalse(patches.placeable(xml, 'Past', '01.09', segments))
+            self.assertIn('0x0603AD1A is outside the eboot', err.getvalue())
+        for name in ('Unlock Game Region', 'Disable Camera Auto Rotation via Movement', 'Player No Dead (Read note)',
+                     'Performance Patch (perf increase)', 'Enemy Control'):
+            self.assertTrue(patches.placeable(XML, name, '01.09', segments), name)
+
+
+COMMUNITY_NAMES = (
+    'Skip Intro', 'Performance Patch (perf increase)', 'Disable Motion Blur (perf increase)',
+    'Disable Dynamic Light Shadows (perf increase)', 'Disable Chromatic Aberration', 'Disable AA', 'Disable DoF',
+    'Disable SSAO', 'Enable Screen Space Reflections (READ NOTE)', '50% Text scale', 'FMOD Crash Fix',
+    'Model LOD 2 (Lowest)', 'Model LOD 1 (Lower)', 'Model LOD -2 (Highest)', 'Increased Graphics Heap Sizes',
+    'Intel 12th Gen+ SFX workaround', 'Intel Black Tonemap Fix', 'Disable HTTP Requests', 'DS1-like physics',
+    'Lower object/corpse physics', '30 FPS++', '60FPS (no deltatime)', '60 FPS++', '90 FPS++', 'Uncap FPS++',
+    'Restore Debug Menu (READ NOTES)', 'Disable Camera Auto Rotation via Movement', 'Increased camera distance',
+    'No Rally Decay', 'Disable Rally (HP Regain)', 'Player No Dead (Read note)', 'Player Stealth (Read note)',
+    'Player Silent (Read note)', 'Sensitive Analog Input (easier to run)', 'Unlock Game Region',
+    'Bookmark and Capture outputs', 'Enemy Control', '1280x800 Light Grid For SteamDeck (READ NOTES)',
+    '1080p Light Grid (READ NOTES)', '1440p Light Grid (READ NOTES)', '4k Light Grid (READ NOTES)', 'Optimal 1080p',
+    'Resolution Patch 640x360 (16:9)', 'Resolution Patch 960x540 (16:9)', 'Resolution Patch 1280x720 (16:9)',
+    'Resolution Patch 1440x810 (16:9)', 'Resolution Patch 1600x900 (16:9)', 'Resolution Patch 2560x1440 (16:9)',
+    'Resolution Patch 3840x2160 (16:9)', 'Resolution Patch 1280x800 (16:10)', 'Resolution Patch 1920x1200 (16:10)',
+    'Resolution Patch 2560x1600 (16:10)', 'Resolution Patch 2560x1080 (21:9)', 'Resolution Patch 3440x1440 (21:9)',
+    'Resolution Patch 5120x2160 (21:9)', 'Resolution Patch 3840x1080 (32:9)', 'Resolution Patch 5120x1440 (32:9)',
+    'Resolution Patch 1280x960 (4:3)', 'Resolution Patch 1440x1080 (4:3)', 'Restore Debug Camera',
+    'Sprint Fix (High FPS)')
+
+
+class OwnPatchTests(unittest.TestCase):
+    def test_every_community_name_is_built_in(self):
+        names = [meta.get('Name') for meta in ET.parse(XML).getroot().iter('Metadata')]
+        self.assertEqual(len(COMMUNITY_NAMES), 61)
+        self.assertEqual(sorted(names), sorted(COMMUNITY_NAMES))
+
+    def test_the_movement_steps_follow_the_frame_time(self):
+        for name in ('30 FPS++', '60 FPS++', '90 FPS++', 'Uncap FPS++', '60FPS (no deltatime)'):
+            with self.subTest(name=name):
+                writes = {o + EBOOT_BASE: d for o, d in compile_patches(XML, [name], '01.09', [(0, 1 << 40)])}
+                for load in (0x1915FAB, 0x1916030):
+                    self.assertEqual(load + 8 + struct.unpack('<i', writes[load + 4])[0], 0x575A908, hex(load))
+
+    def test_the_air_drag_follows_the_step(self):
+        for name in ('30 FPS++', '60 FPS++', '90 FPS++', 'Uncap FPS++', '60FPS (no deltatime)'):
+            with self.subTest(name=name):
+                writes = {o + EBOOT_BASE: d for o, d in compile_patches(XML, [name], '01.09', [(0, 1 << 40)])}
+                self.assertNotIn(0x4D0B5B0, writes)
+                self.assertEqual(writes[0x1E4ABCA][:1], bytes.fromhex('e9'))
+                cave = 0x1E4ABCF + struct.unpack('<i', writes[0x1E4ABCA][1:5])[0]
+                self.assertEqual(writes[cave][:8], bytes.fromhex('c5fa109578f6ffff'))
+                k, sixth, half, one = struct.unpack('<4f', writes[0x3ABC560])
+                for fps in (30, 60, 90, 120, 144, 240):
+                    x = k / fps
+                    self.assertAlmostEqual(((x * sixth + half) * x - one) * x + one, 0.95 ** (30 / fps), places=5)
+        others = [name for name in COMMUNITY_NAMES if name not in
+                  ('30 FPS++', '60 FPS++', '90 FPS++', 'Uncap FPS++', '60FPS (no deltatime)')]
+        for name in others:
+            writes = {o + EBOOT_BASE for o, _ in compile_patches(XML, [name], '01.09', [(0, 1 << 40)])}
+            self.assertFalse(writes & {0x1E4ABCA, 0x3ABC500, 0x3ABC560}, name)
+
+    def test_every_built_in_patch_is_lantern_engines(self):
+        metas = list(ET.parse(XML).getroot().iter('Metadata'))
+        self.assertEqual({meta.get('Author') for meta in metas}, {'Lantern Engine'})
+        names = [meta.get('Name') for meta in metas]
+        self.assertEqual(len(names), len(set(names)))
+        for meta in metas:
+            self.assertTrue(meta.get('Note'), meta.get('Name'))
+
+    def test_the_built_in_file_is_what_the_eboot_builds(self):
+        elf_path = ROOT / 'out/eboot.elf'
+        if not elf_path.is_file():
+            self.skipTest('no prepared eboot.elf')
+        from engine_assets import EBOOT_SHA, sha
+        if sha(elf_path.read_bytes()) not in EBOOT_SHA:
+            self.skipTest('out/eboot.elf is not the verified 1.09 executable')
+        sys.path.insert(0, str(ROOT / 'tools/re'))
+        import game_patches
+        built = game_patches.render(game_patches.build(game_patches.Eboot(elf_path)))
+        self.assertEqual(XML.read_bytes().decode('utf-8').replace('\r\n', '\n'), built)
+
+    def test_the_90_fps_patch_has_every_site_the_rate_scaling_rewrites(self):
+        writes = patches.compile_patches(XML, [patches.SCALED_BASE], '01.09', [(0, 1 << 40)])
+        at = {offset + EBOOT_BASE: data for offset, data in writes}
+        for address, value in patches.scaled_rate_values(90).items():
+            self.assertEqual(at.get(address), value, hex(address))
 
 
 if __name__ == '__main__':

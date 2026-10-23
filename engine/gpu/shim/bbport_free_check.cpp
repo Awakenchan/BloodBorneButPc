@@ -26,7 +26,6 @@ namespace {
 using u64 = std::uint64_t;
 using u32 = std::uint32_t;
 
-// The game's small-object pool (allocation at guest offset 0x263b8b0, release at 0x263b9b0).
 constexpr u64 PageSize = 0x1000;
 constexpr u64 HeaderOffset = 0xfc0;
 constexpr u64 BlockSize = 0x30;
@@ -51,10 +50,6 @@ bool IsBlock(u64 page, u64 p) {
 
 bool Plausible(u64 page, const Header& h) {
     const auto pointer = [](u64 p) { return p != 0 && (p & 7) == 0 && p < (1ull << 47); };
-    // A page with every block free has gone back to the allocator below (the release at
-    // 0x263b9b0): its old header means nothing. The page list links point at other page
-    // headers or at the pool's list heads; at least one of them is a header (pools of one
-    // page are skipped: other data at a page end looked like headers).
     if (!pointer(h.next) || !pointer(h.prev) || h.count >= MaxBlocks) {
         return false;
     }
@@ -66,17 +61,16 @@ bool Plausible(u64 page, const Header& h) {
 
 struct WalkResult {
     bool ok;
-    u64 holder;   ///< where the bad pointer is stored (a free block, or the header's head)
-    u64 value;    ///< the bad pointer
-    u32 length;   ///< free blocks walked
-    u64 free[2];  ///< bit per block index: free
+    u64 holder;
+    u64 value;
+    u32 length;
+    u64 free[2];
 };
 
 bool IsFree(const u64 (&free)[2], u64 index) {
     return (free[index / 64] >> (index % 64)) & 1;
 }
 
-/// Walks the free list of `page`; `read(address)` returns the qword there.
 template <typename Read>
 WalkResult WalkFree(u64 page, const Header& h, Read&& read) {
     WalkResult r{true, page + HeaderOffset + 16, h.head, 0, {0, 0}};
@@ -89,7 +83,7 @@ WalkResult WalkFree(u64 page, const Header& h, Read&& read) {
         }
         const u64 index = (node - page) / BlockSize;
         if (IsFree(r.free, index)) {
-            r.ok = false; // a loop
+            r.ok = false;
             r.value = node;
             return r;
         }
@@ -117,7 +111,6 @@ u32 Tid() {
     return tid;
 }
 
-// Recent emulator writes into pool pages.
 struct Entry {
     u64 address, size, value, ns, seq;
     u32 source, tid;
@@ -130,7 +123,6 @@ void Record(u64 address, u64 size, u64 value, Source source, u64 seq) {
         Entry{address, size, value, NowNs(), seq, u32(source), Tid()};
 }
 
-// Pool pages the watcher walks: an open-addressing set, insert-only.
 std::array<std::atomic<u64>, 1 << 14> pages{};
 std::atomic<u32> page_count{0};
 
@@ -165,7 +157,6 @@ std::atomic<u64> unordered{0};
 std::atomic<u64> next_seq{0};
 std::atomic<u64> max_written_seq{0};
 
-// Fences as the GPU command thread decoded them, and the guest's graphics submissions.
 struct Decoded {
     u64 label, value, packet, buffer, submit, ns;
 };
@@ -177,7 +168,6 @@ struct Submitted {
 std::array<Submitted, 1 << 12> submitted;
 std::atomic<u64> submitted_head{0};
 
-/// When the guest submitted `submit` (0 when no longer in the log).
 u64 SubmitTime(u64 submit) {
     const u64 n = submitted_head.load(std::memory_order_relaxed);
     for (u64 i = n; i-- > (n > submitted.size() ? n - submitted.size() : 0);) {
@@ -189,7 +179,6 @@ u64 SubmitTime(u64 submit) {
     return 0;
 }
 
-/// The decoded fences whose label lies in [begin, end), newest first.
 void PrintDecoded(u64 begin, u64 end, u64 now, u32 limit) {
     const u64 n = decoded_head.load(std::memory_order_relaxed);
     u32 shown = 0;
@@ -213,7 +202,6 @@ void PrintDecoded(u64 begin, u64 end, u64 now, u32 limit) {
     }
 }
 
-/// Each kind of report has its own budget: a flood of one does not hide the others.
 struct Budget {
     std::atomic<u32> used{0};
     u32 limit;
@@ -227,9 +215,6 @@ Budget order_reports{.limit = 32};
 Budget latency_reports{.limit = 32};
 Budget duplicate_reports{.limit = 32};
 
-// Fence latency and duplicates: when each fence reached the draw recording thread (NextFenceSeq)
-// and which sequence number each slot last wrote. A guest that waits for a label with a
-// timeout frees its object when the label is late; a fence written twice lands late too.
 constexpr u64 SeqSlots = 1 << 16;
 std::array<std::atomic<u64>, SeqSlots> seq_start_ns{};
 std::array<std::atomic<u64>, SeqSlots> seq_written{};
@@ -243,7 +228,6 @@ void PrintEntry(const Entry& e, u64 now) {
                  (unsigned long long)e.seq, e.tid);
 }
 
-/// The logged writes overlapping [begin, end), newest first.
 void PrintRecent(u64 begin, u64 end, u64 now, u32 limit) {
     const u64 n = ring_head.load(std::memory_order_relaxed);
     u32 shown = 0;
@@ -275,8 +259,6 @@ bool ReadPage(u64 page, unsigned char* out) {
     return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == ssize_t(PageSize);
 }
 
-/// What the watcher saw of a page's blocks: when each was last seen taken and released by the
-/// game (to ~1 ms).
 struct Track {
     bool valid = false;
     u64 free[2]{};
@@ -347,8 +329,6 @@ void Watcher() {
                 t.valid = true;
                 continue;
             }
-            // The game may be inside an allocation or release: the same damage three times
-            // over ~1 ms is not a race with it.
             bool persistent = true;
             for (int again = 0; again < 3 && persistent; ++again) {
                 std::this_thread::sleep_for(std::chrono::microseconds(300));
@@ -416,7 +396,6 @@ void StartWatcher() {
     });
 }
 
-/// One page of a write: report a write into a free block or the header.
 void CheckPage(u64 page, u64 begin, u64 end, u64 value, u64 size, Source source, u64 seq,
                bool small) {
     Header h;
@@ -454,8 +433,6 @@ void CheckPage(u64 page, u64 begin, u64 end, u64 value, u64 size, Source source,
         report("the HEADER", page + HeaderOffset);
         return;
     }
-    // The game changes the list all the time (labels are taken and released in bursts): a
-    // walk that met it halfway is repeated.
     WalkResult r{};
     for (int attempt = 0; attempt < 8; ++attempt) {
         std::memcpy(&h, reinterpret_cast<const void*>(page + HeaderOffset), sizeof(h));
@@ -472,7 +449,7 @@ void CheckPage(u64 page, u64 begin, u64 end, u64 value, u64 size, Source source,
         }
     }
     if (!r.ok) {
-        return; // still changing, or damaged: the watcher reports damage
+        return;
     }
     for (u64 block = page + (begin - page) / BlockSize * BlockSize; block < end;
          block += BlockSize) {
@@ -483,7 +460,7 @@ void CheckPage(u64 page, u64 begin, u64 end, u64 value, u64 size, Source source,
         }
     }
 }
-} // namespace
+}
 
 bool Enabled() {
     static const bool enabled = [] {
@@ -498,7 +475,7 @@ bool TrapEnabled();
 void NoteTrapDecoded(u64 label);
 void InstallStepTrap();
 bool InstallFreeHook();
-} // namespace
+}
 
 void NoteFenceDecoded(u64 label, u64 value, const void* packet, const void* buffer, u64 submit) {
     if (!Enabled()) {
@@ -549,8 +526,6 @@ void Check(u64 address, u64 size, const void* data, Source source, u64 seq) {
         if (latency > 20000000) {
             late_20ms.fetch_add(1, std::memory_order_relaxed);
         }
-        // Honest labels (BB_GUEST_IN_PLACE, BB_HONEST_LABELS) are written once the GPU has done the
-        // work: tens of ms after the recording thread are normal there; only stalls are reported.
         static const u64 report_ns = [] {
             const char* in_place = std::getenv("BB_GUEST_IN_PLACE");
             const char* honest = std::getenv("BB_HONEST_LABELS");
@@ -624,23 +599,18 @@ void DumpAtFault(u64 rax, u64 r14) {
     PrintRecent(page, page + PageSize, NowNs(), 64);
 }
 namespace {
-/// BB_LABEL_TRAP: fences decoded into pool pages (labels) until their write has landed.
 struct Pending {
     u32 count = 0;
     u64 decoded_ns = 0;
-    u64 writing_ns = 0; ///< when the newest write started (0: not started)
+    u64 writing_ns = 0;
 };
 struct LabelTrap {
     std::mutex mutex;
-    std::unordered_map<u64, Pending> pending; ///< label qword -> fences not yet landed
-    /// Mode 1: pages with pending labels -> how many; the ones made read-only; every page ever
-    /// made read-only (a fault that raced with its release, OnStaleTrapFault).
+    std::unordered_map<u64, Pending> pending;
     std::unordered_map<u64, u32> page_pending;
     std::unordered_set<u64> read_only;
     std::unordered_set<u64> ever_trapped;
     std::atomic<u32> reports{0}, slow_reports{0};
-    /// Reports whose fence write had started: the guest may have seen it land a moment before
-    /// NoteFenceWritten (or the write is stuck): their own budget.
     std::atomic<u32> started_reports{0};
     std::atomic<u64> faults{0}, hits{0};
 };
@@ -649,15 +619,9 @@ LabelTrap& Trap() {
     return trap;
 }
 constexpr u64 ImageBase = 0x800000000ull, ImageEnd = 0x810000000ull;
-/// The guest allocator's release, and the branch of its GPU range collector (0x26aa860) taken
-/// for a block whose label reads 4 (done).
 constexpr u64 FreeHook = ImageBase + 0x263b9b0;
 constexpr u64 GcHook = ImageBase + 0x26aa986;
 
-/// BB_LABEL_TRAP: 1 pool pages with pending labels read-only (every guest write into them is
-/// single-stepped: slow, it hid the bug), 2 breakpoints on the guest allocator's release and on
-/// the collector's "done" branch: a label block released, or taken as done, before its fence
-/// landed is reported with the guest's view and call chain.
 int TrapMode() {
     static const int mode = [] {
         const char* env = std::getenv("BB_LABEL_TRAP");
@@ -707,7 +671,7 @@ void NoteTrapDecoded(u64 label) {
         mprotect(reinterpret_cast<void*>(page), PageSize, PROT_READ);
     }
 }
-} // namespace
+}
 
 void NoteFenceWriting(u64 label) {
     if (!TrapEnabled() || label == 0) {
@@ -745,9 +709,6 @@ void NoteFenceWritten(u64 label, u64 write_ns) {
 }
 
 namespace {
-/// Threads single-stepping the write that faulted on a trapped page (TF set): the page is
-/// writable for that one instruction, then read-only again (OnStepTrap). A table instead of
-/// thread_local: this library is loaded with dlopen, its TLS is not signal-safe.
 struct StepSlot {
     std::atomic<u32> tid{0};
     std::atomic<u64> page{0};
@@ -760,7 +721,6 @@ void OnFreeHook(void* ucontext);
 void OnGcHook(void* ucontext);
 
 void OnStepTrap(int sig, siginfo_t* info, void* ucontext) {
-    // BB_LABEL_TRAP=2: the breakpoints (RIP is past the int3).
     const u64 rip = u64(static_cast<ucontext_t*>(ucontext)->uc_mcontext.gregs[REG_RIP]);
     if (rip == FreeHook + 1) {
         OnFreeHook(ucontext);
@@ -785,7 +745,6 @@ void OnStepTrap(int sig, siginfo_t* info, void* ucontext) {
         }
         return;
     }
-    // Not a step of ours.
     if (previous_trap_action.sa_flags & SA_SIGINFO) {
         if (previous_trap_action.sa_sigaction) {
             previous_trap_action.sa_sigaction(sig, info, ucontext);
@@ -800,7 +759,6 @@ void OnStepTrap(int sig, siginfo_t* info, void* ucontext) {
     raise(SIGTRAP);
 }
 
-/// int3 over the first byte of an instruction the hook then performs itself.
 bool PatchInt3(u64 address, std::initializer_list<unsigned char> expected) {
     unsigned char bytes[8]{};
     iovec local{bytes, expected.size()}, remote{reinterpret_cast<void*>(address), expected.size()};
@@ -820,8 +778,6 @@ bool PatchInt3(u64 address, std::initializer_list<unsigned char> expected) {
     return true;
 }
 
-/// The release starts with `mov rax, rsi` (48 89 f0), the collector's branch with
-/// `mov rcx, [rsp+0x28]` (48 8b 4c 24 28).
 bool InstallFreeHook() {
     if (!PatchInt3(FreeHook, {0x48, 0x89, 0xf0, 0x48, 0x85, 0xc0})) {
         return false;
@@ -849,14 +805,13 @@ bool ArmStep(void* ucontext, u64 page) {
             return true;
         }
     }
-    return false; // table full: the page stays writable until the next decode
+    return false;
 }
 
 bool IsGuest(u64 v) {
     return v >= ImageBase && v < ImageEnd;
 }
 
-/// The newest decodes and writes of fences into the label qword at `label`, for a report.
 int AppendHistory(char* line, int n, int size, u64 label, const char* name) {
     const u64 now = NowNs(), want = label & ~7ull;
     n += std::snprintf(line + n, size - n, "\n  %s %#llx decoded:", name, (unsigned long long)want);
@@ -887,8 +842,6 @@ int AppendHistory(char* line, int n, int size, u64 label, const char* name) {
     return n;
 }
 
-/// The guest call chain at a breakpoint or fault: [rsp] (a leaf's return address) and the
-/// rbp frames, as guest offsets.
 int AppendStack(char* line, int n, int size, const greg_t* g, bool leaf) {
     if (leaf) {
         u64 ret = 0;
@@ -914,7 +867,6 @@ int AppendStack(char* line, int n, int size, const greg_t* g, bool leaf) {
     return n;
 }
 
-/// "not written" / "write started X ms ago": where the pending fence is.
 int AppendState(char* line, int n, int size, const Pending& p) {
     const u64 now = NowNs();
     n += std::snprintf(line + n, size - n, "%u fence(s) pending, decoded %.3f ms ago, ", p.count,
@@ -952,8 +904,6 @@ void Emit(char* line, int n, int size) {
     (void)written;
 }
 
-/// The guest allocator's release (int3): performs the replaced `mov rax, rsi`; a label block
-/// whose fence has not landed is reported with the caller.
 void OnFreeHook(void* ucontext) {
     auto* g = static_cast<ucontext_t*>(ucontext)->uc_mcontext.gregs;
     g[REG_RAX] = g[REG_RSI];
@@ -979,9 +929,6 @@ void OnFreeHook(void* ucontext) {
     Emit(line, n, sizeof(line));
 }
 
-/// The collector's "done" branch (int3): performs the replaced `mov rcx, [rsp+0x28]`. r14 is the
-/// block taken as done, its first qword the label (or bit 0: a pointer to the batch's label),
-/// eax what the collector read there (4). Reported when that label's fence has not landed.
 void OnGcHook(void* ucontext) {
     auto* g = static_cast<ucontext_t*>(ucontext)->uc_mcontext.gregs;
     g[REG_RCX] = greg_t(*reinterpret_cast<const u64*>(u64(g[REG_RSP]) + 0x28));
@@ -1021,7 +968,7 @@ void OnGcHook(void* ucontext) {
     }
     Emit(line, n, sizeof(line));
 }
-} // namespace
+}
 
 bool OnTrapFault(void* ucontext, u64 address) {
     if (TrapMode() != 1) {
@@ -1037,7 +984,6 @@ bool OnTrapFault(void* ucontext, u64 address) {
     const auto it = t.pending.find(address & ~7ull);
     const bool hit = it != t.pending.end();
     const Pending p = hit ? it->second : Pending{};
-    // Writable for the faulting instruction only (single step), read-only again after it.
     mprotect(reinterpret_cast<void*>(page), PageSize, PROT_READ | PROT_WRITE);
     if (!ArmStep(ucontext, page)) {
         t.read_only.erase(page);
@@ -1079,12 +1025,9 @@ bool OnStaleTrapFault(u64 address) {
     if (!t.ever_trapped.count(page)) {
         return false;
     }
-    // The write faulted while the page was read-only and its fences were written before the
-    // handler got the lock: the page is writable again (or made so) and the write is retried.
-    // Trapped again meanwhile: the retry faults into OnTrapFault.
     if (!t.read_only.count(page)) {
         mprotect(reinterpret_cast<void*>(page), PageSize, PROT_READ | PROT_WRITE);
     }
     return true;
 }
-} // namespace BbFreeCheck
+}

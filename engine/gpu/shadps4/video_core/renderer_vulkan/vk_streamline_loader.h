@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: NVIDIA Streamline as the engine's Vulkan loader (DLSS Frame Generation,
 // vk_streamline.h). Its own header so vk_platform.cpp, which includes Xlib's headers on Linux
 // (None, Always, Bool... as macros), need not include the texture cache and camera headers.

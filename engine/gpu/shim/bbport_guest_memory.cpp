@@ -22,9 +22,9 @@ constexpr std::size_t MaxChunks = 256;
 vk::Device device;
 vk::PhysicalDeviceMemoryProperties memory_properties;
 std::mutex mutex;
-std::array<Chunk*, MaxChunks> chunks{}; // sorted by phys
+std::array<Chunk*, MaxChunks> chunks{};
 std::size_t chunk_count = 0;
-bool whole_only = false; // the driver's dma-buf maps at offset 0 only: a chunk per allocation
+bool whole_only = false;
 std::atomic<u64> chunk_bytes{0};
 
 std::uint32_t FindType(std::uint32_t bits) {
@@ -39,7 +39,6 @@ std::uint32_t FindType(std::uint32_t bits) {
     return ~0u;
 }
 
-/// The runtime's chunk allocator: a dma-buf fd of `size` bytes of GPU-visible memory, or -1.
 int AllocChunk(u64 phys, u64 size) {
     {
         std::scoped_lock lk{mutex};
@@ -117,7 +116,7 @@ int AllocChunk(u64 phys, u64 size) {
                 (unsigned long long)(total >> 20));
     return fd;
 }
-} // namespace
+}
 
 vk::ExternalMemoryHandleTypeFlagBits ChunkHandleType() {
     return vk::ExternalMemoryHandleTypeFlagBits::eDmaBufEXT;
@@ -187,10 +186,8 @@ bool Usable(const Vulkan::Instance& instance) {
             }
         }
         if (fd >= 0) {
-            // The whole buffer and one page inside it, writing through one, reading through the other.
             void* whole = mmap(nullptr, Size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
             void* page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, Offset);
-            // BB_GUEST_WHOLE_CHUNKS=1: as if the offset mapping failed (tests the NVIDIA path).
             const char* force_whole = std::getenv("BB_GUEST_WHOLE_CHUNKS");
             if (force_whole && force_whole[0] == '1' && page != MAP_FAILED) {
                 munmap(page, 4096);
@@ -200,7 +197,6 @@ bool Usable(const Vulkan::Instance& instance) {
                 *static_cast<volatile std::uint32_t*>(page) = 0x5ca1ab1e;
                 ok = static_cast<volatile std::uint32_t*>(whole)[Offset / 4] == 0x5ca1ab1e;
             } else if (whole != MAP_FAILED) {
-                // Offset 0 only (NVIDIA): a second mapping of the start must alias the first.
                 void* again = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
                 if (again != MAP_FAILED) {
                     *static_cast<volatile std::uint32_t*>(again) = 0x5ca1ab1e;
@@ -233,7 +229,6 @@ bool Usable(const Vulkan::Instance& instance) {
 }
 
 void Install(const Vulkan::Instance& instance) {
-    // BB_GUEST_IN_PLACE (the GPU uses this memory in place) needs it too.
     const char* env = std::getenv("BB_GUEST_GPU_MEMORY");
     const char* in_place = std::getenv("BB_GUEST_IN_PLACE");
     if (!(env && env[0] == '1') && !(in_place && in_place[0] == '1' && PcModelGpu(instance))) {
@@ -252,7 +247,6 @@ void Install(const Vulkan::Instance& instance) {
 
 const Chunk* Find(std::uint64_t phys) {
     std::scoped_lock lk{mutex};
-    // The last chunk starting at or below phys.
     std::size_t lo = 0, hi = chunk_count;
     while (lo < hi) {
         const std::size_t mid = (lo + hi) / 2;
@@ -268,4 +262,4 @@ const Chunk* Find(std::uint64_t phys) {
     const Chunk* c = chunks[lo - 1];
     return phys < c->phys + c->size ? c : nullptr;
 }
-} // namespace BbGuestMemory
+}

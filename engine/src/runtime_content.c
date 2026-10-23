@@ -1,6 +1,3 @@
-/* Offline AppContent provider for the configured base-game profile.
- * No package/DLC mounting, downloads, entitlement or license emulation; dumped add-ons are
- * reported installed (see find_addons). */
 #include "runtime.h"
 #include <ctype.h>
 #include <dirent.h>
@@ -25,9 +22,6 @@ void runtime_content_configure(const uint32_t values[5]) {
 static void require_provider(void) {
     if (!configured) { fputs("STOP: AppContent needs --content-profile\n",stderr); exit(21); }
 }
-/* System modules: every library this eboot imports is provided by the host
- * runtime, so loading one only tracks a reference count. AppContent (0xb4)
- * additionally requires the configured content profile. */
 static unsigned module_refs[0x10000];
 static ABI int32_t module_load(uint16_t id) {
     if (!id) return INVALID_ID;
@@ -57,14 +51,11 @@ static ABI int32_t content_init(const unsigned char *init,unsigned char *boot) {
     require_loaded();
     if (!init || !boot) return PARAMETER;
     if (initialized) return BUSY;
-    /* Only the reserved-zero init profile is implemented. */
     for (unsigned i=0;i<32;++i) if (init[i]) return PARAMETER;
     memset(boot,0,40); initialized=1;
     puts("Runtime: AppContent initialized; offline base-game profile, no mounted add-ons");
     return 0;
 }
-/* bbport: queries before initialization (or after the module's unload) fail as on the console
- * instead of ending the game (exit 21). */
 static int32_t require_initialized(void) {
     require_provider();
     if (!refs || !initialized) { fputs("Runtime: AppContent query before initialization\n",stderr); return NOT_INITIALIZED; }
@@ -78,16 +69,9 @@ static ABI int32_t param_int(uint32_t id,int32_t *out) {
     printf("Runtime: AppContent parameter %u = %d\n",id,*out);
     return 0;
 }
-/* bbport: add-ons. The base game (not the Game of the Year edition) learns from this list which
- * add-ons were bought; it always answered none, so The Old Hunters was missing on base-game
- * dumps. Its data ships with the 1.09 update: a dumped add-on is only its sce_sys. Reported
- * installed: the add-on folders in BB_DLC_DIR (the launcher's DLC folder, or one add-on folder
- * itself) and in <user>/addcont/<title id>/ (shadPS4's layout). The entitlement label is the
- * end of the add-on's CONTENT_ID (sce_sys/param.sfo, category "ac"), else the folder's name. */
 #define LABEL_SIZE 17
 #define MAX_ADDONS 64
 #define ADDON_INSTALLED 4u
-/* SceAppContentAddcontInfo: the entitlement label (16 characters and NUL, padding), status. */
 typedef struct { char label[LABEL_SIZE]; char padding[3]; uint32_t status; } AddonInfo;
 static char addon_labels[MAX_ADDONS][LABEL_SIZE];
 static uint32_t addon_count;
@@ -95,7 +79,6 @@ static int addons_found;
 static uint32_t le32(const unsigned char *p) {
     return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;
 }
-/* The string `key` of a param.sfo into out (size bytes): 1 when found. */
 static int sfo_string(const char *path,const char *key,char *out,size_t size) {
     FILE *f=fopen(path,"rb");
     if (!f) return 0;
@@ -117,12 +100,11 @@ static int sfo_string(const char *path,const char *key,char *out,size_t size) {
     free(sfo);
     return found;
 }
-/* The add-on folder `path` (named `name`); need_sfo: only with an add-on's param.sfo. */
 static void add_addon(const char *path,const char *name,int need_sfo) {
     char sfo[4096], category[16]="", id[64]="", label[64]="";
     if (snprintf(sfo,sizeof(sfo),"%s/sce_sys/param.sfo",path)>=(int)sizeof(sfo)) return;
     if (sfo_string(sfo,"CATEGORY",category,sizeof(category))) {
-        if (strcmp(category,"ac")) return; /* a game, not an add-on */
+        if (strcmp(category,"ac")) return;
         if (sfo_string(sfo,"CONTENT_ID",id,sizeof(id))) {
             const char *dash=strrchr(id,'-');
             snprintf(label,sizeof(label),"%s",dash ? dash+1 : "");
@@ -150,7 +132,6 @@ static void scan_addons(const char *folder) {
 static void find_addons(void) {
     if (addons_found) return;
     addons_found=1;
-    /* bbport: BB_DLC=0 (the launcher's DLC switch off): no add-ons, as on a console without them. */
     const char *enabled=getenv("BB_DLC");
     if (enabled && enabled[0]=='0') { puts("Runtime: DLC switched off: no add-ons reported"); return; }
     const char *dlc=getenv("BB_DLC_DIR");
@@ -167,19 +148,15 @@ static void find_addons(void) {
     }
     if (titles) closedir(titles);
     if (dlc && *dlc && !addon_count) printf("Runtime: DLC folder %s: no add-ons found\n",dlc);
-    /* bbport: BB_DLC=1 (the launcher's DLC switch on) without a dumped add-on: The Old Hunters, whose
-     * data ships with 1.09; its label is the same for every region (UP9000-CUSA00900_00-SPEXPANSIONDLC03). */
     if (enabled && enabled[0]=='1' && !addon_count) add_addon("","SPEXPANSIONDLC03",0);
 }
 static ABI int32_t addon_list(uint32_t service,void *list,uint32_t capacity,uint32_t *hits) {
     int32_t result=require_initialized();
     if (result) return result;
-    /* bbport: other service labels have no add-ons (this ended the game, exit 21). */
     static unsigned noted;
     if (service && !noted++) fprintf(stderr,"Runtime: AppContent service label %u: no add-ons\n",service);
     if ((!capacity || !list) && !hits) return PARAMETER;
     find_addons();
-    /* Without a list the count; with one at most capacity entries. Never touch unused slots. */
     uint32_t count=service ? 0 : addon_count;
     if (list && capacity) {
         if (count>capacity) count=capacity;

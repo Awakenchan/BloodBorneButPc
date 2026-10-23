@@ -101,8 +101,6 @@ def link(game, out):
             raise ValueError('invalid libc segment size')
         image[base+p['vaddr']:base+p['vaddr']+p['filesz']] = span(libc['elf'],p['offset'],p['filesz'])
         segments.append((base+p['vaddr'],p['memsz'],p['flags']))
-    # Preserve main-program spelling for the existing host resolver. New kernel
-    # NIDs get the main module's spelling only if identity AND version match.
     identities = {main['identity'](name):i for i,name in enumerate(names)}
     main_libraries = {identity:key for key,identity in main['libraries'].items()}
     main_modules = {identity:key for key,identity in main['modules'].items()}
@@ -123,8 +121,6 @@ def link(game, out):
         if kind == 8:
             relocs.append((target,0,base+addend,0))
         elif kind == 16:
-            # libc is module 2 in this probe. Descriptor offset is already stored
-            # in the adjacent word; __tls_get_addr will use a separate TLS block.
             symbol = libc['symbols'][symid]
             if symbol['name'] or symbol['type'] != 3 or addend:
                 raise ValueError('unsupported external TLS relocation')
@@ -157,10 +153,6 @@ def link(game, out):
         if identity in exports:
             s = exports[identity]
             bindings.append((index,base+s['value'],2 if s['type']==1 else 1))
-    # The eboot reads its thread pointer with `mov rax, fs:[0]` (initial-exec
-    # TLS). glibc owns FS on Linux, so rewrite the segment prefix to GS; the
-    # runtime points GS at each guest thread's TCB. Only executable eboot
-    # segments are scanned, and only this exact 9-byte instruction.
     fs_load = bytes.fromhex('64488b042500000000')
     patched = 0
     for p in main['ph']:

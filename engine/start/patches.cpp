@@ -1,6 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// Ported from scripts/patches.py: the comments there explain each correction; this keeps them
-// short and the behaviour, byte for byte, the same.
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "patches.h"
 #include "elf.h"
 #include "xml.h"
@@ -24,14 +22,12 @@ const char* const kSprint = "Sprint Fix (High FPS)";
 const char* const kIntelTonemap = "Intel Black Tonemap Fix";
 const char* const kSfxWorkaround = "Intel 12th Gen+ SFX workaround";
 const char* const kHeapPatch = "Increased Graphics Heap Sizes";
-constexpr std::uint64_t kHeapSizes = 0x4736dd8;  // image offset: the two graphics heap sizes
-// The game's GX range allocator (scripts/patches.py GX_REGION_*): the GX manager's default 128 MiB
-// (mov dword [rbx+0x88], 0x8000000) plus 32 MiB, carved at start from the graphics heaps.
+constexpr std::uint64_t kHeapSizes = 0x4736dd8;
 constexpr std::uint64_t kGxRegion = 0x1d9933d;
-constexpr std::uint64_t kGxHeapPs4 = 0x8ef00000;  // GFX_GraphicsPrivate at the PS4 size (kHeapSizes)
-constexpr unsigned kGxRegionGame = 160, kGxRegionDefault = 288, kGxRegionMax = 416;  // MiB
+constexpr std::uint64_t kGxHeapPs4 = 0x8ef00000;
+constexpr unsigned kGxRegionGame = 160, kGxRegionDefault = 288, kGxRegionMax = 416;
 
-using Write = std::pair<std::uint64_t, Bytes>;  // image offset, bytes
+using Write = std::pair<std::uint64_t, Bytes>;
 using Writes = std::vector<Write>;
 
 const std::map<std::string, std::vector<std::string>>& FpsPresets() {
@@ -77,7 +73,6 @@ template <typename T> Bytes Le(T value) {
     return out;
 }
 
-/// Python's repr of a list of strings, for the log line patches.py printed.
 std::string Repr(const std::vector<std::string>& names) {
     std::string out = "[";
     for (std::size_t i = 0; i < names.size(); ++i) {
@@ -93,7 +88,6 @@ std::string Repr(const std::vector<std::string>& names) {
     return out + "]";
 }
 
-/// int(text, 0) for the forms patch files use: 0x hex, plain decimal.
 std::optional<std::int64_t> ParseInt(std::string_view text, bool allow_negative = false) {
     std::string t = Trim(text);
     std::erase(t, '_');
@@ -208,7 +202,6 @@ private:
     std::unique_ptr<XmlElement> root_;
 };
 
-// --- frame-rate values and corrections --------------------------------------------------------
 
 std::map<std::uint64_t, Bytes> ScaledRateValues(int fps) {
     const Bytes frame = Concat({FromHex("41c7442418"), F32(1.0 / fps)});
@@ -228,10 +221,6 @@ std::map<std::uint64_t, Bytes> ScaledRateValues(int fps) {
     };
 }
 
-// The per-frame steps 60 FPS++ halves from the game's 1/30 to 1/60 (physics, falling objects and
-// more): the 90 FPS++ base keeps them at 1/60, so at 120 FPS they ran twice as fast ("gravity
-// doubled"). Here they are 1/fps. 0x4D27C4C is the effects' second step (#15), fixed separately.
-// BB_FRAME_STEP_FIX=0 keeps them at 1/60.
 constexpr std::uint64_t kEffectSecondStep = 0x4D27C4C;
 
 Writes RateScaled(const Writes& writes, int fps) {
@@ -262,112 +251,96 @@ Writes RateScaled(const Writes& writes, int fps) {
     return out;
 }
 
-const std::set<std::uint64_t> kEffectRateSites{0x26FB39F, 0x4CAD7FC};
-constexpr std::uint64_t kClothStiffness = 0x4D3BD00;
-const std::pair<std::uint64_t, std::uint64_t> kClothLeftOut[] = {
-    {0xB6FBD4, 0xB6FBD8}, {0xB73F84, 0xB73F8D}, {0xB73FA8, 0xB73FC1}, {0x4D3BD10, 0x4D3BD20}};
-const std::map<std::uint64_t, std::uint32_t> kCameraFields{
+const std::set<std::uint64_t> kEffectDataRate{0x26FB39F, 0x4CAD7FC};
+const std::map<std::uint64_t, std::uint32_t> kCameraDefaults{
     {0x183a4c3, 0x19c}, {0x183a4cd, 0x1a0}, {0x183a4d7, 0x1a4}, {0x183a4e1, 0x1a8}, {0x183a4f5, 0x1b0},
     {0x183a4ff, 0x1b4}, {0x183a509, 0x1b8}, {0x183a527, 0x1c4}, {0x183a531, 0x1c8}, {0x183a53b, 0x1cc},
     {0x183a649, 0x238}, {0x183a653, 0x23c}, {0x183a65d, 0x240}, {0x183a8c1, 0x19c}, {0x183a8cb, 0x1a0},
     {0x183a8d5, 0x1a4}, {0x183a8df, 0x1a8}, {0x183a8f3, 0x1b0}, {0x183a8fd, 0x1b4}, {0x183a907, 0x1b8},
     {0x183a925, 0x1c4}, {0x183a92f, 0x1c8}, {0x183a939, 0x1cc}, {0x183aa47, 0x238}, {0x183aa51, 0x23c},
     {0x183aa5b, 0x240}};
-// The stores and the jump after each block that skips the game's parameter reads (0x183FF6B,
-// 0x18407E6): ends exclusive. Before 0.9.34 beta 5 the ranges ended at the jumps, so Original kept
-// them: the per-area camera parameters still never loaded, and the second jump, written into the
-// middle of the game's lea at 0x18407E3, turned the next instruction into another one.
-const std::pair<std::uint64_t, std::uint64_t> kCameraStores[] = {{0x183FF29, 0x183FF70}, {0x1840799, 0x18407EB}};
-constexpr std::uint32_t kCameraAngle = 0x238, kCameraKept = 0x1a8;
-const std::map<std::uint64_t, double> kCameraEases{{0x4D25E68, 0.1}, {0x4D25E94, 1.0 / 30}};
-constexpr std::uint64_t kCameraParamEase = 0x183A7DE;
-const Bytes kCameraParamWas = {0xcd, 0xcc, 0x4c, 0x3d};
-constexpr std::uint64_t kEffectStepFirst = 0x1CBC4FB, kEffectStepSecond = 0x1CBC511;
-const Bytes kEffectStepWas = {0x37, 0xb7, 0x06, 0x03}, kEffectStepNow = {0xf3, 0xe3, 0xa9, 0x03};
+const std::pair<std::uint64_t, std::uint64_t> kCameraParameterBlocks[] = {{0x183FF29, 0x183FF70},
+                                                                          {0x1840799, 0x18407EB}};
+constexpr std::uint32_t kPitchAngle = 0x238, kPitchKept = 0x1a8;
+const std::map<std::uint64_t, double> kCameraGameEases{{0x4D25E68, 0.1}, {0x4D25E94, 1.0 / 30}};
+constexpr std::uint64_t kCameraLockBlend = 0x183A7DE;
+const Bytes kCameraLockBlendGame{0xcd, 0xcc, 0x4c, 0x3d};
+constexpr std::uint64_t kStatusStepFirst = 0x1CBC4FB, kStatusStepSecond = 0x1CBC511;
+const Bytes kStatusStepGame{0x37, 0xb7, 0x06, 0x03}, kStatusStepFrameTime{0xf3, 0xe3, 0xa9, 0x03};
 
-double CameraValue(std::optional<std::uint32_t> field, double value, double frames) {
-    if (field == kCameraAngle || !(0 < value && value < 1)) return value;
-    return field == kCameraKept ? std::pow(value, frames) : 1 - std::pow(1 - value, frames);
+constexpr std::uint64_t kCameraJump = 0x183DC96, kCameraWallEscape = 0x183DCFE;
+
+double PerFrame(double weight, double frames, std::optional<std::uint32_t> field = std::nullopt) {
+    if (field == kPitchAngle || !(0 < weight && weight < 1)) return weight;
+    if (field == kPitchKept) return std::pow(weight, frames);
+    return 1 - std::pow(1 - weight, frames);
 }
 
-// The follow camera. The FPS++ lists carry Kyo's retune of it: the constructor's defaults
-// (kCameraFields, a 40 degree pitch angle among them), the parameter reads replaced by stores
-// of fixed values (kCameraStores: the game's per-area camera parameters never load) and the
-// wall escape at 0x183DCFE; players saw a camera that pulled back, lagged and widened while
-// sprinting (GitHub issue 32). Original (the default; camera_tuning=fps++ or
-// BB_CAMERA_TUNING=fps++ keeps the retune) leaves all of them as the game has them and
-// converts the game's own per-frame eases, distance (0.1) and chase rate (1/30), from a 30 FPS
-// frame: the camera of the game at 30 at every rate, as bbhost's Camera tuning: Original.
-constexpr std::uint64_t kCameraWallEscape = 0x183DCFE;
-// The jump the retune puts over 1.5 KiB of the game's follow camera (to 0x183E271), with the wall
-// escape inside the code it skips.
-constexpr std::uint64_t kCameraSkip = 0x183DC96;
-
-bool KyoCameraSite(std::uint64_t a, std::size_t size) {
-    if (kCameraFields.count(a) || a == kCameraWallEscape || a == kCameraSkip) return true;
-    return std::any_of(std::begin(kCameraStores), std::end(kCameraStores),
-                       [&](const auto& r) { return a < r.second && a + size > r.first; });
+bool InCameraBlock(std::uint64_t at) {
+    return std::any_of(std::begin(kCameraParameterBlocks), std::end(kCameraParameterBlocks),
+                       [&](const auto& block) { return block.first <= at && at < block.second; });
 }
 
-Writes FrameRateFixes(const Writes& writes, std::optional<int> fps, const Bytes& elf, bool original_camera) {
-    const bool camera = !original_camera && Env("BB_CAMERA_FIX", "0") == "1";
-    original_camera = original_camera && fps.has_value();
+bool CameraRetune(std::uint64_t at, std::size_t size) {
+    if (kCameraDefaults.count(at) || at == kCameraJump || at == kCameraWallEscape) return true;
+    return std::any_of(std::begin(kCameraParameterBlocks), std::end(kCameraParameterBlocks),
+                       [&](const auto& block) { return at < block.second && at + size > block.first; });
+}
+
+Bytes FollowCameraWrite(std::uint64_t at, Bytes data, int fps) {
+    if (const auto field = kCameraDefaults.find(at); field != kCameraDefaults.end())
+        return F32(PerFrame(Load<float>(data.data()), 60.0 / fps, field->second));
+    if (data.size() == 11 && data[0] == 0x41 && data[1] == 0xc7 && data[2] == 0x85 && InCameraBlock(at)) {
+        const Bytes weight = F32(PerFrame(Load<float>(data.data() + 7), 60.0 / fps, Load<std::uint32_t>(data.data() + 3)));
+        std::copy(weight.begin(), weight.end(), data.begin() + 7);
+        return data;
+    }
+    if (const auto ease = kCameraGameEases.find(at); ease != kCameraGameEases.end())
+        return F32(PerFrame(ease->second, 30.0 / fps));
+    return data;
+}
+
+Writes CorrectFrameRate(const Writes& writes, std::optional<int> fps, const Bytes& elf, bool game_camera) {
+    const bool convert_camera = !game_camera && fps && Env("BB_CAMERA_FIX", "0") == "1";
+    game_camera = game_camera && fps;
     Writes out;
-    for (const auto& [offset, original] : writes) {
-        Bytes data = original;
-        const std::uint64_t a = offset + kBase;
-        if (kEffectRateSites.count(a)) continue;
-        if (original_camera) {
-            if (KyoCameraSite(a, data.size())) continue;
-            if (const auto ease = kCameraEases.find(a); ease != kCameraEases.end()) {
-                out.emplace_back(offset, F32(CameraValue(std::nullopt, ease->second, 30.0 / *fps)));
+    for (const auto& [offset, listed] : writes) {
+        const std::uint64_t at = offset + kBase;
+        Bytes data = listed;
+        if (kEffectDataRate.count(at)) continue;
+        if (game_camera) {
+            if (CameraRetune(at, data.size())) continue;
+            if (const auto ease = kCameraGameEases.find(at); ease != kCameraGameEases.end()) {
+                out.emplace_back(offset, F32(PerFrame(ease->second, 30.0 / *fps)));
                 continue;
             }
         }
-        if (fps && *fps > 60) {
-            bool skip = false;
-            for (const auto& [lo, hi] : kClothLeftOut) {
-                if (lo <= a && a < hi) {
-                    if (a + data.size() > hi) throw Error("frame-rate patch: " + Hex(a) + " reaches past " + Hex(hi));
-                    skip = true;
-                    break;
-                }
-            }
-            if (skip) continue;
-            if (a == kClothStiffness) {
-                const Bytes one = F32(std::pow(60.0 / *fps, 2));
-                data = Concat({one, one, one, one});
-            }
-        }
-        if (fps && camera) {
-            if (const auto field = kCameraFields.find(a); field != kCameraFields.end()) {
-                data = F32(CameraValue(field->second, Load<float>(data.data()), 60.0 / *fps));
-            } else if (std::any_of(std::begin(kCameraStores), std::end(kCameraStores),
-                                   [&](const auto& r) { return r.first <= a && a < r.second; }) &&
-                       data.size() == 11 && data[0] == 0x41 && data[1] == 0xc7 && data[2] == 0x85) {
-                const std::uint32_t f = Load<std::uint32_t>(data.data() + 3);
-                const float value = Load<float>(data.data() + 7);
-                const Bytes v = F32(CameraValue(f, value, 60.0 / *fps));
-                std::copy(v.begin(), v.end(), data.begin() + 7);
-            } else if (const auto ease = kCameraEases.find(a); ease != kCameraEases.end()) {
-                data = F32(CameraValue(std::nullopt, ease->second, 30.0 / *fps));
-            }
-        }
+        if (convert_camera) data = FollowCameraWrite(at, std::move(data), *fps);
         out.emplace_back(offset, std::move(data));
     }
-    if (std::any_of(out.begin(), out.end(), [](const Write& w) { return w.first + kBase == kEffectStepFirst; }) &&
-        OriginalBytes(elf, kEffectStepSecond - kBase, kEffectStepWas.size()) == kEffectStepWas)
-        out.emplace_back(kEffectStepSecond - kBase, kEffectStepNow);
-    if (fps && camera && OriginalBytes(elf, kCameraParamEase - kBase, 4) == kCameraParamWas)
-        out.emplace_back(kCameraParamEase - kBase,
-                         F32(CameraValue(std::nullopt, Load<float>(kCameraParamWas.data()), 30.0 / *fps)));
+    const auto game_has = [&](std::uint64_t at, const Bytes& bytes) {
+        return OriginalBytes(elf, at - kBase, bytes.size()) == bytes;
+    };
+    if (std::any_of(out.begin(), out.end(), [](const Write& w) { return w.first + kBase == kStatusStepFirst; }) &&
+        game_has(kStatusStepSecond, kStatusStepGame))
+        out.emplace_back(kStatusStepSecond - kBase, kStatusStepFrameTime);
+    if (convert_camera && game_has(kCameraLockBlend, kCameraLockBlendGame))
+        out.emplace_back(kCameraLockBlend - kBase, F32(PerFrame(Load<float>(kCameraLockBlendGame.data()), 30.0 / *fps)));
     return out;
 }
 
-// --- sizes ------------------------------------------------------------------------------------
+void OldHuntersEdition(const Bytes& elf, Writes& writes) {
+    constexpr std::uint64_t kEditionCall = 0x1fb6d20;
+    const Bytes call = FromHex("e8bb210000");
+    if (OriginalBytes(elf, kEditionCall, call.size()) == call)
+        writes.emplace_back(kEditionCall, FromHex("b801000000"));
+    else
+        Log("Patches: The Old Hunters edition left alone: this executable differs there");
+}
+
 
 int Round(double v) {
-    return int(std::nearbyint(v));  // round half to even, as Python's round()
+    return int(std::nearbyint(v));
 }
 
 double PresetScale(const std::map<std::string, std::string>& settings) {
@@ -378,7 +351,6 @@ double PresetScale(const std::map<std::string, std::string>& settings) {
     } catch (const std::exception&) {
         throw Error("invalid preset");
     }
-    // bbport: preset 5 (Custom): render_scale, 1.0-3.0 (BbSettings::PresetScale).
     if (preset == int(std::size(kPresetScales))) {
         double scale = 1.3;
         try {
@@ -401,7 +373,6 @@ std::optional<Size> RenderSize(const std::map<std::string, std::string>& setting
     if (Setting(settings, "upscaler").value_or("fsr3") == "off") return std::nullopt;
     const double scale = PresetScale(settings);
     if (scale == 1.0) return std::nullopt;
-    // Multiples of 4, as ScaledSizes: the game pads its targets to them (undrawn edge columns).
     return Size{std::max(4, Round(kOutput.w / scale / 4) * 4), std::max(4, Round(kOutput.h / scale / 4) * 4)};
 }
 
@@ -420,9 +391,6 @@ Size UiSize(const std::map<std::string, std::string>& settings, Size out) {
         ui = {std::min(8192, Round(double(kOutput.h) * out.w / out.h / 2) * 2), kOutput.h};
     else
         ui = {kOutput.w, std::min(8192, Round(double(kOutput.w) * out.h / out.w / 2) * 2)};
-    // Sharp UI (BB_SHARP_UI=1): the movie viewport at the output's size, so Scaleform draws its
-    // text, shapes and pictures for that many pixels (the 1920x1080 stage scaled to fill it)
-    // instead of for 1080 lines that are stretched afterwards. Never below the 1080p viewport.
     if (Env("BB_SHARP_UI", "") == "1") {
         const double k = std::min(double(out.w) / ui.w, double(out.h) / ui.h);
         if (k > 1.0) ui = {std::min(8192, Round(ui.w * k / 2) * 2), std::min(8192, Round(ui.h * k / 2) * 2)};
@@ -430,7 +398,6 @@ Size UiSize(const std::map<std::string, std::string>& settings, Size out) {
     return ui;
 }
 
-// --- selection --------------------------------------------------------------------------------
 
 std::vector<std::string> EffectPatches(const std::map<std::string, std::string>& settings) {
     std::vector<std::string> names;
@@ -561,7 +528,6 @@ bool SameAppVersion(const std::optional<std::string>& value, const std::string& 
                 continue;
             }
             if (!v) {
-                // int('09') is 9 in Python: leading zeros are fine for int(text) without a base.
                 const std::string t = Trim(p);
                 if (t.empty() || t.find_first_not_of("0123456789") != std::string::npos) return std::nullopt;
                 parts.push_back(std::stoi(t));
@@ -678,7 +644,7 @@ Writes ResolutionWrites(const PatchFile& xml, Size size, const std::string& app_
     return out;
 }
 
-} // namespace
+}
 
 std::optional<Size> ParseSize(std::string_view text) {
     const auto parts = Split(Lower(std::string(text)), 'x');
@@ -697,9 +663,6 @@ std::optional<std::pair<Size, Size>> ScaledSizes(const std::map<std::string, std
     if (out == kOutput || Setting(settings, "upscaler") == "taa") return std::nullopt;
     double scale = 1.0;
     if (Setting(settings, "upscaler").value_or("fsr3") != "off") scale = PresetScale(settings);
-    // A scene of at least 640x360, a third of 1080p: Ultra Performance at a 720p output made 428x240,
-    // where a ROG Ally showed the world in half the picture (0.9.37 beta 7), and the upscaler has
-    // little to work from below it.
     scale = std::max(1.0, std::min({scale, out.w / 640.0, out.h / 360.0}));
     Size render{std::max(4, Round(out.w / scale / 4) * 4), std::max(4, Round(out.h / scale / 4) * 4)};
     if (render == kOutput) render = {1916, 1076};
@@ -738,10 +701,6 @@ PatchResult CompilePatches(const PatchRequest& request) {
         for (const char* n : {"DbgFont14h.ccm", "DbgFont14h.tpf"})
             if (!fs::is_regular_file(font / n, error) || fs::file_size(font / n, error) == 0)
                 missing += (missing.empty() ? "" : ", ") + std::string(n);
-        // bbport: request.game is the merged mod view (a new mod-game-* folder each start): the
-        // message names where the player puts them, not that folder. Mods that carry the font
-        // unpacked (a DbgFont14h-tpf-dcx folder from WitchyBND) do not count: the game reads the
-        // packed .tpf and .ccm.
         const bool unpacked = fs::is_directory(font / "DbgFont14h-tpf-dcx", error) ||
                               fs::is_directory(font / "DbgFont14h-tpf", error);
         if (!missing.empty())
@@ -796,17 +755,11 @@ PatchResult CompilePatches(const PatchRequest& request) {
         else if (request.fps == "90") fps = 90;
         else if (scaled_fps.count(request.fps)) fps = scaled_fps.at(request.fps);
         const std::string tuning = Lower(Env("BB_CAMERA_TUNING", Setting(settings, "camera_tuning").value_or("original")));
-        writes = FrameRateFixes(writes, fps, elf, tuning != "fps++");
+        writes = CorrectFrameRate(writes, fps, elf, tuning != "fps++");
         if (fps) Log("Patches: follow camera %s", tuning != "fps++" ? "as the game has it, its eases converted from 30 FPS"
                                                                    : "with the FPS++ retune (camera_tuning=fps++)");
     }
-    if (Env("BB_DLC", "") == "1") {
-        const Bytes was = FromHex("e8bb210000");
-        if (OriginalBytes(elf, 0x1fb6d20, was.size()) == was)
-            writes.emplace_back(0x1fb6d20, FromHex("b801000000"));
-        else
-            Log("Patches: The Old Hunters edition left alone: this executable differs there");
-    }
+    if (Env("BB_DLC", "") == "1") OldHuntersEdition(elf, writes);
     if (Env("BB_RENDER_POOLS", "") == "0") {
         Log("Patches: render pools at the game's 256 KiB (BB_RENDER_POOLS=0)");
     } else {
@@ -833,19 +786,8 @@ PatchResult CompilePatches(const PatchRequest& request) {
         writes.insert(writes.end(), resolution.begin(), resolution.end());
         Log("Patches: scene %dx%d; UI %dx%d", size->w, size->h, ui.w, ui.h);
     }
-    // The game sizes its two graphics heaps for the PS4: 2287 and 886 MiB. A scene above 1080p,
-    // highest model detail or screen space reflections outgrow them, and a model that no longer
-    // fits is not drawn (ladders, ground, the Astral Clocktower's clock missing). The engine gives
-    // them 3952 and 2560 MiB and direct memory to match (main.cpp: 9152 MiB) when the scene needs
-    // them: above 1080p, highest model detail or screen space reflections. Kept at the PS4 size
-    // otherwise, and with BB_GAME_HEAPS=0, BB_DMEM_MB under 9152 or a commit limit (RAM plus page
-    // file) under 16 GiB unless the scene is above 1080p.
     {
         const bool large_scene = size && std::int64_t(size->w) * size->h > std::int64_t(kOutput.w) * kOutput.h;
-        // Lantern Engine: only what outgrows the PS4 heaps enlarges them. Every heap page the
-        // game touches stays in RAM for the session (its allocators spread over the whole heap),
-        // so larger heaps meant up to 3.3 GB more RAM: 7 GB of game memory and Windows swapping
-        // on 16 GB PCs (the multi-second hangs of 2026-10-21). BB_GAME_HEAPS=1 enlarges anyway.
         const bool needs = large_scene || std::find(names.begin(), names.end(), "Model LOD -2 (Highest)") != names.end() ||
                            std::find(names.begin(), names.end(), "Enable Screen Space Reflections (READ NOTE)") != names.end();
         const std::uint64_t commit = CommitLimitMb();
@@ -860,8 +802,6 @@ PatchResult CompilePatches(const PatchRequest& request) {
             keep = "BB_DMEM_MB=" + *dmem;
         else if (commit && commit < 16384)
             keep = "commit limit " + std::to_string(commit) + " MiB, RAM plus page file, under 16 GiB";
-        // Enlarged heaps need the 9152 MiB pool; a PC that refuses it would crash at the start
-        // (GitHub #66: error 1450 on a laptop), whatever the scene size.
         bool refused = false;
         if (keep.empty()) {
             if (const unsigned long error = PoolRefused(9152)) {
@@ -920,12 +860,6 @@ PatchResult CompilePatches(const PatchRequest& request) {
     result.heap_patch = std::any_of(writes.begin(), writes.end(), [&](const Write& w) {
         return w.first < kHeapSizes + 16 && w.first + w.second.size() > kHeapSizes;
     });
-    // The GX range allocator: GPU memory for buffers the CPU updates (per-draw shader parameters,
-    // CPU-deformed vertices). Ebrietas' trail effect drove its 160 MiB to 0.5 MB free right before
-    // her device losses, and two per-frame passes (0xeb75e0, 0x21d921d) write through stale
-    // pointers when it is full. BB_GX_REGION_MB=<MiB> (160-416, default 288; 0 keeps the game's).
-    // With the heaps at the PS4 size GFX_GraphicsPrivate grows by as much: the 5056 MiB pool holds
-    // it (the game's direct memory ends near 4.6 GB), so heap_patch above stays as it was.
     if (Env("BB_OTHER_EDITION", "") != "1") {
         const std::string value = Env("BB_GX_REGION_MB", "");
         unsigned mib = kGxRegionDefault;
@@ -964,4 +898,4 @@ PatchResult CompilePatches(const PatchRequest& request) {
     return result;
 }
 
-} // namespace start
+}

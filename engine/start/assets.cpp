@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "assets.h"
 
 #include <windows.h>
@@ -7,6 +7,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <span>
+#include <string_view>
 
 namespace start {
 namespace {
@@ -18,119 +20,132 @@ const char* const kEbootSha[] = {"941f887a562aae054fac35af8cc8f27cf075f3d4cc2e02
                                  "cec1b276e7f9e4db978e57f524f41fbaac594530a3437b002e23f3fab14b4f86"};
 const char* const kImageSha = "071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a";
 
-std::uint32_t Be32(const std::uint8_t* p) {
+std::uint32_t BigEndian32(const std::uint8_t* p) {
     return std::uint32_t(p[0]) << 24 | std::uint32_t(p[1]) << 16 | std::uint32_t(p[2]) << 8 | p[3];
 }
-void StoreBe32(std::uint8_t* p, std::uint32_t v) {
-    p[0] = std::uint8_t(v >> 24), p[1] = std::uint8_t(v >> 16), p[2] = std::uint8_t(v >> 8), p[3] = std::uint8_t(v);
+void PutBigEndian32(std::uint8_t* p, std::uint32_t v) {
+    for (int i = 0; i < 4; ++i) p[i] = std::uint8_t(v >> (24 - 8 * i));
 }
 
+constexpr std::string_view kDcxHeader = "44435800000100000000001800000024000000440000004c"
+                                        "4443530000000000000000004443500044464c5400000020"
+                                        "09000000000000000000000000000000000001014443410000000008";
+constexpr std::uint32_t kDcxLargest = 32u << 20;
+
 Bytes DcxUnpack(const Bytes& data) {
-    if (data.size() < 4 || std::memcmp(data.data(), "DCX\0", 4)) return data;
-    if (data.size() < 0x4c || std::memcmp(data.data() + 0x28, "DFLT", 4)) throw Error("Unsupported DCX format");
-    const auto dca_it = std::search(data.begin(), data.end(), std::begin("DCA"), std::begin("DCA") + 4);
-    const std::size_t dca = std::size_t(dca_it - data.begin());
-    if (dca_it == data.end() || dca + 8 > data.size()) throw Error("DCX without a valid DCA header");
-    const std::uint32_t skip = Be32(data.data() + dca + 4);
-    if (skip < 8 || dca + skip >= data.size()) throw Error("Invalid DCX compressed offset");
-    const std::uint32_t expected = Be32(data.data() + 0x1c);
-    if (expected == 0 || expected > 32u * 1024 * 1024) throw Error("Invalid DCX uncompressed size");
-    Bytes raw(expected + 1);
+    if (data.size() < 4 || std::memcmp(data.data(), "DCX\0", 4) != 0) return data;
+    if (data.size() < 0x4c || std::memcmp(data.data() + 0x28, "DFLT", 4) != 0) throw Error("Unsupported DCX format");
+    static constexpr std::uint8_t kDca[] = {'D', 'C', 'A', 0};
+    const auto found = std::search(data.begin() + 0x2c, data.end(), std::begin(kDca), std::end(kDca));
+    const std::size_t dca = std::size_t(found - data.begin());
+    if (found == data.end() || dca + 8 > data.size()) throw Error("DCX without a valid DCA header");
+    const std::size_t begin = dca + BigEndian32(data.data() + dca + 4);
+    const std::uint32_t size = BigEndian32(data.data() + 0x1c);
+    if (begin < dca + 8 || begin >= data.size() || size == 0 || size > kDcxLargest) throw Error("Invalid DCX header");
+    Bytes raw(std::size_t(size) + 1);
     z_stream z{};
-    inflateInit(&z);
-    z.next_in = const_cast<Bytef*>(data.data() + dca + skip);
-    z.avail_in = uInt(data.size() - dca - skip);
+    if (inflateInit(&z) != Z_OK) throw Error("zlib unavailable");
+    z.next_in = const_cast<Bytef*>(data.data() + begin);
+    z.avail_in = uInt(data.size() - begin);
     z.next_out = raw.data();
     z.avail_out = uInt(raw.size());
     const int status = inflate(&z, Z_FINISH);
-    const std::size_t produced = raw.size() - z.avail_out;
-    const bool tail = z.avail_in != 0;
+    const std::size_t made = raw.size() - z.avail_out;
+    const bool left_over = z.avail_in != 0;
     inflateEnd(&z);
-    if (status != Z_STREAM_END || produced != expected || tail) throw Error("Invalid DCX compressed data or size");
-    raw.resize(expected);
+    if (status != Z_STREAM_END || made != size || left_over) throw Error("Invalid DCX compressed data or size");
+    raw.resize(size);
     return raw;
 }
 
 Bytes DcxPack(const Bytes& raw) {
-    Bytes header = FromHex("44435800000100000000001800000024000000440000004c"
-                           "4443530000000000000000004443500044464c5400000020"
-                           "09000000000000000000000000000000000001014443410000000008");
-    uLongf size = compressBound(uLong(raw.size()));
-    Bytes packed(size);
-    if (compress2(packed.data(), &size, raw.data(), uLong(raw.size()), 9) != Z_OK) throw Error("compression failed");
-    packed.resize(size);
-    StoreBe32(header.data() + 0x1c, std::uint32_t(raw.size()));
-    StoreBe32(header.data() + 0x20, std::uint32_t(packed.size()));
-    header.insert(header.end(), packed.begin(), packed.end());
-    return header;
+    uLongf packed_size = compressBound(uLong(raw.size()));
+    Bytes packed(packed_size);
+    if (compress2(packed.data(), &packed_size, raw.data(), uLong(raw.size()), 9) != Z_OK) throw Error("compression failed");
+    Bytes out = FromHex(kDcxHeader);
+    PutBigEndian32(out.data() + 0x1c, std::uint32_t(raw.size()));
+    PutBigEndian32(out.data() + 0x20, std::uint32_t(packed_size));
+    out.insert(out.end(), packed.begin(), packed.begin() + std::ptrdiff_t(packed_size));
+    return out;
 }
+
+constexpr int kMirrorPart = 807, kMirrorSlot = 742, kFirstEnemy = 736;
+constexpr std::int32_t kEnemy = 2, kDummyEnemy = 10;
+constexpr int kEventPartFields[] = {0x48, 0x50, 0x5c};
+constexpr int kPartPartFields[] = {0x128, 0x13c, 0x144, 0x178, 0x180, 0x188};
+
+struct MsbList {
+    std::size_t table;
+    std::vector<std::int64_t> entries;
+};
 
 Bytes MirrorLayout(const Bytes& raw) {
     if (Sha256Hex(raw) != kInputSha) throw Error("Dream mirror requires the original 1.09 Dream layout");
     Bytes b = raw;
-    const auto i32 = [&](std::size_t at) { return Load<std::int32_t>(b.data() + at); };
-    std::vector<std::pair<std::size_t, std::vector<std::int64_t>>> lists;
+    const auto i32 = [&](std::int64_t at) { return Load<std::int32_t>(b.data() + at); };
+    const auto put32 = [&](std::int64_t at, std::int32_t v) { Store<std::int32_t>(b.data() + at, v); };
+    const auto inside = [&](std::int64_t at) { return at > 0 && at < std::int64_t(b.size()); };
+    std::vector<MsbList> lists;
     std::int64_t at = 0x10;
-    for (int index = 0; index < 4; ++index) {
+    for (int n = 0; n < 4; ++n) {
         if (at < 0 || std::size_t(at) > b.size() - 16) throw Error("Invalid MSB list header");
-        const std::int32_t count = i32(std::size_t(at) + 4);
+        const std::int32_t count = i32(at + 4);
         if (count < 1 || std::size_t(count) > (b.size() - std::size_t(at) - 16) / 8) throw Error("Invalid MSB list size");
-        std::vector<std::int64_t> offsets(static_cast<std::size_t>(count));
-        for (int i = 0; i < count; ++i) offsets[std::size_t(i)] = Load<std::int64_t>(b.data() + std::size_t(at) + 16 + 8 * std::size_t(i));
-        for (std::size_t i = 0; i + 1 < offsets.size(); ++i)
-            if (offsets[i] <= 0 || offsets[i] >= std::int64_t(b.size())) throw Error("Invalid MSB entry");
-        const std::int64_t next = offsets.back();
-        offsets.pop_back();
-        lists.emplace_back(std::size_t(at) + 16, offsets);
-        at = next;
-        if (index < 3 && (at <= 0 || at >= std::int64_t(b.size()))) throw Error("Invalid next MSB list");
+        MsbList list{std::size_t(at) + 16, {}};
+        for (std::int32_t i = 0; i + 1 < count; ++i) {
+            const auto entry = Load<std::int64_t>(b.data() + list.table + 8 * std::size_t(i));
+            if (!inside(entry)) throw Error("Invalid MSB entry");
+            list.entries.push_back(entry);
+        }
+        at = Load<std::int64_t>(b.data() + list.table + 8 * std::size_t(count - 1));
+        if (n < 3 && !inside(at)) throw Error("Invalid MSB entry");
+        lists.push_back(std::move(list));
     }
-    const auto& events = lists[1].second;
-    const std::size_t table = lists[3].first;
-    const auto& parts = lists[3].second;
-    constexpr int source = 807, target = 742, first_enemy = 736;
-    if (parts.size() <= std::size_t(source + 1)) throw Error("Dream layout contains too few parts");
-    std::vector<std::int64_t> starts;
-    for (const auto& [_, entries] : lists) starts.insert(starts.end(), entries.begin(), entries.end());
-    std::sort(starts.begin(), starts.end());
-    const auto remap = [&](std::int32_t slot) {
-        return slot == source ? target : (target <= slot && slot < source) ? slot + 1 : slot;
+    const auto& events = lists[1].entries;
+    const auto& parts = lists[3].entries;
+    if (parts.size() <= std::size_t(kMirrorPart + 1) ||
+        !(parts[kMirrorSlot] < parts[kMirrorPart] && parts[kMirrorPart] < parts[kMirrorPart + 1]))
+        throw Error("Dream layout parts are not as expected");
+    if (i32(parts[kMirrorPart] + 0x14) != kDummyEnemy) throw Error("Mirror stand-in is not a DummyEnemy");
+
+    const auto moved = [](std::int32_t index) {
+        if (index == kMirrorPart) return kMirrorSlot;
+        return kMirrorSlot <= index && index < kMirrorPart ? index + 1 : index;
     };
-    const std::pair<const std::vector<std::int64_t>*, std::vector<int>> groups[] = {
-        {&events, {0x48, 0x50, 0x5c}}, {&parts, {0x128, 0x13c, 0x144, 0x178, 0x180, 0x188}}};
-    for (const auto& [entries, fields] : groups) {
-        for (const std::int64_t entry : *entries) {
-            const auto next = std::upper_bound(starts.begin(), starts.end(), entry);
-            const std::int64_t end = next == starts.end() ? std::int64_t(b.size()) : *next;
+    std::vector<std::int64_t> boundaries;
+    for (const auto& list : lists) boundaries.insert(boundaries.end(), list.entries.begin(), list.entries.end());
+    std::sort(boundaries.begin(), boundaries.end());
+    const auto renumber = [&](const std::vector<std::int64_t>& entries, std::span<const int> fields) {
+        for (const std::int64_t entry : entries) {
+            const auto next = std::upper_bound(boundaries.begin(), boundaries.end(), entry);
+            const std::int64_t end = next == boundaries.end() ? std::int64_t(b.size()) : *next;
             for (const int field : fields) {
                 if (entry + field + 4 > end) continue;
-                const std::int32_t slot = i32(std::size_t(entry + field));
-                if (slot >= 0 && remap(slot) != slot) Store<std::int32_t>(b.data() + entry + field, remap(slot));
+                const std::int32_t index = i32(entry + field);
+                if (index >= 0 && moved(index) != index) put32(entry + field, moved(index));
             }
         }
-    }
+    };
+    renumber(events, kEventPartFields);
+    renumber(parts, kPartPartFields);
     for (std::size_t i = 0; i < parts.size(); ++i) {
-        const std::int32_t kind = i32(std::size_t(parts[i]) + 0x14), number = i32(std::size_t(parts[i]) + 0x18);
-        if (kind == 2 && int(i) >= target) Store<std::int32_t>(b.data() + parts[i] + 0x18, number + 1);
-        if (kind == 10 && int(i) > source) Store<std::int32_t>(b.data() + parts[i] + 0x18, number - 1);
+        const std::int32_t kind = i32(parts[i] + 0x14), number = i32(parts[i] + 0x18);
+        if (kind == kEnemy && int(i) >= kMirrorSlot) put32(parts[i] + 0x18, number + 1);
+        else if (kind == kDummyEnemy && int(i) > kMirrorPart) put32(parts[i] + 0x18, number - 1);
     }
-    const std::int64_t moved = parts[source];
-    if (i32(std::size_t(moved) + 0x14) != 10) throw Error("Mirror stand-in is not a DummyEnemy");
-    Store<std::int32_t>(b.data() + moved + 0x14, 2);
-    Store<std::int32_t>(b.data() + moved + 0x18, target - first_enemy);
-    const std::int64_t start = parts[target], old = parts[source], end = parts[source + 1];
-    if (!(start < old && old < end)) throw Error("Dream parts are not ordered");
-    std::rotate(b.begin() + start, b.begin() + old, b.begin() + end);
-    const std::int64_t size = end - old;
-    for (int i = target; i < source; ++i) Store<std::int64_t>(b.data() + table + 8 * std::size_t(i + 1), parts[std::size_t(i)] + size);
-    Store<std::int64_t>(b.data() + table + 8 * std::size_t(target), start);
+    put32(parts[kMirrorPart] + 0x14, kEnemy);
+    put32(parts[kMirrorPart] + 0x18, kMirrorSlot - kFirstEnemy);
+    const std::int64_t first = parts[kMirrorSlot], stand_in = parts[kMirrorPart], after = parts[kMirrorPart + 1];
+    std::rotate(b.begin() + first, b.begin() + stand_in, b.begin() + after);
+    const std::int64_t size = after - stand_in;
+    const std::size_t table = lists[3].table;
+    Store<std::int64_t>(b.data() + table + 8 * std::size_t(kMirrorSlot), first);
+    for (int i = kMirrorSlot; i < kMirrorPart; ++i)
+        Store<std::int64_t>(b.data() + table + 8 * std::size_t(i + 1), parts[std::size_t(i)] + size);
     if (Sha256Hex(b) != kOutputSha) throw Error("Mirror layout does not match the verified result");
     return b;
 }
 
-// Ebrietas' trail effect (scripts/engine_assets.py EFFECT_FIXES, which says why): f001251720.fxr in
-// Upper Cathedral Ward's and the chalice dungeons' effect binders becomes the Fishing Hamlet's
-// f001454436.fxr. Hashes: the 1.09 .dcx, it unpacked, the result unpacked; and the entries.
 struct EffectFix {
     const char* binder;
     const char* packed_sha;
@@ -150,15 +165,13 @@ const EffectFix kEffectFixes[] = {
      "085f2d3d60d54e50fa981c7aad89ca42f47b3a733a78b40ee98f572883ce122b",
      "8348b2b7f110feb7ca0a444e8331886b85fe24ba422b8b9909cdc5d551ffcb07"},
 };
-constexpr std::size_t kBnd4Entry = 0x24; // flags, -1, packed and unpacked size, data offset (u32), id, name offset
+constexpr std::size_t kBnd4Entry = 0x24;
 
 struct BinderEntry {
     std::size_t header, offset, size;
-    std::string name; // the file name, without its folders
+    std::string name;
 };
 
-/// The files of a BND4 with 0x24-byte entries (format 0x74: sizes, 32-bit offsets, ids, UTF-16
-/// names), as the game's effect binders are.
 std::vector<BinderEntry> BinderEntries(const Bytes& b) {
     if (b.size() < 0x40 || std::memcmp(b.data(), "BND4", 4) || Load<std::int64_t>(b.data() + 0x20) != std::int64_t(kBnd4Entry) ||
         b[0x30] != 1 || b[0x31] != 0x74)
@@ -190,8 +203,6 @@ Bytes BinderFile(const Bytes& b, const std::string& name) {
     throw Error(name + " is not in the effect binder");
 }
 
-/// The binder with `name` holding `data`: appended 16-byte aligned, its entry's sizes and offset
-/// pointed at it; the other entries and the name table stay put.
 Bytes ReplaceBinderFile(const Bytes& b, const std::string& name, const Bytes& data) {
     const auto entries = BinderEntries(b);
     const auto found = std::find_if(entries.begin(), entries.end(), [&](const BinderEntry& e) { return e.name == name; });
@@ -226,7 +237,7 @@ std::wstring Quote(const std::wstring& argument) {
     return out + L"\"";
 }
 
-} // namespace
+}
 
 std::wstring CommandLine(const fs::path& program, const std::vector<std::wstring>& arguments) {
     std::wstring line = Quote(program.native());
@@ -273,9 +284,6 @@ int RunProgram(const fs::path& program, const std::vector<std::wstring>& argumen
 std::string VerifyExecutable(const fs::path& elf_path) {
     const Bytes elf = ReadFile(elf_path);
     const std::string sha = Sha256Hex(elf);
-    // A patched 1.09 executable (prepare.cpp CheckGame: a few pieces changed, such as a 60 FPS
-    // package, or CUSA00900's) passes too: every engine hook compares the code it replaces and
-    // leaves itself out where the package changed it.
     std::string code;
     try {
         code = Trim(ReadText(elf_path.parent_path() / "game-code.txt"));
@@ -330,7 +338,7 @@ std::vector<std::pair<std::string, fs::path>> PrepareEffectFixes(const fs::path&
     std::vector<std::pair<std::string, fs::path>> fixed;
     std::error_code error;
     for (const EffectFix& fix : kEffectFixes) {
-        if (!fs::is_regular_file(game / Path(fix.binder), error)) continue; // not installed
+        if (!fs::is_regular_file(game / Path(fix.binder), error)) continue;
         const Bytes packed = ReadFile(game / Path(fix.binder));
         const std::string file = Utf8(Path(fix.binder).filename());
         std::optional<Bytes> raw;
@@ -341,7 +349,6 @@ std::vector<std::pair<std::string, fs::path>> PrepareEffectFixes(const fs::path&
                 continue;
             }
         }
-        // A prepared binder is kept while it matches the hash written beside it (of its .dcx).
         const fs::path destination = root / Path(fix.binder);
         fs::path stamp = destination;
         stamp += L".sha256";
@@ -438,4 +445,4 @@ fs::path PrepareMenuAssets(const fs::path& game, const fs::path& elf, const fs::
     return fs::canonical(root);
 }
 
-} // namespace start
+}

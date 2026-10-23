@@ -23,11 +23,7 @@
 #include "video_core/renderer_vulkan/vk_optiscaler.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
-// DejaVu Sans (Latin with Latin Extended, Greek, Cyrillic), embedded (third_party/fonts, Bitstream
-// Vera license).
 #ifdef _WIN32
-// PE/COFF assemblers have no .hidden/.previous: the compiler embeds the file (#embed, a GCC
-// extension in C++).
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 alignas(16) static const unsigned char bb_font_ttf[] = {
@@ -50,8 +46,6 @@ extern "C" const unsigned char bb_font_ttf[];
 extern "C" const unsigned char bb_font_ttf_end[];
 #endif
 
-// bbport: Lantern Menu SC (a Noto Sans SC subset: the Simplified Chinese menu's characters,
-// third_party/fonts, SIL Open Font License 1.1), merged into DejaVu Sans at Init.
 #ifdef _WIN32
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -75,31 +69,28 @@ extern "C" const unsigned char bb_font_cjk[];
 extern "C" const unsigned char bb_font_cjk_end[];
 #endif
 
-extern "C" void runtime_restart(void); // bb-probe (probe.c)
+extern "C" void runtime_restart(void);
 
 namespace Vulkan {
-extern std::atomic<u64> g_bb_compile_ns_total; // vk_pipeline_cache.cpp
+extern std::atomic<u64> g_bb_compile_ns_total;
 extern std::atomic<u32> g_bb_compiles_total;
-} // namespace Vulkan
+}
 
 namespace BbOverlay {
 
 namespace {
 
-std::mutex imgui_mutex; // the ImGui context: window thread (input) and present thread
+std::mutex imgui_mutex;
 bool initialized = false;
 std::atomic<bool> menu_open{false};
 bool l3_down = false, r3_down = false;
-bool dirty = false; // settings changed while open: saved on close
+bool dirty = false;
 float base_scale = 1.0f;
 
-// The game's text dialog (ImeDialog, the character name), typed on the keyboard: drawn while it
-// is open. In fullscreen the window title that showed it is not visible (issues #17, #19).
 std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
 
-// Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
 float frame_ms_avg = 0.0f;
 
@@ -109,8 +100,6 @@ void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
         return;
     }
-    // The system cursor shows over the menu (window.cpp); ImGui learns where it is now, not at
-    // the next motion: mouse motion is not passed on while the menu is closed.
     if (value) {
         if (SDL_Window* window = SDL_GetMouseFocus()) {
             float x = 0.0f, y = 0.0f;
@@ -126,7 +115,6 @@ void SetOpen(bool value) {
 }
 
 ImGuiKey KeyFromSdl(SDL_Keycode key) {
-    // Letters: Ctrl+F (search) and the text fields' Ctrl+A / C / V / X / Z.
     if (key >= SDLK_A && key <= SDLK_Z) {
         return ImGuiKey(ImGuiKey_A + int(key - SDLK_A));
     }
@@ -180,7 +168,6 @@ float PixelDensity(SDL_WindowID id) {
     return density > 0.0f ? density : 1.0f;
 }
 
-// Marks the settings dirty when a widget changed them.
 template <typename T>
 void Store(std::atomic<T>& target, T value, bool changed) {
     if (changed) {
@@ -189,8 +176,6 @@ void Store(std::atomic<T>& target, T value, bool changed) {
     }
 }
 
-// The widget runs before Store reads v: argument evaluation order is unspecified (clang on
-// Windows copied v before the widget changed it, so clicks stored the old value).
 void Checkbox(const char* label, std::atomic<bool>& value) {
     bool v = value;
     const bool changed = ImGui::Checkbox(label, &v);
@@ -205,10 +190,8 @@ bool Slider(const char* label, std::atomic<float>& value, float lo, float hi,
     return changed;
 }
 
-// The amounts Custom starts from (the last one chosen in this session).
 int custom_vials = 20, custom_bullets = 20;
 
-// A cheat (engine/cheats.cpp): Off / Infinite / Custom, and the amount for Custom; live.
 void Cheat(const char* label, std::atomic<int>& value, BbEngine::Cheats::Which which, int& custom) {
     ImGui::PushID(label);
     const char* modes[] = {BbSettings::MenuText("Off", "Выкл."),
@@ -237,12 +220,9 @@ void Cheat(const char* label, std::atomic<int>& value, BbEngine::Cheats::Which w
     ImGui::PopID();
 }
 
-// The last "(?)" drawn: a hint right after another is not shown for it.
 ImVec2 last_hint{-1.0f, -1.0f};
 
 void Hint(const char* text) {
-    // The setting it follows shows it too, when hovered or selected by the keyboard or a
-    // controller ("(?)" itself is not a stop for their navigation).
     const ImVec2 setting_at = ImGui::GetItemRectMin();
     const bool setting = (setting_at.x != last_hint.x || setting_at.y != last_hint.y) &&
                          ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip);
@@ -263,7 +243,6 @@ void CheatUnavailable(BbEngine::Cheats::Which which) {
     }
 }
 
-// An on/off cheat (engine/cheats.cpp); live.
 void CheatToggle(const char* label, std::atomic<bool>& value, BbEngine::Cheats::Which which, const char* hint) {
     ImGui::PushID(label);
     Checkbox(label, value);
@@ -272,7 +251,6 @@ void CheatToggle(const char* label, std::atomic<bool>& value, BbEngine::Cheats::
     ImGui::PopID();
 }
 
-// A cheat with a few levels, the first the game's own; live.
 template <std::size_t N>
 void CheatLevels(const char* label, std::atomic<int>& value, const int (&levels)[N], const char* const (&names)[N],
                  BbEngine::Cheats::Which which, const char* hint) {
@@ -292,7 +270,6 @@ void CheatLevels(const char* label, std::atomic<int>& value, const int (&levels)
     ImGui::PopID();
 }
 
-// Adds Blood Echoes / Insight to the character in the world (applied by the engine's frame hook).
 void CheatStats() {
     const bool off = BbEngine::Cheats::Unavailable(BbEngine::Cheats::Echoes) != nullptr;
     ImGui::BeginDisabled(off);
@@ -318,21 +295,13 @@ void CheatStats() {
     CheatUnavailable(BbEngine::Cheats::Echoes);
 }
 
-// ---------------------------------------------------------------- search, tabs and sections
-
-// The search box above the tabs: its text, and the query folded to lower case (empty: not
-// searching). While searching, every tab's settings whose label holds the query in any of the
-// menu's languages show in one list, each under its tab and section; a section whose title
-// matches shows whole.
 char search_text[96] = "";
 std::string search_query;
-const char* tab_title = "";          // the tab being drawn (section titles while searching)
-const char* section_title = nullptr; // the section being drawn, until its title is drawn
+const char* tab_title = "";
+const char* section_title = nullptr;
 bool section_matches = false;
-int shown_items = 0; // settings drawn this frame (the "nothing matches" line)
+int shown_items = 0;
 
-/// Appends `c` to `out` as UTF-8, folded to lower case for the menu's scripts (Latin with its
-/// Latin-1 and Extended-A letters, Greek, Cyrillic); other characters as they are.
 void AppendFolded(std::string& out, char32_t c) {
     if ((c >= 'A' && c <= 'Z') || (c >= 0xC0 && c <= 0xDE && c != 0xD7) ||
         (c >= 0x391 && c <= 0x3AB && c != 0x3A2) || (c >= 0x410 && c <= 0x42F)) {
@@ -340,11 +309,11 @@ void AppendFolded(std::string& out, char32_t c) {
     } else if (c >= 0x400 && c <= 0x40F) {
         c += 80;
     } else if (c == 0x130 || c == 0x131) {
-        c = 'i'; // Turkish İ and ı find i
+        c = 'i';
     } else if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) {
-        c |= 1; // Latin Extended-A pairs: capital even, small odd
+        c |= 1;
     } else if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) {
-        c += c & 1; // here capital odd, small even
+        c += c & 1;
     } else if (c == 0x178) {
         c = 0xFF;
     }
@@ -365,7 +334,6 @@ void AppendFolded(std::string& out, char32_t c) {
     }
 }
 
-/// `text` folded to lower case, up to an ImGui ID ("##..."), without its outer spaces.
 std::string Fold(const char* text) {
     std::string out;
     const auto* p = reinterpret_cast<const unsigned char*>(text);
@@ -387,8 +355,6 @@ bool Holds(const char* text) {
     return text && Fold(text).find(search_query) != std::string::npos;
 }
 
-/// The label, by its English and Russian text as the call site passes them to MenuText, holds the
-/// query in one of the menu's languages.
 bool Matches(const char* english, const char* russian) {
     if (Holds(english) || (russian && Holds(russian))) {
         return true;
@@ -406,19 +372,15 @@ bool Searching() {
     return !search_query.empty();
 }
 
-/// Starts a section; its title is drawn with its first setting that shows.
 void Section(const char* english, const char* russian = nullptr) {
     section_title = russian ? BbSettings::MenuText(english, russian) : BbSettings::MenuText(english);
     section_matches = Searching() && Matches(english, russian);
 }
 
-/// Everything in the section shows: not searching, or its title matches.
 bool WholeSection() {
     return !Searching() || section_matches;
 }
 
-/// A setting (or a line of the section) by its label: true when it shows, after the section's
-/// title if it is the first.
 bool Shown(const char* english, const char* russian = nullptr) {
     if (!WholeSection() && !Matches(english, russian)) {
         return false;
@@ -436,7 +398,6 @@ bool Shown(const char* english, const char* russian = nullptr) {
     return true;
 }
 
-/// The setting's label in the menu's language when it shows, else null.
 const char* Item(const char* english, const char* russian = nullptr) {
     if (!Shown(english, russian)) {
         return nullptr;
@@ -444,7 +405,6 @@ const char* Item(const char* english, const char* russian = nullptr) {
     return russian ? BbSettings::MenuText(english, russian) : BbSettings::MenuText(english);
 }
 
-// HDR output (lantern.ini hdr*): on/off on restart; paper white, peak and boost live.
 void HdrSection() {
     auto& s = BbSettings::Get();
     Section("HDR output", "Вывод HDR");
@@ -477,7 +437,6 @@ void HdrSection() {
                                       : BbSettings::MenuText("Active: HDR10 (PQ, BT.2020)",
                                                              "Активен: HDR10 (PQ, BT.2020)"));
     }
-    // bbport: hdr_mode, live (docs/hdr.md).
     int mode = std::clamp(s.hdr_mode.load(), 0, BbSettings::HdrModeCount - 1);
     if (const char* label = Item("HDR mode", "Режим HDR")) {
         const char* modes[BbSettings::HdrModeCount] = {
@@ -500,7 +459,6 @@ void HdrSection() {
         Slider(label, s.hdr_paper_white, BbSettings::HdrPaperWhiteMin, BbSettings::HdrPaperWhiteMax, "%.0f",
                ImGuiSliderFlags_AlwaysClamp);
     }
-    // bbport: the peak the display reports (window.cpp UpdateDisplayPeak), else the slider's.
     const float display_peak = s.hdr_display_peak.load();
     const bool from_display = s.hdr_peak_auto.load() && display_peak >= BbSettings::HdrPeakMin;
     if (const char* label = Item("Peak brightness from the display", "Пиковая яркость от дисплея")) {
@@ -558,7 +516,6 @@ void HdrSection() {
                 "рядом с ним может казаться блёклым). Меняются сразу."));
         }
     }
-    // bbport: not saved; the encode shows the left half as SDR (hdr_output.frag FLAG_COMPARE).
     if (const char* label = Item("Compare: SDR | HDR", "Сравнение: SDR | HDR")) {
         Checkbox(label, s.hdr_compare);
         Hint(BbSettings::MenuText(
@@ -569,7 +526,6 @@ void HdrSection() {
     }
 }
 
-// The game's own picture for each area (engine/graphics.cpp), live: Picture tuning too.
 void PictureSection() {
     auto& s = BbSettings::Get();
     Section("Picture", "Изображение");
@@ -594,10 +550,7 @@ void PictureSection() {
             "насыщенность и туман до 5, контраст 0.5-1.5, оттенок -180-180, bloom до 10, дальность теней "
             "0.25-8)."));
     }
-    // A moved setting turns Picture tuning on: it gates them all.
     const bool vignette = s.graphics_vignette;
-    // The useful range on the slider; Ctrl+click types any value (bbport_settings.cpp keeps it
-    // within wide limits).
     bool moved = false;
     const auto slider = [&](const char* english, const char* russian, std::atomic<float>& value, float lo,
                             float hi, const char* format = "%.2f") {
@@ -636,7 +589,6 @@ void PictureSection() {
     ImGui::EndDisabled();
 }
 
-// Game effects switched by patches at start (restart required), and the model detail.
 void EffectsSection() {
     auto& s = BbSettings::Get();
     Section("Game effects (restart required)", "Эффекты игры (после перезапуска)");
@@ -684,7 +636,6 @@ void EffectsSection() {
     }
 }
 
-// The upscaler, its preset and sharpening, frame generation.
 void UpscalerSection() {
     auto& s = BbSettings::Get();
     Section("Temporal upscaler", "Временной апскейлер");
@@ -763,7 +714,6 @@ void UpscalerSection() {
                 "когда отбросить прошлые кадры. Меняются сразу, без перезапуска."));
         }
     }
-    // bbport: frame generation (vk_frame_generation.h, vk_streamline.h); live, DLSS loaded at start.
     const char* frame_gens[] = {BbSettings::MenuText("Off", "Выкл"), "FSR 3.1", "DLSS (NVIDIA)"};
     static_assert(std::size(frame_gens) == BbSettings::FrameGenCount);
     const int frame_gen = std::clamp(s.frame_gen.load(), 0, BbSettings::FrameGenCount - 1);
@@ -772,8 +722,6 @@ void UpscalerSection() {
     if (const char* label = Item("Frame generation", "Генерация кадров")) {
         if (ImGui::BeginCombo(label, frame_gens[frame_gen])) {
             for (int i = 0; i < BbSettings::FrameGenCount; ++i) {
-                // DLSS: selectable to load it on the next start; not when it was loaded and this GPU
-                // has none.
                 const bool unavailable = i == BbSettings::FrameGenDlss && dlss_loaded && !dlss_fg;
                 ImGui::BeginDisabled(unavailable);
                 if (ImGui::Selectable(frame_gens[i], i == frame_gen)) {
@@ -836,8 +784,6 @@ void UpscalerSection() {
                 "Сгенерированных кадров на каждый кадр игры: 1 удваивает число кадров, 3 — это 4x. "
                 "Больше одного — только RTX 50 (DLSS Multi Frame Generation). Меняется сразу."));
         }
-        // bbport: DLSS dynamic multi frame generation (vk_streamline.cpp SetMode), as OptiScaler's
-        // ForceDMFG: the driver adds only the frames the target needs.
         const bool dynamic_ok = s.dlss_fg_dynamic_supported.load();
         if (const char* label = Item("DLSS: dynamic multi frame generation",
                                      "DLSS: динамическая генерация кадров")) {
@@ -933,7 +879,6 @@ void UpscalerSection() {
                                          "TAA anti-aliases the scene at the output resolution, without an FSR "
                                          "model or upscaling. The saved preset returns when an upscaler is selected."));
         }
-        // bbport: the Custom preset's ratio (render_scale), like OptiScaler's ratio override.
         if (!taa && s.preset == BbSettings::PresetCustom) {
             if (const char* scale_label = Item("Render scale (Custom)", "Масштаб рендера (Custom)")) {
                 Slider(scale_label, s.render_scale, BbSettings::RenderScaleMin, BbSettings::RenderScaleMax, "x%.2f");
@@ -998,10 +943,9 @@ void UpscalerSection() {
             "Each frame the scene shifts by a fraction of a pixel, and the upscaler gathers more "
             "detail from several frames. Without it you only get history-based anti-aliasing."));
     }
-    ImGui::EndDisabled(); // upscaler off
+    ImGui::EndDisabled();
 }
 
-// bbport: DLSS's own options (vk_dlss.cpp), live; shown with DLSS selected (and to a search).
 void DlssSection() {
     auto& s = BbSettings::Get();
     if (s.upscaler != BbSettings::UpscalerDlss && !Searching()) {
@@ -1009,7 +953,6 @@ void DlssSection() {
     }
     Section("DLSS");
     if (const char* label = Item("DLSS model", "Модель DLSS")) {
-        // The letters NVIDIA's DLSS 4 and 4.5 DLLs know; a preset the DLL refuses runs its default.
         static constexpr int presets[] = {BbSettings::DlssPresetAuto, 11, 10, 13, 12, 5, 6,
                                           BbSettings::DlssPresetDefault};
         const char* names[] = {
@@ -1085,8 +1028,6 @@ void DlssSection() {
     }
 }
 
-// bbport: FSR 3.1's tuning constants (vk_temporal_upscaler.cpp ApplyFsr3Tuning), as OptiScaler
-// offers them, with presets; live. Shown with FSR 3.1 selected (and to a search).
 void Fsr3Section() {
     auto& s = BbSettings::Get();
     if (s.upscaler != BbSettings::UpscalerFsr3 && !Searching()) {
@@ -1155,8 +1096,6 @@ void Fsr3Section() {
     }
 }
 
-// The reactive mask (vk_temporal_upscaler.cpp ReactiveOn) and the motion vectors, with their debug
-// views.
 void MaskSection() {
     auto& s = BbSettings::Get();
     const bool upscaler_on = s.upscaler != BbSettings::UpscalerOff;
@@ -1169,7 +1108,6 @@ void MaskSection() {
         Hint(BbSettings::MenuText(
             "Marks transparent effects (particles, haze) so the upscaler relies less on past "
             "frames. Fewer trails behind effects, but shimmer returns underneath them."));
-        // What the selected upscaler does with it.
         const char* use = s.upscaler == BbSettings::UpscalerFsr3
                               ? BbSettings::MenuText("FSR 3.1 uses it as its reactive mask.",
                                                      "FSR 3.1 берёт её как свою реактивную маску.")
@@ -1238,11 +1176,9 @@ void MaskSection() {
             "Движущийся предмет без синего и без красного/зелёного апскейлер считает "
             "неподвижным, отсюда шлейф."));
     }
-    ImGui::EndDisabled(); // upscaler off
+    ImGui::EndDisabled();
 }
 
-// bbport: OptiScaler (vk_optiscaler.h): what was found at start, and the engine's compatibility
-// mode for it (optiscaler_* in lantern.ini, applied on restart).
 void OptiScalerSection() {
     auto& s = BbSettings::Get();
     const auto& opti = Vulkan::OptiScaler::Detect();
@@ -1326,7 +1262,6 @@ void OptiScalerSection() {
     ImGui::EndDisabled();
 }
 
-// Output resolution and live resolution changes.
 void OutputSection() {
     auto& s = BbSettings::Get();
     Section("Output resolution", "Разрешение вывода");
@@ -1510,13 +1445,11 @@ void FpsSection() {
             "показывает впервые. Рывок с этой надписью — сборка шейдеров, при следующем посещении "
             "его не будет; без неё — загрузка."));
     }
-    // What it shows and its look, while it is on (searching: each by its own label).
     if (!s.show_fps && !Searching()) {
         MouseSection();
         return;
     }
     ImGui::Indent();
-    // Its own ID scope: "Upscaler" here would clash with the upscaler choice.
     ImGui::PushID("fps_counter");
     if (const char* label = Item("Frame rate", "Частота кадров")) {
         Checkbox(label, s.show_fps_rate);
@@ -1533,7 +1466,6 @@ void FpsSection() {
     if (const char* label = Item("GPU usage", "Загрузка ГП")) {
         Checkbox(label, s.show_fps_gpu);
     }
-    // bbport: the counter's look.
     if (const char* label = Item("Position", "Положение")) {
         const char* positions[] = {BbSettings::MenuText("Top right", "Сверху справа"),
                                    BbSettings::MenuText("Top left", "Сверху слева"),
@@ -1609,7 +1541,6 @@ const char* TabTitle(int tab) {
     }
 }
 
-/// One tab's sections, in an ID scope of its own (the search results draw them all at once).
 void DrawTab(int tab) {
     tab_title = TabTitle(tab);
     ImGui::PushID(tab);
@@ -1641,13 +1572,12 @@ void DrawTab(int tab) {
     ImGui::PopID();
 }
 
-int current_tab = TabUpscaling; // the tab shown (kept while the game runs)
-int pending_tab = -1;           // a tab chosen by L2 / R2 or Ctrl+PgUp / PgDn, selected next frame
+int current_tab = TabUpscaling;
+int pending_tab = -1;
 
 void Menu() {
     auto& s = BbSettings::Get();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    // Where it was moved last (lantern.ini menu_pos, a fraction of the screen), kept on screen.
     ImVec2 pos(viewport->WorkPos.x + 40.0f * base_scale, viewport->WorkPos.y + 40.0f * base_scale);
     if (s.menu_x >= 0.0f && s.menu_y >= 0.0f) {
         const float margin = 80.0f * base_scale;
@@ -1656,8 +1586,6 @@ void Menu() {
         pos.y = viewport->WorkPos.y +
                 std::clamp(s.menu_y * viewport->WorkSize.y, 0.0f, std::max(viewport->WorkSize.y - margin, 0.0f));
     }
-    // The window ends above the screen's bottom edge wherever its top is, so its resize corner
-    // stays in reach; the tab's page scrolls inside it, between the tabs and the buttons.
     static int last_frame = -2;
     static float window_top = 0.0f;
     const float min_height = 240.0f * base_scale;
@@ -1680,7 +1608,6 @@ void Menu() {
     }
     last_frame = ImGui::GetFrameCount();
     window_top = ImGui::GetWindowPos().y;
-    // Moved: remembered (saved with the settings when the menu closes).
     if (!ImGui::IsWindowAppearing() && viewport->WorkSize.x > 0.0f && viewport->WorkSize.y > 0.0f) {
         const ImVec2 at = ImGui::GetWindowPos();
         const float fx = (at.x - viewport->WorkPos.x) / viewport->WorkSize.x;
@@ -1692,7 +1619,6 @@ void Menu() {
         }
     }
 
-    // Search: Ctrl+F focuses it; Esc empties it, then leaves it (and then closes the menu).
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_F, ImGuiInputFlags_RouteGlobal)) {
         ImGui::SetKeyboardFocusHere();
     }
@@ -1701,8 +1627,6 @@ void Menu() {
                              search_text, sizeof(search_text), ImGuiInputTextFlags_EscapeClearsAll);
     search_query = Fold(search_text);
 
-    // Always readable, whatever language the rest of the menu is in: each language by its own
-    // name, in MenuLanguage order.
     static const char* languages[] = {"English",  "Русский",  "Español", "Português (Brasil)",
                                       "Français", "Deutsch",  "Italiano", "Polski", "Türkçe", "简体中文"};
     static_assert(std::size(languages) == BbSettings::MenuLanguageCount);
@@ -1717,7 +1641,6 @@ void Menu() {
     ImGui::Text(BbSettings::MenuText("%.0f FPS  (%.1f ms)", "%.0f FPS  (%.1f мс)"),
                 frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f, frame_ms_avg);
 
-    // The tabs: L2 / R2 on a controller, Ctrl+PgUp / Ctrl+PgDn on the keyboard.
     if (!Searching()) {
         const bool previous = ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false) ||
                               ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_PageUp, ImGuiInputFlags_RouteGlobal);
@@ -1727,7 +1650,6 @@ void Menu() {
             pending_tab = (current_tab + (next ? 1 : TabCount - 1)) % TabCount;
         }
     }
-    // The page fills the window down to the buttons below it (their height last frame).
     static float footer_height = 0.0f;
     const ImVec2 page(0.0f, -std::max(footer_height, ImGui::GetFrameHeightWithSpacing() * 2.0f));
     shown_items = 0;
@@ -1769,7 +1691,6 @@ void Menu() {
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
     }
-    // OptiScaler's switches matter only with it loaded.
     restart |= Vulkan::OptiScaler::Detect().loaded &&
                (s.optiscaler_compat != s.startup_optiscaler.compat ||
                 s.optiscaler_ngx_lock != s.startup_optiscaler.ngx_lock ||
@@ -1789,12 +1710,8 @@ void Menu() {
     if (ImGui::Button(BbSettings::MenuText("Close", "Закрыть"))) {
         keep_open = false;
     }
-    // Quit (issue #21): the same clean exit as closing the window, so a controller player need not
-    // force-close the game. Asks once more before quitting; the game's own save is untouched.
     static bool quit_armed = false;
     ImGui::SameLine();
-    // One ID for both labels ("###quit"): a label change made it a new button, and a controller's
-    // focus stayed on the old one, so the confirmation was dropped before the second press.
     const std::string quit_label =
         std::string(quit_armed ? BbSettings::MenuText("Press again to quit", "Нажмите ещё раз")
                                : BbSettings::MenuText("Quit game", "Выйти из игры")) + "###quit";
@@ -1826,12 +1743,8 @@ void Menu() {
     }
 }
 
-// bbport: the FPS counter's box this frame (the compile note sits next to it); zero: not drawn.
 ImVec2 fps_box_min{}, fps_box_max{};
 
-// bbport: "Building shaders" while pipelines are built in play (a place seen for the first time):
-// a hitch with the note was shader building, one without it loading (Linux report, 0.9.37 beta
-// 6). A burst of compiles (gaps under 2 s) shows it once it took 30 ms, until 1.5 s after its last.
 std::mutex compile_note_mutex;
 bool compile_note_primed = false;
 u64 compile_note_seen_ns = 0, compile_note_burst_ns = 0;
@@ -1847,7 +1760,6 @@ bool CompileNoteActive() {
     const auto now = std::chrono::steady_clock::now();
     std::scoped_lock lock{compile_note_mutex};
     if (!compile_note_primed) {
-        // The start's warm-up is not a hitch in play.
         compile_note_primed = true;
         compile_note_seen_ns = ns;
         compile_note_seen = count;
@@ -1874,8 +1786,6 @@ void CompileNote() {
         std::scoped_lock lock{compile_note_mutex};
         burst = compile_note_burst;
     }
-    // Under the FPS counter (above it at the bottom), else in the top right corner, where the
-    // game's HUD has nothing.
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float pad = 12.0f * base_scale;
     const bool beside_counter = fps_box_max.x > fps_box_min.x;
@@ -1895,14 +1805,12 @@ void CompileNote() {
 }
 
 void FpsCounter() {
-    // What it shows (the menu's checkboxes under the counter); nothing chosen: no window.
     const auto& s = BbSettings::Get();
     char text[128];
     int n = 0;
     if (s.show_fps_rate) {
         n += std::snprintf(text + n, sizeof(text) - n, "%.0f FPS",
                            frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f);
-        // bbport: with frame generation the frames shown and the game's own.
         if (s.frame_gen_active) {
             n += std::snprintf(text + n, sizeof(text) - n, " (game %.0f, frame gen 2x)",
                                s.frame_gen_game_fps.load());
@@ -1927,8 +1835,6 @@ void FpsCounter() {
     if (n == 0) {
         return;
     }
-    // bbport: the text changes twice a second: redrawn every frame its numbers flickered too fast
-    // to read (100+ frames a second with frame generation).
     static char shown[sizeof(text)] = "";
     static auto shown_at = std::chrono::steady_clock::time_point{};
     const auto now = std::chrono::steady_clock::now();
@@ -1936,7 +1842,6 @@ void FpsCounter() {
         std::memcpy(shown, text, sizeof(text));
         shown_at = now;
     }
-    // bbport: its corner, size, colours, background opacity and border (fps_* settings).
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float pad = 12.0f * base_scale;
     const int position = std::clamp(s.fps_position.load(), 0, BbSettings::FpsPositionCount - 1);
@@ -1949,8 +1854,6 @@ void FpsCounter() {
     const float y = bottom ? viewport->WorkPos.y + viewport->WorkSize.y - pad : viewport->WorkPos.y + pad;
     ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always,
                             ImVec2(centre ? 0.5f : right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
-    // bbport: the box only grows (until what it shows or its size changes): sized to each text,
-    // it moved sideways whenever a number got a digit narrower or wider and the text shook.
     static float min_width = 0.0f;
     static size_t min_width_key = 0;
     const size_t width_key = size_t(s.show_fps_rate) | size_t(s.show_fps_frame_time) << 1 |
@@ -2007,7 +1910,7 @@ void TextPrompt() {
     ImGui::End();
 }
 
-} // namespace
+}
 
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text) {
     {
@@ -2018,9 +1921,6 @@ void SetTextPrompt(bool active, const std::string& prompt, const std::string& te
     prompt_active = active;
 }
 
-/// bbport: what opens this menu (BB_OVERLAY_KEYS, the launcher's "In-game menu shortcut"): "both"
-/// (Insert and L3+R3, the default), "insert" (a controller can't open it by accident: L3 and R3
-/// pressed together in a fight did) or "off" (only the game's own PC menus).
 enum class OverlayKeys { Both, Insert, Off };
 static OverlayKeys MenuKeys() {
     static const OverlayKeys keys = [] {
@@ -2039,8 +1939,8 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.IniFilename = nullptr; // window positions are not kept
-    io.ConfigDebugHighlightIdConflicts = false; // a programmer's warning, not for players
+    io.IniFilename = nullptr;
+    io.ConfigDebugHighlightIdConflicts = false;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     io.BackendPlatformName = "lantern";
@@ -2052,14 +1952,10 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     style.GrabRounding = 4.0f;
     style.Colors[ImGuiCol_WindowBg].w = 0.92f;
 
-    // No GlyphRanges: the Vulkan backend has ImGuiBackendFlags_RendererHasTextures (ImGui 1.92), so
-    // the atlas loads each glyph of the font when first drawn (Cyrillic, ñ ç ü ß ą ł ş ğ ı, —).
-    // Ranges would only limit that.
     ImFontConfig font_config;
     font_config.FontDataOwnedByAtlas = false;
     io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_font_ttf),
                                    int(bb_font_ttf_end - bb_font_ttf), 18.0f, &font_config);
-    // bbport: the Chinese characters DejaVu Sans lacks, merged into it (loaded when first drawn too).
     ImFontConfig cjk_config;
     cjk_config.FontDataOwnedByAtlas = false;
     cjk_config.MergeMode = true;
@@ -2131,7 +2027,6 @@ bool HandleEvent(const SDL_Event& event) {
         const bool down = event.type == SDL_EVENT_KEY_DOWN;
         if (down && !event.key.repeat &&
             ((event.key.key == SDLK_INSERT && (is_open || MenuKeys() != OverlayKeys::Off)) ||
-             // Esc in a text field (the search, a typed value) is the field's: it clears, or leaves.
              (is_open && event.key.key == SDLK_ESCAPE && !io.WantTextInput))) {
             SetOpen(event.key.key == SDLK_INSERT ? !is_open : false);
             return true;
@@ -2169,7 +2064,6 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
-        // The triggers switch the tabs (L2 / R2), pressed past half way.
         if (!is_open) {
             return false;
         }
@@ -2182,8 +2076,6 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     case SDL_EVENT_TEXT_INPUT: {
-        // Typed characters (Ctrl+click on a slider, a text field): key events alone erase but
-        // do not type. SDL sends them while text input is on (UpdateTextInput).
         if (!is_open) {
             return false;
         }
@@ -2233,12 +2125,10 @@ bool MenuOpen() {
 }
 
 bool CapturesInput() {
-    // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
     return menu_open || prompt_active;
 }
 
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
-    // Present interval for the FPS readout (measured also while nothing is drawn).
     const auto now = std::chrono::steady_clock::now();
     const float ms = std::chrono::duration<float, std::milli>(now - last_present).count();
     last_present = now;
@@ -2252,7 +2142,6 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
     io.DeltaTime = ms > 0.0f && ms < 1000.0f ? ms / 1000.0f : 1.0f / 60.0f;
-    // UI scale follows the display height (1080p = 1).
     const float scale = std::max(float(extent.height) / 1080.0f, 0.75f);
     if (std::abs(scale - base_scale) > 0.01f) {
         ImGuiStyle& style = ImGui::GetStyle();
@@ -2291,11 +2180,10 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         .pColorAttachments = &attachment,
     });
     {
-        // Font atlas uploads submit to the graphics queue themselves.
         std::scoped_lock submit_lock{Vulkan::Scheduler::submit_mutex};
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
     }
     cmdbuf.endRendering();
 }
 
-} // namespace BbOverlay
+}

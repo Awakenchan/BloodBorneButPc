@@ -69,7 +69,6 @@ class PackagedVulkanTests(unittest.TestCase):
         self.assertEqual((cache / compiler.name).resolve(), compiler)
         self.assertFalse((cache / "libc.so.6").exists())
         self.assertTrue(self.env["VK_DRIVER_FILES"].endswith(":/bundled/radeon.json:/bundled/intel.json"))
-        # Repeated starts reuse valid links and do not accumulate per-launch caches.
         before = dict(self.env)
         self.env = {k: v for k, v in before.items() if k != "VK_DRIVER_FILES"}
         self.env["LD_LIBRARY_PATH"] = "/bundled/lib"

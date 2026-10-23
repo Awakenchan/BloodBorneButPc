@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "mods.h"
 #include "elf.h"
 
@@ -37,7 +37,6 @@ bool Exists(const fs::path& p) {
     return GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
-/// A junction or symbolic link (any reparse point): never followed, never written through.
 bool IsLink(const fs::path& p) {
     const DWORD a = GetFileAttributesW(p.c_str());
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
@@ -51,7 +50,6 @@ std::vector<fs::path> Entries(const fs::path& folder) {
     return out;
 }
 
-/// `name` inside `folder`, matching an existing entry case-insensitively.
 fs::path Child(const fs::path& folder, const std::wstring& name) {
     const std::wstring want = Fold(name);
     for (const fs::path& entry : Entries(folder))
@@ -202,8 +200,8 @@ void CreateJunction(const fs::path& target, const fs::path& link) {
     std::vector<std::uint8_t> buffer(8 + 8 + path_bytes, 0);
     Store<std::uint32_t>(buffer.data(), IO_REPARSE_TAG_MOUNT_POINT);
     Store<std::uint16_t>(buffer.data() + 4, std::uint16_t(8 + path_bytes));
-    Store<std::uint16_t>(buffer.data() + 8, 0);                                                   // substitute offset
-    Store<std::uint16_t>(buffer.data() + 10, std::uint16_t(substitute.size() * sizeof(wchar_t)));  // length
+    Store<std::uint16_t>(buffer.data() + 8, 0);
+    Store<std::uint16_t>(buffer.data() + 10, std::uint16_t(substitute.size() * sizeof(wchar_t)));
     Store<std::uint16_t>(buffer.data() + 12, std::uint16_t((substitute.size() + 1) * sizeof(wchar_t)));
     Store<std::uint16_t>(buffer.data() + 14, std::uint16_t(print.size() * sizeof(wchar_t)));
     std::memcpy(buffer.data() + 16, substitute.c_str(), substitute.size() * sizeof(wchar_t));
@@ -221,7 +219,6 @@ void CreateJunction(const fs::path& target, const fs::path& link) {
     }
 }
 
-/// Whether junctions can be made in `folder` (NTFS; not exFAT or FAT32).
 bool JunctionsWork(const fs::path& folder) {
     const fs::path probe = folder / L"mod-junction-test";
     RemoveDirectoryW(probe.c_str());
@@ -234,7 +231,6 @@ bool JunctionsWork(const fs::path& folder) {
     return true;
 }
 
-/// `path` refers to `target` without copying the game: a junction, a hard link, else a copy.
 void Link(const fs::path& path, const fs::path& target) {
     if (IsDir(target)) {
         CreateJunction(target, path);
@@ -243,7 +239,6 @@ void Link(const fs::path& path, const fs::path& target) {
     }
 }
 
-/// Removes a link made by Link (never what it refers to).
 void Unlink(const fs::path& path) {
     const DWORD a = GetFileAttributesW(path.c_str());
     if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) && (a & FILE_ATTRIBUTE_REPARSE_POINT)) {
@@ -251,7 +246,7 @@ void Unlink(const fs::path& path) {
         return;
     }
     if (!DeleteFileW(path.c_str())) {
-        SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);  // a read-only copy
+        SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
         if (!DeleteFileW(path.c_str())) throw Error("cannot remove " + Utf8(path));
     }
 }
@@ -269,7 +264,6 @@ fs::path Resolved(const fs::path& path) {
     return fs::path(text);
 }
 
-/// Materializes one directory level; never writes through a directory link.
 void Expand(const fs::path& directory) {
     if (IsLink(directory)) {
         const fs::path target = Resolved(directory);
@@ -314,9 +308,6 @@ fs::path MakeTemporary(const fs::path& out) {
     throw Error("cannot create a mod overlay in " + Utf8(out));
 }
 
-// A mod file the other players of a co-op session read too: parameters, map layouts, events, AI
-// and talk scripts, actions and character animations. With different ones on each side, enemies
-// and items desync (killed for one player, alive for the other).
 bool ChangesGameplay(const std::wstring& key) {
     for (const wchar_t* folder : {L"dvdroot_ps4/param/", L"dvdroot_ps4/event/", L"dvdroot_ps4/script/",
                                   L"dvdroot_ps4/map/mapstudio/", L"dvdroot_ps4/action/"})
@@ -364,14 +355,11 @@ fs::path BuildOverlay(fs::path game, const fs::path& out_base, const std::vector
     if (replacements.empty()) return game;
     fs::create_directories(out);
     out = fs::canonical(out);
-    // bbport: a drive without junctions (exFAT, FAT32; "cannot link ... dvdroot_ps4", 0.9.35) keeps
-    // no merged view. The files are listed instead and the engine opens the mod's file where the
-    // game asks for one of them (runtime_file.c, BB_MOD_FILES); no link or copy is made.
     if (!JunctionsWork(out)) {
         const fs::path list = out / L"mod-files.txt";
         std::string text;
         std::set<std::wstring> seen;
-        for (auto it = replacements.rbegin(); it != replacements.rend(); ++it) {  // the last layer wins
+        for (auto it = replacements.rbegin(); it != replacements.rend(); ++it) {
             if (!seen.insert(Fold(it->first.generic_wstring())).second) continue;
             text += Utf8(it->first.generic_wstring()) + "\t" + Utf8(fs::absolute(it->second)) + "\n";
         }
@@ -394,7 +382,7 @@ fs::path BuildOverlay(fs::path game, const fs::path& out_base, const std::vector
             }
             const fs::path destination = Child(parent, parts.back().native());
             if (IsFile(destination) && !IsLink(destination)) {
-                ++replaced;  // a hard link or copy: every file in the overlay is one of ours
+                ++replaced;
                 Unlink(destination);
             } else if (IsLink(destination) && !IsDir(destination)) {
                 ++replaced;
@@ -417,7 +405,7 @@ fs::path BuildOverlay(fs::path game, const fs::path& out_base, const std::vector
     }
 }
 
-} // namespace
+}
 
 void RemoveOverlay(const fs::path& path) {
     if (IsLink(path) || !IsDir(path)) {
@@ -444,4 +432,4 @@ fs::path BuildModsOverlay(const fs::path& game, const fs::path& out, const fs::p
     return BuildOverlay(game, out, layers, UpdateFolder(fs::canonical(game)));
 }
 
-} // namespace start
+}

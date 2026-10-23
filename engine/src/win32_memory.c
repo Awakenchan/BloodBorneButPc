@@ -1,9 +1,3 @@
-/* Windows guest address space. The guest range is reserved at start as one placeholder
- * (VirtualAlloc2); a mapping splits the placeholder and replaces its piece with a view of
- * the pool section (MapViewOfFile3), which allows 4 KiB granularity and aliasing like
- * mmap(MAP_SHARED|MAP_FIXED) of a memfd. Windows cannot unmap part of a view, so views are
- * tracked here: a removed range unmaps the views it touches and maps their remaining pieces
- * again (the section keeps the data). */
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -21,10 +15,6 @@ static MapViewOfFile3Fn map_view3;
 static UnmapViewOfFile2Fn unmap_view2;
 static HANDLE section;
 static uintptr_t space_start, space_end;
-/* BB_POOL_LAZY=1: the pool section reserves its size and pages are committed as they are mapped,
- * through the pool's own view (every view of a page sees it committed). A committed pool charged
- * Windows its whole size at the start (5056 or 9152 MiB plus 1 GiB of flexible memory), while
- * the game's logs show it touching 1-3 GiB at the start and 2.5-6 GiB in play. */
 static int lazy;
 static unsigned char *pool_view;
 static uint64_t pool_bytes;
@@ -58,8 +48,6 @@ int win_mem_section(uint64_t size, void **backing) {
     const char *lazy_env = getenv("BB_POOL_LAZY");
     lazy = lazy_env && lazy_env[0] == '1';
     pool_bytes = size;
-    /* bbport: bb-start made this section (its commit charged there) and passes it on as an
-     * inherited handle, "handle:bytes", so the size it was checked at is the size the game gets. */
     const char *given = getenv("BB_POOL_SECTION");
     if (given && *given) {
         char *end = NULL;
@@ -76,7 +64,7 @@ int win_mem_section(uint64_t size, void **backing) {
             fprintf(stderr, "Runtime: BB_POOL_SECTION %s is not a %llu byte pool; making one\n", given,
                     (unsigned long long)size);
         }
-        section = NULL; /* a stale handle (another process's value) is not ours to close */
+        section = NULL;
     }
     section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL,
                                  PAGE_EXECUTE_READWRITE | (lazy ? SEC_RESERVE : SEC_COMMIT),
@@ -121,7 +109,7 @@ static DWORD page_mode(int prot) {
     default: return PAGE_EXECUTE_READWRITE;
     }
 }
-static size_t view_index(uintptr_t a) { /* first view with end > a */
+static size_t view_index(uintptr_t a) {
     size_t lo = 0, hi = view_count;
     while (lo < hi) { size_t mid = (lo + hi) / 2; if (views[mid].end <= a) lo = mid + 1; else hi = mid; }
     return lo;
@@ -142,7 +130,6 @@ static void view_erase(size_t at) {
     memmove(views + at, views + at + 1, (view_count - at - 1) * sizeof(*views));
     --view_count;
 }
-/* Makes x a placeholder boundary. Placeholder pieces report their own AllocationBase. */
 static int split_at(uintptr_t x) {
     if (x == space_start || x == space_end) return 0;
     MEMORY_BASIC_INFORMATION info;
@@ -151,7 +138,6 @@ static int split_at(uintptr_t x) {
     if (info.State != MEM_RESERVE) { SetLastError(ERROR_INVALID_ADDRESS); return -1; }
     return VirtualFree((void *)x, info.RegionSize, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) ? 0 : -1;
 }
-/* [a,b) holds placeholders only: make it exactly one placeholder. */
 static int make_placeholder(uintptr_t a, uintptr_t b) {
     if (split_at(a) || split_at(b)) return -1;
     MEMORY_BASIC_INFORMATION info;
@@ -186,14 +172,11 @@ int win_mem_release(uintptr_t a, uintptr_t b, WinMemRestore restore) {
     return 0;
 }
 int win_mem_map(uintptr_t a, uintptr_t b, uint64_t phys, int prot, WinMemRestore restore) {
-    /* BB_POOL_LAZY: committed before it is mapped, so protections and Windows' own reads into
-     * the mapping (file reads) find every page there. */
     if (win_mem_commit(phys, b - a)) { SetLastError(ERROR_COMMITMENT_LIMIT); return -1; }
     if (win_mem_release(a, b, restore)) return -1;
     if (map_view(a, b, phys)) { report("mapping", a, b); return -1; }
     return (prot & 7) == 3 ? 0 : win_mem_protect(a, b, prot);
 }
-/* VirtualProtect cannot cross views: one call per view. */
 int win_mem_protect(uintptr_t a, uintptr_t b, int prot) {
     DWORD mode = page_mode(prot), old;
     for (size_t i = view_index(a); i < view_count && views[i].start < b; ++i) {
@@ -205,7 +188,6 @@ int win_mem_protect(uintptr_t a, uintptr_t b, int prot) {
 void *win_mem_private(uintptr_t a, uintptr_t b) {
     if (!inside(a, b)) return NULL;
     MEMORY_BASIC_INFORMATION info;
-    /* Taken pieces (earlier private allocations, views) are skipped by the caller's search. */
     for (uintptr_t at = a; at < b; at = (uintptr_t)info.BaseAddress + info.RegionSize)
         if (!VirtualQuery((void *)at, &info, sizeof(info)) || info.State != MEM_RESERVE) return NULL;
     if (make_placeholder(a, b)) return NULL;

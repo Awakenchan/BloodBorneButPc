@@ -25,8 +25,6 @@ from mods import remove_overlay
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / 'scripts'
-# The package keeps the engine in engine\ beside the player's files (lantern.ini, user, mods, logs):
-# those are the data folder's by default. Older packages had both in one folder.
 PACKAGE = ROOT.parent if ROOT.name.lower() == 'engine' and (ROOT.parent / 'package.json').is_file() else ROOT
 PYTHON = sys.executable
 LOG_STREAM = None
@@ -60,7 +58,7 @@ def display_size():
     try:
         import ctypes
         user32 = ctypes.windll.user32
-        user32.SetProcessDPIAware()  # physical pixels, not the scaled ones
+        user32.SetProcessDPIAware()
         w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
         return (w - w % 2, h - h % 2) if w >= 640 and h >= 360 else None
     except (AttributeError, OSError):
@@ -103,10 +101,6 @@ def build():
     run([bash, '-lc', 'bash build.sh'], env=env)
 
 
-# The image the engine boots (prepare.py, link_libc.py, link_modules.py, content_profile.py):
-# about 300 MB written and 235,000 relocations applied, the same every launch for the same game.
-# It is made again only when what it is made from changes - the game's executable, modules and
-# parameters, the content SKU, these scripts - and reused otherwise (out/prepared.json).
 PREPARE_SCRIPTS = ('prepare.py', 'link_libc.py', 'link_modules.py', 'content_profile.py', 'game_check.py')
 PREPARED = ('boot.bin', 'eboot.elf', 'entry.bin', 'analysis.json', 'boot-libc.bin', 'libc-link.json',
             'boot-linked.bin', 'link.json', 'content.bin', 'content-profile.json')
@@ -115,7 +109,6 @@ PREPARED = ('boot.bin', 'eboot.elf', 'entry.bin', 'analysis.json', 'boot-libc.bi
 def prepare_key(game, sku):
     digest = hashlib.sha256()
     modules = sorted((game / 'sce_module').iterdir()) if (game / 'sce_module').is_dir() else []
-    # patches/redzone.json: the stores link_modules.py moves below the red zone (Intel 12th gen+).
     for path in [game / 'eboot.bin', game / 'sce_sys/param.sfo', *modules, *(SCRIPTS / s for s in PREPARE_SCRIPTS),
                  ROOT / 'patches' / 'redzone.json', ROOT / 'patches' / 'redzone_functions.json']:
         digest.update(path.name.encode('utf-8') + b'\0')
@@ -142,7 +135,7 @@ def prepare_image(game, out):
     if reusable and all((out / name).is_file() for name in PREPARED):
         print(f'Boot image unchanged: reused ({time.monotonic() - started:.1f} s)', flush=True)
         return
-    stamp.unlink(missing_ok=True)  # a run stopped half way leaves no stamp behind
+    stamp.unlink(missing_ok=True)
     for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
                           ('content_profile.py', ['--sku', sku])):
         run([PYTHON, SCRIPTS / script, game, '--out', out, *extra])
@@ -217,14 +210,9 @@ def configure_frame_rate(env):
     legacy uncapped launch cannot saturate the desktop during menus or loading.
     """
     fps = env.get('BB_FPS', '60')
-    # Bloodborne PC: 120 and 144 are the 90 FPS++ patch with its frame-rate values for that rate
-    # (patches.py SCALED_FPS; the uncapped patch froze Vicar Amelia's intro at any rate). 144 Hz
-    # is above the vblank rates the engine paces on (it runs 480 Hz then); the limit holds 144.
     if fps in ('120', '144'):
         env.update(BB_FPS=fps, BB_FPS_LIMIT=fps, BB_VBLANK_HZ=fps)
         return fps
-    # Other rates above 90 use the uncapped patch (with the sprint fix) and the frame limiter;
-    # "uncap" runs unlimited unless BB_FPS_LIMIT asks for a cap.
     if fps == 'uncap' or (fps.isdigit() and int(fps) > 90):
         limit = fps if fps.isdigit() else env.get('BB_FPS_LIMIT', '0')
         env.update(BB_FPS='uncap', BB_FPS_LIMIT=limit if limit.isdigit() else '0', BB_VBLANK_HZ='0')
@@ -242,8 +230,6 @@ def main():
     if arguments[:1] == ['--game-dir'] and len(arguments) > 1:
         game, arguments = arguments[1], arguments[2:]
     data = Path(os.environ.get('BB_DATA_DIR', PACKAGE))
-    # The engine's programs and what each start generates for them: beside the engine, unless the
-    # data folder holds an engine of its own (one folder for both, as older packages had).
     out = data / 'out' if (data / 'out' / 'bb-probe.exe').is_file() else ROOT / 'out'
     try:
         engine = json.loads((PACKAGE / 'package.json').read_text(encoding='utf-8-sig')).get('engine', '')
@@ -251,8 +237,6 @@ def main():
     except (OSError, ValueError):
         pass
     out.mkdir(parents=True, exist_ok=True)
-    # Settings were bbport.ini before 0.9.37 beta 2: copied once (the old file stays for an older
-    # launcher pointed at this folder).
     if not (data / 'lantern.ini').exists() and (data / 'bbport.ini').exists():
         try:
             shutil.copy2(data / 'bbport.ini', data / 'lantern.ini')
@@ -268,11 +252,8 @@ def main():
         sys.exit(f'Online configuration: {error}')
     if 'BB_FSR411_DIR' not in os.environ and not (ROOT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         os.environ['BB_FSR411_DIR'] = str(data / 'fsr4_411')
-    # FSR 4.1.1 on any GPU: the fsr4vk provider DLL the package ships (vk_fsr4vk.cpp). The engine
-    # looks beside bb-probe.exe without this; the package keeps it at its top.
     if 'BB_FSR4VK_DIR' not in os.environ and (ROOT / 'fsr4vk' / 'amd_fidelityfx_upscaler_vk.dll').is_file():
         os.environ['BB_FSR4VK_DIR'] = str(ROOT / 'fsr4vk')
-    # The last folder that worked is remembered, so run.bat alone starts the game afterwards.
     remembered = out / 'game_dir.txt'
     if not game and remembered.is_file():
         game = remembered.read_text(encoding='utf-8').strip()
@@ -282,7 +263,6 @@ def main():
     original = game.resolve()
     remembered.write_text(str(original), encoding='utf-8')
     os.environ['BB_GAME_DIR'] = str(original)
-    # The in-game menu's "Apply and restart" runs this launcher again (probe.c runtime_restart).
     os.environ['BB_RESTART_COMMAND'] = subprocess.list2cmdline([PYTHON, str(Path(__file__).resolve()), *sys.argv[1:]])
 
     merged = Path(run([PYTHON, SCRIPTS / 'mods.py', original, '--out', out,
@@ -290,7 +270,6 @@ def main():
                        '--config', os.environ.get('BB_MODS_CONFIG', data / 'mods.json'),
                        '--enabled', os.environ.get('BB_MODS_ENABLED', '1')], capture=True))
     overlay = merged if merged.resolve() != original else None
-    # The first files the game reads: without them it crashes a second after opening.
     core = ('dvdroot_ps4/shader/gxshader.shaderbnd.dcx', 'dvdroot_ps4/other/systex.tpf.dcx')
     missing = [name for name in core if not (merged / name).is_file()]
     if missing and overlay and all((original / name).is_file() for name in core):
@@ -307,16 +286,12 @@ def main():
         prebuilt = os.environ.get('BB_PREBUILT') == '1'
         if not prebuilt:
             build()
-        # Engine features are prepared locally and only mounted after runtime byte checks.
         for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256', 'BB_PC_MENU_ASSETS', 'BB_REBIRTH_ASSET'):
             os.environ.pop(key, None)
-        # bbport: the engine's own features - picture tuning, cheats, trophies from a save, the
-        # online fixes - all check the executable first, so it is always verified (~0.1 s).
         try:
             from engine_assets import prepare_mirror, verify_executable
             os.environ['BB_ENGINE_IMAGE_SHA256'] = verify_executable(out / 'eboot.elf')
             if settings_value(config, 'change_appearance') == '1':
-                # A modded Hunter's Dream layout only costs the mirror, not the PC menus below.
                 try:
                     asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
                     os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
@@ -337,14 +312,12 @@ def main():
                     print(f'Engine: native PC menus disabled: {error}', flush=True)
         except (OSError, ValueError, IndexError, struct.error, zlib.error) as error:
             print(f'Engine: enhancement preparation skipped: {error}', flush=True)
-        # output_res = auto: the display's own size, for the scene size below and the engine.
         if not os.environ.get('BB_DISPLAY_SIZE'):
             size = display_size()
             if size:
                 os.environ['BB_DISPLAY_SIZE'] = f'{size[0]}x{size[1]}'
                 if (settings_value(config, 'output_res') or '').lower() == 'auto':
                     print(f'Output resolution: the display\'s own, {size[0]}x{size[1]}', flush=True)
-        # Sizes chosen below for the previous launch are recomputed after an in-game restart.
         if os.environ.get('BB_AUTO_RENDER_RES') == '1':
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
                 os.environ.pop(key, None)
@@ -365,11 +338,6 @@ def main():
             print(f'Output {scaled_output}: live resolution changes (live_resolution=0: startup patch)')
         elif scaled_output:
             os.environ.update(BB_RENDER_RES=scaled_render, BB_OUTPUT_RES=scaled_output, BB_AUTO_RENDER_RES='1')
-            # The extra 4 GiB is for scenes above 1080p only: Windows counts the whole pool
-            # against RAM plus page file from the start, used or not. The scene, not the output:
-            # the output exists only on the host side (the upscaler fills it), and the game's UI
-            # stays 1920x1080. A 1440p output with a Quality upscaler (a 1706x960 scene) asked for
-            # 10 GB at start and failed on PCs with 16 GB (Windows error 1450).
             if large_scene(scaled_render):
                 os.environ.setdefault('BB_DMEM_MB', '9152')
             dmem = os.environ.get('BB_DMEM_MB', '5056')
@@ -380,15 +348,11 @@ def main():
              '--output-res', os.environ.get('BB_OUTPUT_RES', ''),
              '--patches-dir', os.environ.get('BB_PATCHES_DIR', data / 'patches'),
              '--patches-config', os.environ.get('BB_PATCHES_CONFIG', data / 'patches.json')])
-        # bbport: a patch that enlarges the game's heaps (a resolution patch above 1080p chosen in
-        # the patches list, with a 1080p output here) overflows the 5056 MiB pool at start.
         try:
             info = json.loads((out / 'patches-info.json').read_text(encoding='utf-8'))
         except (OSError, ValueError):
             info = {}
         heaps = info.get('heap_patch')
-        # The UI movie viewport the patches gave the game (patches.py ui_size): the renderer
-        # recognizes the UI pass by it and fits it to the output (ui_composition.h).
         if info.get('ui_size', '1920x1080') != '1920x1080':
             os.environ['BB_UI_SIZE'] = info['ui_size']
             print(f"Widescreen: UI viewport {info['ui_size']} (the 16:9 stage centred in it)", flush=True)
@@ -402,8 +366,6 @@ def main():
                    '--patches', out / 'patches.bin', '--app0', merged,
                    '--user', os.environ.get('BB_USER_DIR', data / 'user'),
                    '--timeout', os.environ.get('BB_TIMEOUT', '0'), *arguments]
-        # MSYS2's DLLs (libc++, SDL3, FFmpeg, ...). System32 is searched before PATH, so the
-        # Vulkan loader stays the one installed with the GPU driver.
         os.environ['PATH'] = os.pathsep.join([str(msys_root() / 'clang64/bin'), os.environ.get('PATH', '')])
         print('Starting:', ' '.join(shlex.quote(str(c)) for c in command), flush=True)
         try:
@@ -416,8 +378,6 @@ def main():
         except KeyboardInterrupt:
             status = 130
         print(f'bb-probe exited with code {status}', flush=True)
-        # Windows crash codes (0xC0000005) do not fit sys.exit: pass them on as the signed
-        # 32-bit value the launcher reads, not -1.
         return status - (1 << 32) if status >= (1 << 31) else status
     finally:
         if overlay:

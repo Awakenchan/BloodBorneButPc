@@ -92,8 +92,8 @@ message in the log. Third-party patches are applied after the built-in ones
 (`patches/Bloodborne.xml`): where they overlap, the third-party one wins. From a terminal:
 `BB_PATCHES_DIR=/path BB_PATCHES_CONFIG=/path/patches.json bash run.sh`.
 
-Patches that replace pointers in tables (such as `60 FPS++` and `90 FPS++`) are moved by the loader
-to the image's real address. Such patches used to stop the start with the error
+Patches that write pointers into the game's tables are moved by the loader to the image's real
+address. Such patches used to stop the start with the error
 `patch overlaps a relocation`.
 
 # TAA sharpening

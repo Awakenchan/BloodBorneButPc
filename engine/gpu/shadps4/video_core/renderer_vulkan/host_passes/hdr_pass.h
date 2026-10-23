@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: HDR output (hdr in lantern.ini). Encodes the swapchain-sized SDR composite (the game's
 // frame letterboxed, plus the menu layer) into the HDR swapchain image: HDR10 PQ or scRGB.
 // Native mode (hdr_mode=native) brightens the highlights with the frame's gain map

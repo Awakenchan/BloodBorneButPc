@@ -168,7 +168,6 @@ def prepare(game, out):
         if p['filesz'] > p['memsz']:
             raise ValueError('segment file size exceeds memory size')
         image[p['vaddr']:p['vaddr'] + p['filesz']] = span(elf, p['offset'], p['filesz'])
-    # bbport: only the supported executable runs (game_check.py); others fail in the game's code.
     if found := game_check.problem(game, hashlib.sha256(image).hexdigest(), image):
         raise GameCheckError(game_check.explain(*found))
     dp = next(p for p in ph if p['type'] == 2)
@@ -204,7 +203,7 @@ def prepare(game, out):
             if not mapped(target):
                 raise ValueError(f'relocation outside mapped segments: {target:#x}')
             if kind == 8:
-                relocs.append((target, 0, addend, 0))  # base-relative
+                relocs.append((target, 0, addend, 0))
             elif kind in (1, 6, 7):
                 symbol = symbols[sym]
                 if symbol['section']:
@@ -242,7 +241,6 @@ def prepare(game, out):
     known = {nid(name): name for name in candidates}
     libc_evidence = inspect_libc(game / 'sce_module/libc.prx')
     out.mkdir(parents=True, exist_ok=True)
-    # A deliberately small format, consumed by probe.c; no host struct packing.
     with (out / 'boot.bin').open('wb') as f:
         f.write(struct.pack('<8sQQQQQQ', b'BBPROBE2', size, header[4], len(loads), len(relocs), len(names),
                             int(libc_evidence['init_env_is_ret'])))

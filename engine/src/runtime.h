@@ -8,8 +8,6 @@
 #endif
 #include "host_sync.h"
 #ifdef _WIN32
-/* runtime_setjmp/runtime_longjmp (runtime_host.c): every Win64 callee-saved register, and no
- * SEH unwinding, which cannot pass the guest frames in between (they have no unwind data). */
 typedef struct { _Alignas(16) unsigned char registers[256]; } RuntimeRecoverBuf;
 int runtime_setjmp(RuntimeRecoverBuf *buf) __attribute__((returns_twice));
 __attribute__((noreturn)) void runtime_longjmp(RuntimeRecoverBuf *buf);
@@ -21,9 +19,7 @@ typedef sigjmp_buf RuntimeRecoverBuf;
 #define RUNTIME_RECOVER_SET(buf) sigsetjmp(buf, 0)
 #define RUNTIME_RECOVER_JUMP(buf) siglongjmp(buf, 1)
 #endif
-/* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread RuntimeRecoverBuf *runtime_fault_recover;
-/* Restarts the game (in-game settings menu, render resolution change). */
 void runtime_restart(void);
 #define ABI __attribute__((sysv_abi))
 typedef void (ABI *GuestCallback)(void);
@@ -35,28 +31,20 @@ uintptr_t runtime_mutex_resolve(const char *name);
 void runtime_mutex_report(void);
 uintptr_t runtime_memory_resolve(const char *name);
 void runtime_memory_report(void);
-/* bbport: entries in the guest memory map now (it splits as the game maps and protects). */
 uint64_t runtime_memory_regions(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
-/* Guest memory whose guest protection allows writing, all of the range. */
 int runtime_memory_guest_writable(uintptr_t address, uint64_t size);
-/* Fault handler, last resort: gives a page GPU tracking left protected the guest's protection back
- * (1: retry the access; 0: a real fault). context: the handler's (EXCEPTION_POINTERS, ucontext). */
 int runtime_memory_restore_access(void *context, uintptr_t address, int repeated);
-/* The CPU is about to write the range outside guest code (a file read): tells the GPU side. */
 void runtime_memory_note_write(uintptr_t address, uint64_t size);
 void runtime_memory_note_cpu_write(uintptr_t address, uint64_t size);
-/* bbport (frame stats): a guest thread was blocked `ns` in the runtime (0 cond, 1 mutex, 2 sema, 3 sleep). */
 void runtime_wait_note(int kind, uint64_t ns);
 void runtime_wait_report(double frames);
 void runtime_guest_call_sites(uint64_t out[3]);
-/* bbport: times the game's heap asked for more memory (posix_mmap): a sign it leaks. */
 uint64_t runtime_heap_growths(void);
 static inline uint64_t runtime_wait_clock(void) { return host_monotonic_ns(); }
 const char *runtime_import_name(const char *name);
 uintptr_t runtime_rwlock_resolve(const char *name);
 void runtime_rwlock_report(void);
-/* bbport: rwlocks alive, lookups and list entries walked so far (the 60 s "Load:" line). */
 void runtime_rwlock_census(uint64_t *live, uint64_t *found, uint64_t *steps);
 void runtime_set_libc_tls(const void *data, uint64_t filesz, uint64_t memsz);
 void runtime_set_module_tls(uint64_t module, const void *data, uint64_t filesz, uint64_t memsz);
@@ -64,21 +52,16 @@ void runtime_set_procparam(void *param);
 void **runtime_application_heap_api(void);
 uintptr_t runtime_thread_resolve(const char *name);
 void runtime_thread_report(void);
-/* bbport: guest threads created and finished, lookups and list entries walked so far. */
 void runtime_thread_census(uint64_t *made, uint64_t *finished, uint64_t *found, uint64_t *steps);
 void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uint64_t align);
 void runtime_thread_attach_main(void);
-/* The calling thread runs guest code (it has a guest thread record). */
 int runtime_thread_has_record(void);
-/* The calling thread is one of the game's resource loaders (Core.Res.*). */
 int runtime_thread_is_loader(void);
 int32_t *runtime_errno(void);
 uintptr_t runtime_sema_resolve(const char *name);
 void runtime_sema_report(void);
-/* bbport: semaphores alive, lookups and list entries walked so far. */
 void runtime_sema_census(uint64_t *live, uint64_t *found, uint64_t *steps);
 unsigned runtime_sema_waiters(uint32_t id);
-/* The freeze report: what blocked guest threads wait for (runtime_blocked.c). */
 enum { RUNTIME_BLOCK_MUTEX = 1, RUNTIME_BLOCK_SEMA = 2, RUNTIME_BLOCK_COND = 3 };
 int runtime_block_begin(int kind, uintptr_t object);
 void runtime_block_end(int slot);
@@ -97,7 +80,6 @@ uintptr_t runtime_kernel_resolve(const char *name);
 uintptr_t runtime_file_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
 void runtime_file_report(void);
-/* bbport (frame stats): the "Streaming:" line, the loader threads' reads since the last call. */
 void runtime_file_stream_report(void);
 void runtime_file_configure(const char *app0, const char *user);
 int runtime_file_mount(const char *guest, const char *host);
@@ -113,7 +95,6 @@ int64_t runtime_file_stat(const char *path, void *guest_stat);
 int64_t runtime_file_fstat(int fd, void *guest_stat);
 int64_t runtime_file_getdents(int fd, char *buffer, uint64_t size, int64_t *base);
 void runtime_thread_keys_cleanup(void);
-/* Guest-visible errno values are FreeBSD's. */
 int32_t runtime_guest_errno(int host_errno);
 void *runtime_low_map(size_t size, int prot);
 uintptr_t runtime_ajm_resolve(const char *name);

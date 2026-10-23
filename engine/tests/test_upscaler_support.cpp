@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Saved FSR 4 choices must be safe before the first rendered frame on older GPUs.
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -47,7 +46,6 @@ int main() {
                 assert(s.fsr411_supported == (fsr4 && fsr411));
                 assert(bool(s.fsr4_problem.load()) == unsupported);
                 assert(s.preset == Performance && s.output_res == 2);
-                // Startup patch settings still describe the already applied guest patches.
                 assert(s.startup_upscaler == requested);
                 ConfigureUpscalerSupport(fsr4, fsr411);
                 assert(s.upscaler == (unsupported ? UpscalerFsr3 : requested));
@@ -66,8 +64,8 @@ int main() {
     s.upscaler = UpscalerOff;
     assert(ResolutionNeedsRestart());
     s.upscaler = UpscalerFsr4;
-    assert(!ResolutionNeedsRestart()); // provider change at the same patched size is live
-    s.upscaler = UpscalerTaa;          // TAA needs native guest targets
+    assert(!ResolutionNeedsRestart());
+    s.upscaler = UpscalerTaa;
     assert(ResolutionNeedsRestart());
     s.upscaler = UpscalerFsr4;
     const int output = s.startup_output_res;

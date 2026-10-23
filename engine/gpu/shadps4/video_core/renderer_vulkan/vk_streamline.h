@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: NVIDIA DLSS Frame Generation (DLSS-G) through NVIDIA Streamline
 // (docs/dlss_frame_generation.md). frame_gen=dlss at start loads sl.interposer.dll (next to the
 // engine, NVIDIA-signed) before the Vulkan instance: its vkGetInstanceProcAddr is the engine's

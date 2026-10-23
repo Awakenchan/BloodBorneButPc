@@ -1,10 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// Runs native HDR output's shaders (hdr_native.comp, docs/hdr.md) on a synthetic frame: a scene
-// with midtones, a highlight 8x brighter than SDR white, NaN/inf texels, bloom (SDR brighter than
-// the scene) and UI drawn after the snapshot, tonemapped by a known curve. Checks the half-size
-// luma, the exposure estimate (and its resistance to bloom), and the gain map: exactly 1 below
-// the knee and on UI, the scene's ratio (to the power of the strength, into the peak) on the
-// highlight. Plain Vulkan 1.3 compute; Lavapipe works.
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
@@ -34,10 +28,10 @@ namespace {
         }                                                                                         \
     } while (0)
 
-constexpr uint32_t W = 64, H = 32;     // the frame (the UI target)
-constexpr uint32_t LW = W / 2, LH = H / 2; // the luma
-constexpr float Exposure = 0.25f;      // the game's exposure in the synthetic tonemap
-constexpr float Knee = 0.5f;           // vk_hdr_native.cpp
+constexpr uint32_t W = 64, H = 32;
+constexpr uint32_t LW = W / 2, LH = H / 2;
+constexpr float Exposure = 0.25f;
+constexpr float Knee = 0.5f;
 
 uint16_t ToHalf(float value) {
     if (std::isnan(value)) {
@@ -78,8 +72,6 @@ float FromHalf(uint16_t v) {
                                  : std::ldexp(1.0f + mantissa / 1024.0f, exponent - 15));
 }
 
-// The synthetic game's tonemap: the exposure, linear up to 0.5, then a shoulder into SDR white;
-// display-encoded with 2.2 into 8 bits.
 float Curve(float x) {
     return x <= 0.5f ? x : 0.5f + 0.5f * (1.0f - std::exp(-(x - 0.5f) / 0.5f));
 }
@@ -244,7 +236,6 @@ Pass MakePass(const Vk& vk, VkDescriptorPool pool, std::vector<VkDescriptorType>
     return pass;
 }
 
-// A resource of a pass: an image (sampled or storage, General layout) or a whole buffer.
 struct Resource {
     const Image* image = nullptr;
     const Buffer* buffer = nullptr;
@@ -362,7 +353,6 @@ Vk Init() {
     CHECK(vkEnumeratePhysicalDevices(vk.instance, &count, nullptr));
     std::vector<VkPhysicalDevice> devices(count);
     CHECK(vkEnumeratePhysicalDevices(vk.instance, &count, devices.data()));
-    // BB_TEST_GPU=<index> picks a device; else the first that has Vulkan 1.3.
     const char* wanted = std::getenv("BB_TEST_GPU");
     for (uint32_t i = 0; i < count && !vk.physical; ++i) {
         VkPhysicalDeviceProperties properties;
@@ -385,7 +375,7 @@ Vk Init() {
     }
     VkPhysicalDeviceFeatures supported;
     vkGetPhysicalDeviceFeatures(vk.physical, &supported);
-    assert(supported.shaderStorageImageExtendedFormats); // rg16f / r16f storage
+    assert(supported.shaderStorageImageExtendedFormats);
     const VkPhysicalDeviceFeatures features{.shaderStorageImageExtendedFormats = VK_TRUE};
     const float priority = 1.0f;
     const VkDeviceQueueCreateInfo queue_info{
@@ -418,18 +408,16 @@ Vk Init() {
     return vk;
 }
 
-// hdr_native.comp's state: the exposure, the tone curve's bins, the tiles' exposures.
 constexpr uint32_t CurveBins = 16, TilesX = 8, TilesY = 6, Tiles = TilesX * TilesY;
-constexpr uint32_t PartialStride = 1 + CurveBins / 2; // vec4s per STATS group
+constexpr uint32_t PartialStride = 1 + CurveBins / 2;
 constexpr float CurveLow = 0.5f, CurveHigh = 0.97f;
-constexpr float RollOffStart = 0.7f; // vk_hdr_native.cpp
+constexpr float RollOffStart = 0.7f;
 struct ExposureState {
     float log_scale, valid, samples, frames;
-    float curve[CurveBins][4]; // smoothed, confidence, weight, monotonic (log2)
-    float tiles[Tiles][4];     // smoothed log2(SDR / scene), confidence, samples
+    float curve[CurveBins][4];
+    float tiles[Tiles][4];
 };
 
-// The EXPOSURE pass's push constants; min_tile huge: no tile is measured.
 struct ExposureParams {
     uint32_t count, reset;
     float min_samples, rate;
@@ -440,7 +428,6 @@ struct GainParams {
     float strength, white, knee, rolloff;
 };
 
-// hdr_native.comp's RollOff.
 float RollOff(float x, float limit) {
     if (limit <= 1.0f) {
         return std::min(x, limit);
@@ -458,8 +445,6 @@ float Smoothstep(float edge0, float edge1, float x) {
     return t * t * (3.0f - 2.0f * t);
 }
 
-// --bench [width height]: GPU time of one frame's passes (luma, snapshot + statistics,
-// exposure, gain map; barriers between them as in the game) on noise-filled images.
 void Bench(const Vk& vk, const Pass& luma, const Pass& snapshot, const Pass& exposure,
            const Pass& gain, uint32_t width, uint32_t height) {
     const Image scene = MakeImage(vk, VK_FORMAT_R16G16B16A16_SFLOAT, width, height, 8);
@@ -469,7 +454,6 @@ void Bench(const Vk& vk, const Pass& luma, const Pass& snapshot, const Pass& exp
     const Image copy = MakeImage(vk, VK_FORMAT_R8G8B8A8_UNORM, width, height, 4);
     const Image gain_map = MakeImage(vk, VK_FORMAT_R16_SFLOAT, width, height, 2);
     const uint32_t groups_x = (width + 15) / 16, groups_y = (height + 15) / 16;
-    // In video memory, as the game's (VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE).
     const Buffer partials =
         MakeBuffer(vk, groups_x * groups_y * 16 * PartialStride, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
     const Buffer state = MakeBuffer(vk, sizeof(ExposureState),
@@ -496,7 +480,6 @@ void Bench(const Vk& vk, const Pass& luma, const Pass& snapshot, const Pass& exp
                          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr,
                          uint32_t(to_general.size()), to_general.data());
     Submit(vk);
-    // Noise, so that no compression of uniform surfaces makes the reads cheaper than in game.
     uint32_t seed = 12345;
     const auto next = [&seed] {
         seed = seed * 1664525u + 1013904223u;
@@ -545,7 +528,7 @@ void Bench(const Vk& vk, const Pass& luma, const Pass& snapshot, const Pass& exp
         std::array<uint64_t, 2> stamps{};
         CHECK(vkGetQueryPoolResults(vk.device, queries, 0, 2, sizeof(stamps), stamps.data(), 8,
                                     VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
-        if (run >= 20) { // warm-up (clocks, caches)
+        if (run >= 20) {
             times.push_back(double(stamps[1] - stamps[0]) * properties.limits.timestampPeriod /
                             1e6);
         }
@@ -557,10 +540,10 @@ void Bench(const Vk& vk, const Pass& luma, const Pass& snapshot, const Pass& exp
     vkDestroyQueryPool(vk.device, queries, nullptr);
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv) {
-    std::setvbuf(stdout, nullptr, _IONBF, 0); // the lines before a failed assert too
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     Vk vk = Init();
     VkDescriptorPool pool;
     const std::array<VkDescriptorPoolSize, 3> sizes{{
@@ -578,7 +561,6 @@ int main(int argc, char** argv) {
     constexpr auto Sampled = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     constexpr auto Storage = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     constexpr auto Ssbo = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    // The same layouts as HdrNative::CreatePipelines.
     const Pass luma = MakePass(vk, pool, {Sampled, Storage}, 0, HDR_NATIVE_LUMA_COMP,
                                sizeof(HDR_NATIVE_LUMA_COMP));
     const Pass stats = MakePass(vk, pool, {Sampled, Sampled, Ssbo, Ssbo}, 4,
@@ -599,7 +581,7 @@ int main(int argc, char** argv) {
 
     const Image scene = MakeImage(vk, VK_FORMAT_R16G16B16A16_SFLOAT, W, H, 8);
     const Image luma_image = MakeImage(vk, VK_FORMAT_R16G16_SFLOAT, LW, LH, 4);
-    const Image target = MakeImage(vk, VK_FORMAT_R8G8B8A8_UNORM, W, H, 4); // the UI target
+    const Image target = MakeImage(vk, VK_FORMAT_R8G8B8A8_UNORM, W, H, 4);
     const Image copy = MakeImage(vk, VK_FORMAT_R8G8B8A8_UNORM, W, H, 4);
     const Image gain_map = MakeImage(vk, VK_FORMAT_R16_SFLOAT, W, H, 2);
     const uint32_t groups_x = (W + 15) / 16, groups_y = (H + 15) / 16;
@@ -625,7 +607,6 @@ int main(int argc, char** argv) {
                          uint32_t(to_general.size()), to_general.data());
     Submit(vk);
 
-    // The scene (linear HDR, the game's units) and what the game makes of it.
     enum Kind { Mid, Light, Bloom, Glow, Dark };
     std::vector<Kind> kinds(W * H);
     std::vector<float> scene_rgb(W * H * 3);
@@ -634,9 +615,6 @@ int main(int argc, char** argv) {
     for (uint32_t y = 0; y < H; ++y) {
         for (uint32_t x = 0; x < W; ++x) {
             const uint32_t p = y * W + x;
-            // Midtones on the SDR scale from 0.03 to 0.4 (a gradient), a warm light at 8x SDR
-            // white (an 8x8 block), around it bloom (added after the scene color: a dark scene
-            // under a brighter SDR frame): bright next to the light, in the midtones further out.
             Kind kind = Mid;
             float level = (0.03f + 0.37f * float(x) / float(W - 1)) / Exposure;
             std::array<float, 3> tint{1.0f, 1.0f, 1.0f};
@@ -667,14 +645,12 @@ int main(int argc, char** argv) {
             before_ui[p * 4 + 3] = 255;
         }
     }
-    // Texels the game's effects can leave: NaN (must not spread) and inf (very bright).
     std::vector<uint16_t> poisoned = scene_half;
     const uint32_t nan_pixel = 2 * W + 2, inf_pixel = 2 * W + 6;
     poisoned[nan_pixel * 4] = ToHalf(std::numeric_limits<float>::quiet_NaN());
     poisoned[inf_pixel * 4 + 1] = ToHalf(std::numeric_limits<float>::infinity());
     Upload(vk, staging, scene, poisoned.data());
 
-    // LUMA: the brightest channel, 2x2 max (r) and that of the 2x2 average (g), half size.
     const auto reduce = [&] {
         Bind(vk, luma, {{&scene}, {&luma_image}});
         Begin(vk);
@@ -706,13 +682,11 @@ int main(int argc, char** argv) {
             assert(std::abs(g - average) <= average * 2e-3f + 1e-6f);
         }
     }
-    assert(FromHalf(luma_out[(1 * LW + 3) * 2]) == 65504.0f); // the inf texel's block
+    assert(FromHalf(luma_out[(1 * LW + 3) * 2]) == 65504.0f);
     std::printf("HDR native shaders: luma (2x2 max and average, NaN, inf) PASS\n");
-    // The rest on the scene without them (an inf block would be an outlier of its own).
     Upload(vk, staging, scene, scene_half.data());
     reduce();
 
-    // SNAPSHOT + EXPOSURE at the first UI pass: the copy is exact, the exposure the game's.
     const auto measure = [&](const Image& frame, bool copy_frame, uint32_t reset) {
         const Pass& pass = copy_frame ? snapshot : stats;
         std::vector<Resource> resources{{&frame}, {&luma_image}, {nullptr, &partials},
@@ -731,7 +705,6 @@ int main(int argc, char** argv) {
         std::memcpy(&result, state.mapped, sizeof(result));
         return result;
     };
-    // Without bloom first (the scene's own SDR values there).
     std::vector<uint8_t> no_bloom = before_ui;
     for (uint32_t p = 0; p < W * H; ++p) {
         if (kinds[p] == Bloom || kinds[p] == Glow) {
@@ -747,12 +720,9 @@ int main(int argc, char** argv) {
     assert(measured.valid == 1.0f && measured.samples > 500.0f);
     assert(std::abs(measured.log_scale - std::log2(Exposure)) < 0.03f);
     const auto copied = Download<uint8_t>(vk, staging, copy);
-    assert(copied == no_bloom); // bit for bit
+    assert(copied == no_bloom);
     std::printf("HDR native shaders: snapshot copy and exposure PASS\n");
 
-    // Bloom: SDR midtones lit up around the light where the scene is dark (the glow ring, ~4
-    // stops above the exposure). The first frame (no previous exposure) is pulled up; frames
-    // after weigh the outliers down.
     std::memset(state.mapped, 0, sizeof(ExposureState));
     Upload(vk, staging, target, before_ui.data());
     measured = measure(target, false, 1);
@@ -764,7 +734,6 @@ int main(int argc, char** argv) {
     std::printf("HDR native shaders: with bloom %.3f stops off at first, %.3f after 60 frames\n",
                 first_error, settled_error);
     assert(first_error > 0.1f && settled_error < 0.5f * first_error && settled_error < 0.15f);
-    // A frame with nothing to measure keeps the exposure; after a reset it has none.
     std::vector<uint8_t> black(W * H * 4, 0);
     Upload(vk, staging, target, black.data());
     const ExposureState kept = measure(target, false, 0);
@@ -773,7 +742,6 @@ int main(int argc, char** argv) {
     assert(dropped.valid == 0.0f);
     std::printf("HDR native shaders: bloom-resistant exposure, empty frames PASS\n");
 
-    // GAIN at the display pass: the frame as the first UI pass saw it, then UI drawn over it.
     Upload(vk, staging, target, no_bloom.data());
     measured = measure(target, true, 1);
     std::vector<uint8_t> finished = no_bloom;
@@ -788,12 +756,11 @@ int main(int argc, char** argv) {
             }
         }
     }
-    // Also UI over the light: HUD over a lamp stays at paper white.
     for (uint32_t x = 40; x < 44; ++x) {
         finished[(12 * W + x) * 4] ^= 0x08;
     }
     Upload(vk, staging, target, finished.data());
-    const float white = 1000.0f / 200.0f; // the default peak / paper white
+    const float white = 1000.0f / 200.0f;
     for (const float strength : {1.0f, 0.5f}) {
         const GainParams params{strength, white, Knee, RollOffStart};
         Bind(vk, gain, {{&target}, {&copy}, {&luma_image}, {nullptr, &state}, {&gain_map}});
@@ -813,16 +780,13 @@ int main(int argc, char** argv) {
                     sdr = std::max(sdr, std::pow(no_bloom[p * 4 + c] / 255.0f, 2.2f));
                 }
                 if (on_ui) {
-                    assert(g == -1.0f); // UI: gain 1, marked for the debug view
+                    assert(g == -1.0f);
                 } else if (sdr <= Knee) {
-                    assert(g == 1.0f); // midtones: the SDR picture exactly
+                    assert(g == 1.0f);
                 } else {
                     assert(g >= 1.0f && sdr * g <= white * 1.001f);
                 }
                 if (kinds[p] == Light && !on_ui && x > 41 && x < 46 && y > 9 && y < 14) {
-                    // Inside the light (its 4x4 footprint in the luma is all light): the
-                    // scene's ratio to the SDR white, to the power of the strength, rolled off
-                    // into the peak (in log2, above 70% of the stops to it).
                     const float ratio = scale * 8.0f / Exposure / sdr;
                     const float expected = RollOff(sdr * std::pow(ratio, strength), white) / sdr;
                     if (std::abs(g - expected) > expected * 0.01f) {
@@ -837,7 +801,6 @@ int main(int argc, char** argv) {
         std::printf("HDR native shaders: gain map (strength %.2f: light x%.3f) PASS\n", strength,
                     light_gain);
     }
-    // No scene brighter than the SDR frame (bloom ring): no gain.
     {
         Upload(vk, staging, target, before_ui.data());
         measured = measure(target, true, 1);
@@ -850,8 +813,6 @@ int main(int argc, char** argv) {
         uint32_t checked = 0;
         for (uint32_t y = 0; y < H; ++y) {
             for (uint32_t x = 0; x < W; ++x) {
-                // Bright bloom (above the knee) outside the light's luma footprint (the 2x2
-                // luma texels around reach 2 scene pixels further).
                 if (kinds[y * W + x] == Bloom && (x <= 38 || x >= 49 || y <= 6 || y >= 17)) {
                     assert(FromHalf(map[y * W + x]) == 1.0f);
                     ++checked;
@@ -861,7 +822,6 @@ int main(int argc, char** argv) {
         assert(checked >= 40);
         std::printf("HDR native shaders: bloom (SDR brighter than the scene) keeps gain 1 PASS\n");
     }
-    // The tone curve and the tiles, on a frame of 8x6 tiles (2x2 STATS groups each).
     {
         constexpr uint32_t W2 = 256, H2 = 192, LW2 = W2 / 2, LH2 = H2 / 2;
         const Image scene2 = MakeImage(vk, VK_FORMAT_R16G16B16A16_SFLOAT, W2, H2, 8);
@@ -891,7 +851,6 @@ int main(int argc, char** argv) {
                              VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr,
                              uint32_t(barriers.size()), barriers.data());
         Submit(vk);
-        // The scene (one grey level per pixel) and the SDR frame the game makes of it.
         std::vector<float> level2(W2 * H2);
         std::vector<float> sdr2(W2 * H2);
         const auto upload = [&] {
@@ -912,7 +871,6 @@ int main(int argc, char** argv) {
             Dispatch(vk.cmd, luma, nullptr, 0, (LW2 + 7) / 8, (LH2 + 7) / 8);
             Submit(vk);
         };
-        // Frames of the game at the first UI pass (snapshot, statistics, exposure, curve, tiles).
         const auto run = [&](int frames, float min_tile) {
             Bind(vk, snapshot, {{&target2}, {&luma2}, {nullptr, &partials2}, {nullptr, &state2},
                                 {&copy2}});
@@ -937,24 +895,21 @@ int main(int argc, char** argv) {
             return Download<uint16_t>(vk, staging2, gain2);
         };
         const auto decoded = [](float linear) { return std::pow(Encode(linear) / 255.0f, 2.2f); };
-        // The synthetic curve's inverse (SDR -> the scene on the SDR scale).
         const auto inverse = [](float sdr) {
             return sdr <= 0.5f ? sdr : 0.5f - 0.5f * std::log(1.0f - (sdr - 0.5f) / 0.5f);
         };
 
-        // 1. The curve: midtones (the exposure), a ramp through the shoulder, and a bloom halo
-        // (SDR 0.85 where the scene is dark).
         std::memset(state2.mapped, 0, sizeof(ExposureState));
         for (uint32_t y = 0; y < H2; ++y) {
             for (uint32_t x = 0; x < W2; ++x) {
                 const uint32_t p = y * W2 + x;
                 const float t = float(x) / float(W2 - 1);
-                float on_sdr_scale = 0.03f + 0.37f * t; // midtones
+                float on_sdr_scale = 0.03f + 0.37f * t;
                 float sdr = -1.0f;
                 if (y >= 96 && y < 160) {
-                    on_sdr_scale = 0.45f + 1.75f * t; // the shoulder
+                    on_sdr_scale = 0.45f + 1.75f * t;
                 } else if (y >= 160 && x < 128) {
-                    on_sdr_scale = 0.02f; // the halo: bloom over a dark scene
+                    on_sdr_scale = 0.02f;
                     sdr = 0.85f;
                 }
                 level2[p] = on_sdr_scale / Exposure;
@@ -969,7 +924,6 @@ int main(int argc, char** argv) {
         for (uint32_t b = 0; b < CurveBins; ++b) {
             const float center = CurveLow + (float(b) + 0.5f) * (CurveHigh - CurveLow) / CurveBins;
             const float* bin = learned.curve[b];
-            // Monotonic, never below the SDR value itself.
             assert(bin[3] >= previous - 1e-6f && bin[3] >= std::log2(center) - 1e-4f);
             previous = bin[3];
             if (bin[1] < 1.0f) {
@@ -985,8 +939,6 @@ int main(int argc, char** argv) {
         std::printf("HDR native shaders: tone curve (%u of %u bins learned, the halo left out) PASS\n",
                     confident, CurveBins);
         assert(confident >= 14);
-        // The halo now rises with the curve: its SDR value's place on the game's curve, to the
-        // power of the strength and the ramp; it kept gain 1 before.
         {
             const float white = 5.0f;
             const auto map = gain_map({1.0f, white, Knee, RollOffStart});
@@ -1009,15 +961,12 @@ int main(int argc, char** argv) {
             std::printf("HDR native shaders: bloom halo lifted by the curve (x%.3f) PASS\n", halo);
         }
 
-        // 2. The tiles: the right half's SDR midtones half a stop darker than its scene (a
-        // vignette); a light in the middle of a tile on each side, clipped in SDR. The right one
-        // keeps the vignette: it is the scene at the right side's exposure.
         std::memset(state2.mapped, 0, sizeof(ExposureState));
         const float vignette = std::exp2(-0.5f);
         const auto light = [](uint32_t x, uint32_t y, uint32_t cx) {
             return x + 4 >= cx && x < cx + 4 && y + 4 >= 80 && y < 84;
         };
-        const uint32_t left_x = 1 * 32 + 16, right_x = 6 * 32 + 16; // tiles (1,2) and (6,2)
+        const uint32_t left_x = 1 * 32 + 16, right_x = 6 * 32 + 16;
         for (uint32_t y = 0; y < H2; ++y) {
             for (uint32_t x = 0; x < W2; ++x) {
                 const uint32_t p = y * W2 + x;
@@ -1042,7 +991,7 @@ int main(int argc, char** argv) {
             assert(std::abs(tiled.tiles[t][0] - expected) <= 0.06f && tiled.tiles[t][1] >= 1.0f);
         }
         {
-            const float white = 40.0f; // no roll-off below 13x
+            const float white = 40.0f;
             const auto map = gain_map({1.0f, white, Knee, RollOffStart});
             const float left = FromHalf(map[80 * W2 + left_x]);
             const float right = FromHalf(map[80 * W2 + right_x]);

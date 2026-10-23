@@ -109,6 +109,51 @@ namespace BloodborneLauncher.Core
             }
         }
 
+        private static string ShortcutMark => Path.Combine(Paths.ConfigDir, "shortcut-icon.txt");
+
+        public static void SyncShortcuts(string package, string choice)
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            var bytes = choice == "auto" ? null : Bytes(choice);
+            var sign = choice + ":" + (bytes == null ? "" : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..12]);
+            Task.Run(() =>
+            {
+                try
+                {
+                    var mark = File.Exists(ShortcutMark) ? File.ReadAllText(ShortcutMark) : "";
+                    if (mark == sign + "|" + package) return;
+                    if (OperatingSystem.IsWindows()) RestyleShortcuts(package, bytes, sign);
+                    File.WriteAllText(ShortcutMark, sign + "|" + package);
+                }
+                catch (Exception)
+                {
+                }
+            });
+        }
+
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+        private static void RestyleShortcuts(string package, byte[]? bytes, string sign)
+        {
+            string? icon = null;
+            if (bytes != null)
+            {
+                Directory.CreateDirectory(Paths.ConfigDir);
+                icon = Path.Combine(Paths.ConfigDir, "shortcut-icon-" + sign[(sign.IndexOf(':') + 1)..] + ".ico");
+                if (!File.Exists(icon)) File.WriteAllBytes(icon, bytes);
+            }
+            var exes = new[] { Environment.ProcessPath, Path.Combine(package, "Lantern Engine.exe"), Path.Combine(package, "Bloodborne.exe") }
+                .Where(e => e != null && File.Exists(e)).Select(e => Path.GetFullPath(e!)).Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var exe in exes)
+                LanternRename.Shortcuts.Restyle(LanternRename.Shortcuts.Pointing(exe), icon ?? exe);
+            foreach (var old in Directory.EnumerateFiles(Paths.ConfigDir, "shortcut-icon-*.ico"))
+                if (!string.Equals(old, icon, StringComparison.OrdinalIgnoreCase))
+                    try { File.Delete(old); } catch (Exception) { }
+            SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        [System.Runtime.InteropServices.DllImport("shell32.dll")]
+        private static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
+
         /// <summary>Makes a picture Your picture's icon file: an .ico as it is, any other picture fitted
         /// into a square at each size (PNG images inside the .ico). False when it cannot be read.</summary>
         public static bool MakeCustom(string picture)

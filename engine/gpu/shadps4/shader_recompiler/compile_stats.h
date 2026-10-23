@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: where the shader translation's time goes (BB_FRAME_STATS). A shader first seen in play
 // is translated where the draw needs it (PipelineCache::CompileModule, the GPU thread): the
 // "shader/pipeline compiles, N ms" of Frame stats. Each phase of TranslateProgram and the SPIR-V

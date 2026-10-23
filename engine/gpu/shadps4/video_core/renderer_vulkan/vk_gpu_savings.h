@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: GPU work left out or merged, with kill switches, and its BB_FRAME_STATS report.
 #pragma once
 

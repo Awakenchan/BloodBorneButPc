@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Regression cases for real ImageInfo coverage/mip/slice selection; no Vulkan device.
 #include <cassert>
 #include <limits>
 #include "video_core/amdgpu/resource.h"
@@ -27,7 +26,7 @@ static VideoCore::ImageInfo Image(u32 mips, u32 layers) {
 int main() {
     using namespace VideoCore;
     const SubresourceExtent mip_heavy{4, 1}, layer_heavy{1, 6};
-    assert(!mip_heavy.Contains(layer_heavy)); // Lexicographical > used to accept this.
+    assert(!mip_heavy.Contains(layer_heavy));
     assert(!layer_heavy.Contains(mip_heavy));
     assert(!mip_heavy.Contains({1, 1}, {std::numeric_limits<u32>::max(), 0}));
     assert(!mip_heavy.Contains({0, 1}));
@@ -35,13 +34,11 @@ int main() {
     const auto parent = Image(4, 6);
     auto requested = Image(1, 6);
     auto candidate = Image(4, 1);
-    candidate.guest_size = requested.guest_size; // Equal allocation bytes are not coverage.
+    candidate.guest_size = requested.guest_size;
     assert(!requested.ViewRejection(candidate).empty());
     assert(!Image(4, 1).ViewRejection(Image(1, 6)).empty());
     assert(requested.ViewRejection(parent).empty());
 
-    // Two adjacent layers starting at an ODD parent slice. Old code divided/modded by the
-    // whole two-layer requested size, rejecting this valid view or returning the wrong slice.
     auto child = Image(1, 2);
     child.size = {32, 32, 1};
     child.pitch = 32;
@@ -53,16 +50,16 @@ int main() {
     assert(child.SliceOf(parent, 2) == 1);
     assert(child.ViewRejection(parent, {2, 1}).empty());
     child.guest_address += slice_bytes;
-    assert(child.SliceOf(parent, 2) == 2); // Previously returned 1.
+    assert(child.SliceOf(parent, 2) == 2);
     child.guest_address = parent.guest_address + parent.mips_layout[2].offset + slice_bytes * 5;
-    assert(child.SliceOf(parent, 2) == -1); // Last slice cannot contain TWO layers.
+    assert(child.SliceOf(parent, 2) == -1);
     assert(!child.ViewRejection(parent, {2, 5}).empty());
     child.guest_address = parent.guest_address - 1;
-    assert(child.SliceOf(parent, 2) == -1); // No unsigned address underflow.
+    assert(child.SliceOf(parent, 2) == -1);
     assert(child.SliceOf(parent, -1) == -1);
     assert(child.SliceOf(parent, 16) == -1);
 
-    requested = Image(4, 3); // Parent has 6 layers: later mip addresses/strides differ.
+    requested = Image(4, 3);
     assert(!requested.ViewRejection(parent).empty());
     requested = Image(4, 6);
     requested.pixel_format = vk::Format::eR8G8B8A8Srgb;
@@ -81,7 +78,6 @@ int main() {
     assert(!requested.ViewRejection(parent).empty());
     requested = parent;
     ++requested.bank_swizzle;
-    // Attachment descriptions omit this field; it must not invalidate a contained view.
     assert(requested.ViewRejection(parent).empty());
     assert(requested.LayoutKey() != parent.LayoutKey());
     requested.alt_tile = !parent.alt_tile;
@@ -92,7 +88,6 @@ int main() {
     padded.guest_size *= 2;
     assert(padded.PaddingOnlyDifference(unpadded));
     assert(padded.ViewRejection(unpadded).empty());
-    // Tiling can pad the physical mip pitch beyond the descriptor's logical pitch.
     auto narrow = Image(1, 1);
     narrow.pitch = narrow.size.width = 100;
     assert(narrow.ViewRejection(narrow).empty());
@@ -105,9 +100,9 @@ int main() {
     auto copy = PlanCopyLayers(false, false, 2, 6, 1, 1, 0, 3);
     assert(copy.source == 2 && copy.destination == 2 && copy.depth == 1);
     copy = PlanCopyLayers(false, false, 2, 6, 1, 1, 0, 5);
-    assert(copy.source == 1 && copy.destination == 1); // Do not overrun dst base + count.
+    assert(copy.source == 1 && copy.destination == 1);
     copy = PlanCopyLayers(false, false, 8, 8, 1, 1, 2, 3, 2);
-    assert(copy.source == 2 && copy.destination == 2); // Selected views limit the copy.
+    assert(copy.source == 2 && copy.destination == 2);
     copy = PlanCopyLayers(false, true, 3, 1, 1, 8);
     assert(copy.source == 3 && copy.destination == 1 && copy.depth == 3);
     copy = PlanCopyLayers(true, false, 1, 4, 8, 1, 0, 3);

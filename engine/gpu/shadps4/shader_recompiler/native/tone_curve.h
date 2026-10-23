@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: the game's tone curve in its final composite pixel shaders, found in the IR and extended
 // above a knee for HDR (docs/hdr-scene-path.md, steps 1 and 2; docs/native_shader_compiler.md).
 //

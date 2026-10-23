@@ -16,7 +16,7 @@ FFX_API = ["ffxConfigure", "ffxCreateContext", "ffxDestroyContext", "ffxDispatch
 
 def pe_exporting(names):
     """PE32+ headers and one section holding an export directory that names `names`."""
-    table = 0x1000 + 40  # RVA of the name pointers, after the directory
+    table = 0x1000 + 40
     strings, pointers = b"", []
     for name in names:
         pointers.append(table + 4 * len(names) + len(strings))
@@ -54,14 +54,12 @@ class DllInfoTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     def test_official_4_1_1_needs_no_loader(self):
-        # AMD's DLL exports the FidelityFX API: fsr4cap.exe loads it directly (one DLL is enough).
         upscaler = fake_dll(self.root / "dist/amd_fidelityfx_upscaler_dx12.dll", (4, 1, 1, 2740),
                             ["v07_fp8_no_scale"], FFX_API)
         self.assertEqual(dll_info.exports(upscaler.read_bytes()), set(FFX_API))
         status, problem, details = dll_info.inspect(upscaler)
         self.assertEqual((status, problem), (0, None))
         self.assertIsNone(details["loader"])
-        # A loader picked anyway (the launcher asked for one before) is not needed either.
         status, _, details = dll_info.inspect(upscaler, upscaler)
         self.assertEqual(status, 0)
         self.assertIsNone(details["loader"])
@@ -102,7 +100,6 @@ class DllInfoTests(unittest.TestCase):
         self.assertIn("2.x", problem)
 
     def test_official_4_0_is_refused_although_its_model_matches(self):
-        # Pragmata's 4.0.3: the model name of 4.1.1, but AMD offers it on RDNA4 only.
         upscaler = fake_dll(self.root / "amd_fidelityfx_upscaler_dx12.dll", (4, 0, 3, 604),
                             ["v07_fp8_no_scale"])
         fake_dll(self.root / "amd_fidelityfx_loader_dx12.dll", (2, 1, 0, 604))

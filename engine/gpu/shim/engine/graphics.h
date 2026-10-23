@@ -2,4 +2,8 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-namespace BbEngine::Graphics { bool Install(std::uint8_t*,std::size_t);bool Enabled(); }
+
+namespace BbEngine::Graphics {
+bool Install(std::uint8_t* image, std::size_t size);
+bool Enabled();
+}

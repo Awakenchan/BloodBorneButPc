@@ -1,228 +1,124 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The editor controller/refcount lifecycle is adapted from bbhost, not the GPU renderer.
-#include "engine_hooks.h"
-#include "camera.h"
-#include "widescreen.h"
-#include "../input/input.h"
-#include "option_menu.h"
+#include "change_appearance.h"
 #include "engine_state.h"
-#include "rebirth.h"
-#include "menu_memory.h"
-#include "graphics.h"
-#include "cheats.h"
-#include "loading.h"
-#include "render_guard.h"
-#include "effect_timing.h"
-#include "online_fixes.h"
-#include "trophy_sync.h"
-#include "bbport_settings.h"
-#include "bbport_platform.h"
 #include <atomic>
-#include <cstdarg>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <filesystem>
 
-extern "C" int runtime_file_translate(const char*, char*, std::size_t);
-extern "C" int runtime_file_mount(const char*, const char*);
-extern "C" void runtime_file_unmount(const char*);
-
-namespace BbEngine {
+namespace BbEngine::ChangeAppearance {
 namespace {
-constexpr std::uint8_t kStepPrologue[] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x53,0x50,0x4d,0x89,0xce,0x48,0x89,0xfb};
-constexpr std::uint8_t kFramePrologue[] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x38};
-void Log(const char* format, ...) {
-    std::fputs("Engine: ", stdout);
-    va_list args; va_start(args, format); std::vprintf(format, args); va_end(args);
-    std::putchar('\n');
-}
-// --- the editor's frame ----------------------------------------------------
-//
-// The list the talk command opens is character creation's Appearance list
-// alone. In character creation it sits in the ChrMake_BG window
-// (chrmake_bg.gfx: the book, the panels, the model): its controller
-// (sub_1f06b10) makes the preview scenes and their render targets, binds the
-// menu's placeholder images to them and, in its update (sub_1f07870), copies
-// the hunter's face data into them, swaps them in as each loads, turns the
-// mouse and the zoom keys into the model's rotation and distance, and picks
-// the image the panel shows. Character creation's top controller (sub_1f8dbb0)
-// opens that window from a window descriptor (sub_1ed8150), and its menus
-// update it every frame as a dialog's child window (sub_1ed5b10, the base
-// update, walks them); at the mirror nothing does either, so the list floats
-// over the world with an empty panel and the HUD on top.
-//
-// Here: the list's window step being made (engine/menu_steps.h: type 7,
-// "ChrMakeCommandList") while the hunter is in the world - character creation
-// runs at the title, with its own window - opens ChrMake_BG with a descriptor
-// of ours, filled as character creation fills its own; each frame its
-// controller's update runs; and a reference we hold on the list's step tells
-// when the list has closed, which closes the window (sub_1ed8e60).
-constexpr std::uint64_t kListType = 7;
-constexpr char16_t kListName[] = u"ChrMakeCommandList";
-constexpr std::uint64_t kOpenWindow = 0x1ed8150;   // (descriptor)
-constexpr std::uint64_t kCloseWindow = 0x1ed8e60;  // (descriptor): closes the window, unloads the movie
-constexpr std::uint64_t kMenuHeap = 0x5940418;     // the menus' allocator: +0x58 alloc(size, align), +0x70 free(p)
-constexpr std::size_t kDescSize = 0xc0;
-constexpr std::uint64_t kDescVtable = 0x5736b30, kDescOwnerVtable = 0x5736b70, kDescListVtable = 0x57310d0;
-constexpr std::uint64_t kFactoryVtable = 0x573ee10;  // the functor character creation stores ...
-constexpr std::uint64_t kFrameFactory = 0x1f08010;   // ... around this factory: sub_1f06b10's controller
-constexpr std::uint64_t kFrameName = 0x4d98486;      // L"ChrMake_BG"
-constexpr std::uint64_t kFrameType = 6;
+constexpr std::uint64_t kListStepType = 7;
+constexpr char16_t kListStepName[] = u"ChrMakeCommandList";
 
-std::uint64_t g_slide = 0;
-int g_watch = -1;                          // the list's steps (engine/menu_steps.h)
-std::uint64_t g_list = 0;                  // the list's step, while we hold a reference
-std::uint64_t g_desc = 0;                  // our descriptor, while ChrMake_BG is open
-std::uint8_t g_active = 1;                 // the update's argument (a flag byte it reads)
-int g_opened = 0;                          // for the log
+constexpr std::size_t kOpenWindow = 0x1ad8150;
+constexpr std::size_t kCloseWindow = 0x1ad8e60;
+constexpr std::size_t kMenuHeap = 0x5540418;
+constexpr std::size_t kHeapAllocate = 0x58, kHeapFree = 0x70;
 
-std::uint64_t slot(std::uint64_t bn) { return g_slide + (bn - kPreferredGuestSlide); }
-std::uint64_t rd64(std::uint64_t a) {
-    std::uint64_t v;
-    v = 0; BbPlatform::ReadProcessMemory(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(a)), &v, sizeof v);
-    return v;
-}
-void wr64(std::uint64_t a, std::uint64_t v) { std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(a)), &v, sizeof v); }
+constexpr std::size_t kDescriptorSize = 0xc0;
+constexpr std::size_t kDescriptorVtable = 0x5336b30, kDescriptorVtable2 = 0x5336b70, kDescriptorListVtable = 0x53310d0;
+constexpr std::size_t kFactoryVtable = 0x533ee10, kFactory = 0x1b08010;
+constexpr std::size_t kWindowName = 0x4998486;
+constexpr std::uint64_t kWindowType = 6;
+constexpr std::size_t kController = 0x60, kControllerUpdate = 0x18;
 
-std::uint64_t heap_alloc(std::size_t n) {
-    const std::uint64_t heap = rd64(slot(kMenuHeap));
-    if (!heap) return 0;
-    return static_cast<std::uint64_t>(Call(rd64(rd64(heap) + 0x58), heap, n, 0x10));
+std::uint64_t g_image = 0;
+int g_watch = -1;
+bool g_editor = false;
+std::uint64_t g_step = 0;
+std::uint64_t g_title_step = 0;
+std::atomic<bool> g_preview{false};
+std::uint64_t g_descriptor = 0;
+std::uint8_t g_update_flag = 1;
+unsigned g_opened = 0;
+
+std::uint64_t Image(std::size_t at) { return g_image + at; }
+std::uint64_t Follow(std::uint64_t at) {
+    std::uint64_t v = 0;
+    return host_read_safe(reinterpret_cast<const void*>(at), &v, sizeof v) ? v : 0;
 }
-void heap_free(std::uint64_t p) {
-    const std::uint64_t heap = rd64(slot(kMenuHeap));
-    if (heap && p) Call(rd64(rd64(heap) + 0x70), heap, p);
+void Put(std::uint64_t at, std::uint64_t v) { std::memcpy(reinterpret_cast<void*>(at), &v, sizeof v); }
+std::uint64_t Virtual(std::uint64_t object, std::size_t slot) { return Follow(Follow(object) + slot); }
+
+std::uint64_t Allocate(std::size_t size) {
+    const std::uint64_t heap = Follow(Image(kMenuHeap));
+    return heap ? std::uint64_t(Call(Virtual(heap, kHeapAllocate), heap, size, 0x10)) : 0;
+}
+void Free(std::uint64_t p) {
+    const std::uint64_t heap = Follow(Image(kMenuHeap));
+    if (heap && p) Call(Virtual(heap, kHeapFree), heap, p);
 }
 
-bool open_frame() {
-    const std::uint64_t d = heap_alloc(kDescSize);
+bool OpenWindow() {
+    const std::uint64_t d = Allocate(kDescriptorSize);
     if (!d) return false;
-    std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(d)), 0, kDescSize);
-    wr64(d + 0x00, slot(kDescVtable));
-    wr64(d + 0x08, slot(kDescOwnerVtable));
-    wr64(d + 0x18, kFrameType);
-    wr64(d + 0x20, slot(kFrameName));
-    wr64(d + 0x30, slot(kFactoryVtable));  // the factory functor, in the descriptor's own storage
-    wr64(d + 0x38, slot(kFrameFactory));
-    wr64(d + 0x50, d + 0x30);
-    wr64(d + 0x68, slot(kDescListVtable));
-    Call(slot(kOpenWindow), d);
-    if (!rd64(d + 0x60)) {  // no window: nothing to keep
-        Call(slot(kCloseWindow), d);
-        heap_free(d);
+    std::memset(reinterpret_cast<void*>(d), 0, kDescriptorSize);
+    Put(d + 0x00, Image(kDescriptorVtable));
+    Put(d + 0x08, Image(kDescriptorVtable2));
+    Put(d + 0x18, kWindowType);
+    Put(d + 0x20, Image(kWindowName));
+    Put(d + 0x30, Image(kFactoryVtable));
+    Put(d + 0x38, Image(kFactory));
+    Put(d + 0x50, d + 0x30);
+    Put(d + 0x68, Image(kDescriptorListVtable));
+    Call(Image(kOpenWindow), d);
+    if (!Follow(d + kController)) {
+        Call(Image(kCloseWindow), d);
+        Free(d);
         return false;
     }
-    g_desc = d;
+    g_descriptor = d;
     return true;
 }
 
-void close_frame() {
-    Call(slot(kCloseWindow), g_desc);
-    heap_free(g_desc);
-    g_desc = 0;
+void CloseWindow() {
+    Call(Image(kCloseWindow), g_descriptor);
+    Free(g_descriptor);
+    g_descriptor = 0;
+}
 }
 
-void release_list() {
-    menu_step_release(g_list);
-    g_list = 0;
+bool Watch(std::uint8_t* image) {
+    g_image = reinterpret_cast<std::uint64_t>(image);
+    g_watch = menu_steps_watch(kListStepType, kListStepName);
+    return g_watch >= 0;
 }
 
-bool g_frame_on = false;
+void EnableEditor() { g_editor = true; }
 
-}  // namespace
+bool PreviewShown() { return g_preview.load(std::memory_order_relaxed); }
 
-void change_appearance_tick() {
-    if (!g_frame_on) return;
-    if (const std::uint64_t made = menu_steps_take(g_watch)) {
-        std::uint32_t block = 0;
-        if (!g_list && !g_desc && world_player_block(&block) && *menu_step_count(made) >= 1 && open_frame()) {
-            menu_step_hold(made);  // ours: when it is the last, the list has closed
-            g_list = made;
-            if (g_opened++ < 4) Log("change appearance: the editor's frame opened (ChrMake_BG, preview of the hunter)");
+void Tick() {
+    if (g_watch < 0) return;
+    const bool world = world_player_block(nullptr);
+    if (const std::uint64_t step = menu_steps_take(g_watch); menu_step_is(step, kListStepType, kListStepName)) {
+        if (!world) {
+            if (!g_title_step) {
+                menu_step_hold(step);
+                g_title_step = step;
+            }
+        } else if (g_editor && !g_step && !g_descriptor && OpenWindow()) {
+            menu_step_hold(step);
+            g_step = step;
+            if (g_opened++ < 4) host_log("change appearance: the editor's window opened (ChrMake_BG, the hunter's preview)");
         }
     }
-    if (g_desc) {
-        const std::uint64_t ctl = rd64(g_desc + 0x60);
-        if (ctl) Call(rd64(rd64(ctl) + 0x18), ctl, &g_active);
+    if (g_title_step && (world || *menu_step_count(g_title_step) == 1)) {
+        menu_step_release(g_title_step);
+        g_title_step = 0;
     }
-    if (g_list && *menu_step_count(g_list) == 1) {
-        close_frame();
-        release_list();
+    if (g_descriptor && !world) {
+        CloseWindow();
+        host_log("change appearance: the editor's window closed on leaving the world");
     }
+    if (g_descriptor) {
+        if (const std::uint64_t controller = Follow(g_descriptor + kController))
+            Call(Virtual(controller, kControllerUpdate), controller, &g_update_flag);
+    }
+    if (g_step && (!g_descriptor || *menu_step_count(g_step) == 1)) {
+        if (g_descriptor) CloseWindow();
+        menu_step_release(g_step);
+        g_step = 0;
+    }
+    g_preview.store(g_step || g_title_step, std::memory_order_relaxed);
 }
-
-
-namespace {
-std::int64_t __attribute__((sysv_abi)) StepHook(std::uint64_t, const std::uint64_t* saved) {
-    menu_steps_notify(saved);
-    return 0;
 }
-std::int64_t __attribute__((sysv_abi)) FrameHook(std::uint64_t, const std::uint64_t* saved) {
-    Loading::Tick(saved[5]); // rdi: the frame pacer
-    change_appearance_tick();
-    Rebirth::Tick();
-    Options::Tick();
-    BbInput::Tick();
-    Camera::Tick();
-    Widescreen::Tick();
-    Cheats::Tick();
-    TrophySync::Tick();
-    return 0; // The established FPS++ implementation still runs, byte for byte.
-}
-} // namespace
-
-void Install(std::uint8_t* image, std::size_t size) {
-    const char* asset = std::getenv("BB_DREAM_MIRROR_ASSET");
-    const char* identity = std::getenv("BB_ENGINE_IMAGE_SHA256");
-    const bool mirror = asset && *asset;
-    const bool respec=std::getenv("BB_REBIRTH_ASSET");
-    // Cheats (cheats.cpp) are switched live from the overlay, so a verified executable always
-    // gets the frame hook; run_windows.py verifies it for any engine feature or cheat.
-    if (!identity && !mirror && !respec && !BbSettings::Get().camera_controls && !BbSettings::Get().graphics_controls && !BbSettings::Get().pc_controls && !BbSettings::Get().widescreen) return;
-    if (!identity || std::strcmp(identity, "071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a")) {
-        Log("mirror disabled: executable identity was not verified"); return;
-    }
-    constexpr const char* guest = "/app0/dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx";
-    const char* original = std::getenv("BB_GAME_DIR");
-    char resolved[512]{};
-    std::error_code error;
-    if (mirror && (!original || runtime_file_translate(guest, resolved, sizeof resolved) ||
-        !std::filesystem::equivalent(resolved, std::filesystem::path(original) / "dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx", error))) {
-        Log("mirror disabled: a user mod owns the Dream layout");
-        asset = nullptr;
-    }
-    Hook hooks[2];
-    if (!Prepare(hooks[0], image, size, 0x1c1cce0, kStepPrologue, StepHook) ||
-        !Prepare(hooks[1], image, size, 0x2034770, kFramePrologue, FrameHook)) {
-        for (auto& hook : hooks) Discard(hook);
-        Log("mirror disabled: engine bytes differ or hook allocation failed"); return;
-    }
-    g_slide = reinterpret_cast<std::uint64_t>(image);
-    Loading::Install(image);
-    StateInitialize(g_slide);
-    if (asset && std::filesystem::is_regular_file(asset, error) && !error && !runtime_file_mount(guest, asset)) {
-        g_watch = menu_steps_watch(kListType,kListName); g_frame_on = g_watch>=0;
-        Log("Dream mirror enabled: native appearance editor and ChrMake_BG preview; %s", asset);
-    }
-    const bool input=BbInput::Install(image,size);
-    const bool camera = Camera::Install(image, size);
-    const bool wide=Widescreen::Install(image,size);
-    const bool graphics=Graphics::Install(image,size);
-    const bool menus=Options::Install(image,size);
-    if (!menus && g_frame_on && !MenuMemory::Install(image,size)) {
-        runtime_file_unmount(guest); g_frame_on=false;
-        Log("mirror disabled: native editor memory budget differs");
-    }
-    const bool rebirth=menus && Rebirth::Install(image,size);
-    const bool cheats=Cheats::Install(image,size);
-    const bool online=OnlineFixes::Install(image,size);
-    const bool guard=RenderGuard::Install(image,size);
-    const bool timing=EffectTiming::Install(image,size);
-    if (!g_frame_on && !camera && !rebirth && !menus && !graphics && !wide && !input && !cheats && !online && !guard && !timing) {
-        for (auto& hook : hooks) Discard(hook);
-        Log("engine enhancements disabled: no compatible feature could be prepared"); return;
-    }
-    Commit(hooks);
-}
-} // namespace BbEngine

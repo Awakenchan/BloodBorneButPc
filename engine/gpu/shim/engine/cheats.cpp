@@ -1,25 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Live cheats: Blood Vials (goods 1000) and Quicksilver Bullets (goods 900), each off, infinite
-// or kept at an amount (lantern.ini cheat_vials / cheat_bullets, the overlay's Cheats section).
-//
-// The inventory helpers are the game's own, the ones its debug menu's "fill to the maximum"
-// (sub_18d3dc0) calls, as droogie/bbhost's boss_rush plugin found and used them
-// (plugins/boss_rush/boss_rush.cpp refill(), GPL-3.0); the param row layouts are bbhost's
-// include/bbhost/params.hpp (EQUIP_PARAM_GOODS_ST, EQUIP_PARAM_WEAPON_ST). Credit: droogie.
-// Every address and offset here was read back from our 1.09 image (071df19c...); Install checks
-// the code bytes that show them again before anything is enabled.
-//
-// Save data: a cheat changes param bytes in memory only, from a snapshot of their original values,
-// and writes those values back when it is turned off. The counts it raises are inventory, which
-// the game saves: cheats affect the save (the counts) only while they are on, and turning one off
-// leaves the counts as they are (above the normal carry cap, the game lowers them to the cap the
-// next time the count changes).
-//
-// The other cheats (second half of this file) follow the same rules: each changes only bytes it
-// took a snapshot of first (param rows, two static debug flags, one code range) and writes the
-// originals back when turned off; or it uses the game's own data and helpers from the frame hook
-// (stamina, durability, echoes and insight), which leaves nothing to restore. Echoes, insight and
-// durability are save data and stay as they are when a cheat is turned off.
 #include "cheats.h"
 #include "engine_hooks.h"
 #include "engine_state.h"
@@ -38,33 +17,22 @@ namespace BbEngine::Cheats {
 namespace {
 using Clock = std::chrono::steady_clock;
 
-// Game functions (BN addresses: image base 0x400000).
-constexpr std::uint64_t kGoodsRow = 0x231e3d0;      // (&{id, pad, row}, goods id): the goods row
-constexpr std::uint64_t kGoodsCap = 0x231e7e0;      // (&{id, pad, row}): most one can carry
-constexpr std::uint64_t kInventorySlot = 0x18d9f60; // (EquipInventoryData*, &{0x40000000|id, 0, 0, 0})
-constexpr std::uint64_t kAddItem = 0x18cdfd0;       // (EquipGameData*, type, id, count, 1, 1, [stack] 0)
-constexpr std::uint32_t kGoods = 0x40000000;        // the item type of goods
-// PlayerGameData (GameDataMan 0x593b130 +0x08, engine_state player_record) + 0x1d0 is EquipGameData,
-// which holds EquipInventoryData at +0x158: the first *(+0x24) of its 16-byte entries at *(+0x58),
-// the rest at *(+0x48), the slot bound *(+0x88); an entry's item at +0, its quantity at +8.
+constexpr std::uint64_t kGoodsRow = 0x231e3d0;
+constexpr std::uint64_t kGoodsCap = 0x231e7e0;
+constexpr std::uint64_t kInventorySlot = 0x18d9f60;
+constexpr std::uint64_t kAddItem = 0x18cdfd0;
+constexpr std::uint32_t kGoods = 0x40000000;
 constexpr std::uint64_t kEquipGameData = 0x1d0, kInventory = 0x158;
 constexpr std::uint64_t kInvFirst = 0x24, kInvRest = 0x48, kInvHead = 0x58, kInvBound = 0x88;
-// EQUIP_PARAM_GOODS_ST: int16 maxNum at 0x36; bitfield bytes 0x42-0x47: isConsume (0x44 bit 7),
-// useBulletMaxNum (0x46 bit 6), useHpCureMaxNum (0x46 bit 7). With either use* bit the carry cap is
-// the live one (runes), else the row's maxNum (sub_231e7e0).
 constexpr std::size_t kGoodsRowSize = 0x6c, kMaxNum = 0x36, kConsumeByte = 0x44, kCapByte = 0x46;
-constexpr std::uint8_t kIsConsume = 0x80, kUseBulletMaxNum = 0x40, kUseHpCureMaxNum = 0x80;
-// EQUIP_PARAM_WEAPON_ST: int8 bulletConsumeNum at 0x13a, read from the row at each shot. Weapons
-// without a firearm hold -1 there (694 of the 1090 rows in 1.09, every melee weapon); 1, 2, 10
-// and 12 are the costs of the guns, trick-weapon guns and arcane tools.
+constexpr std::uint8_t kIsConsume = 0x80, kBulletsCapBit = 0x40, kVialsCapBit = 0x80;
 constexpr std::size_t kWeaponRowSize = 0x13c, kBulletConsumeNum = 0x13a;
 constexpr std::uint32_t kBloodVial = 1000, kQuicksilverBullets = 900;
-constexpr auto kDebounce = std::chrono::milliseconds(400); // a slider being dragged applies once
-constexpr auto kInterval = std::chrono::milliseconds(250); // refills: at most four times a second
-constexpr auto kSettle = std::chrono::milliseconds(1500);  // in the world this long before acting
+constexpr auto kDebounce = std::chrono::milliseconds(400);
+constexpr auto kInterval = std::chrono::milliseconds(250);
+constexpr auto kSettle = std::chrono::milliseconds(1500);
 constexpr const char* kNotVerified = "the engine's executable was not verified";
 
-// The code that shows the functions, their arguments and the layouts above (our image's bytes).
 constexpr std::uint8_t kSigRow[] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x54,0x53,0x41,0x89,0xf4,
     0x49,0x89,0xfe,0x31,0xc9,0x45,0x85,0xe4,0x0f,0x88,0xf2,0x00,0x00,0x00};
 constexpr std::uint8_t kSigCap[] = {0x55,0x48,0x89,0xe5,0x53,0x48,0x83,0xec,0x28,0x48,0x8b,0x1d,0xf0,0x53,
@@ -77,20 +45,15 @@ constexpr std::uint8_t kSigSlot[] = {0x8b,0x06,0x83,0xf8,0xff,0x0f,0x84,0xa6,0x0
 constexpr std::uint8_t kSigAdd[] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,
     0x81,0xec,0x18,0x01,0x00,0x00,0x41,0x89,0xcd,0x41,0x89,0xd4,0x49,0x89,0xff,0x48,0x8b,0x1d,0xec,0x5b,
     0xf1,0x03,0x48,0x8b,0x03,0x48,0x89,0x45,0xd0,0x41,0xc7,0x87,0x9c,0x02};
-// sub_18cdfd0, goods: the row (sub_231e3d0), then the inventory at EquipGameData + 0x158.
 constexpr std::uint8_t kSigAddInventory[] = {0xe8,0x22,0x02,0xa5,0x00,0x4d,0x8d,0xb7,0x58,0x01,0x00,0x00,
     0xbe,0x00,0x00,0x00,0x40,0x4c,0x89,0xf7,0x44,0x89,0xe2,0xe8,0xbb,0xbc,0x00,0x00};
-// Using goods: the quantity changes only when the row's isConsume bit (0x42 dword, 0x800000) is set.
 constexpr std::uint8_t kSigConsume[] = {0xe8,0x0b,0xd6,0xa4,0x00,0x48,0x89,0xde,0x48,0x8b,0x45,0xa0,0x48,
     0x85,0xc0,0x0f,0x84,0xc5,0x02,0x00,0x00,0x8b,0x40,0x42,0xa9,0x00,0x00,0x80,0x00,0x0f,0x84,0xb7,0x02,
     0x00,0x00};
-// The fire check reads bulletConsumeNum (movsx r13d, byte [row+0x13a]) from the weapon row.
 constexpr std::uint8_t kSigBullets[] = {0xe8,0xcb,0xf8,0x62,0x00,0x48,0x8b,0x45,0x98,0x45,0x31,0xe4,0x41,
     0xbd,0x00,0x00,0x00,0x00,0x48,0x85,0xc0,0x74,0x08,0x44,0x0f,0xbe,0xa8,0x3a,0x01,0x00,0x00};
-// A game call of sub_18cdfd0: rdi = *(*0x593b130 + 8) + 0x1d0.
 constexpr std::uint8_t kSigEquip[] = {0x48,0x8d,0x05,0x3a,0xab,0x22,0x04,0x48,0x8b,0x00,0x4c,0x8b,0x68,0x08,
     0x49,0x8d,0xbd,0xd0,0x01,0x00,0x00};
-// The debug menu's fill: slot (sub_18d9f60), bound +0x88, first +0x24, +0x58 / +0x48, quantity +8.
 constexpr std::uint8_t kSigEntry[] = {0xe8,0x9d,0x5a,0x00,0x00,0xc7,0x85,0x34,0xfe,0xff,0xff,0x00,0x00,0x00,
     0x00,0x85,0xc0,0x78,0x4f,0x41,0x8b,0x8c,0x24,0xe0,0x01,0x00,0x00,0xff,0xc1,0x39,0xc1,0x76,0x41,0x89,
     0xc1,0x41,0x2b,0x8c,0x24,0x7c,0x01,0x00,0x00,0x73,0x10,0x89,0xc1,0x48,0xc1,0xe1,0x04,0x49,0x03,0x8c,
@@ -107,42 +70,37 @@ std::uint64_t g_slide = 0;
 std::uint8_t* g_image = nullptr;
 std::size_t g_image_size = 0;
 bool g_installed = false;
-// The hunter in the world for kSettle: same record and map block since then (checked every kInterval).
 std::uint64_t g_record = 0;
 std::uint32_t g_block = 0;
 Clock::time_point g_since{}, g_check{};
 bool g_present = false, g_settled = false;
 std::uint64_t Slot(std::uint64_t bn) { return g_slide + (bn - kPreferredGuestSlide); }
 template <typename T> bool Read(std::uint64_t at, T* out) { return at && host_read_safe(reinterpret_cast<const void*>(at), out, sizeof(T)); }
-// Guest heap and data: above the null page, below 1 TiB (the guest-visible range), readable.
 bool Plausible(std::uint64_t p) { std::uint64_t v = 0; return p >= 0x10000 && p < (std::uint64_t(1) << 40) && Read(p, &v); }
-// Our image's bytes at a BN address match `bytes` (checked at Install, before guest code runs).
 bool Matches(std::uint64_t bn, std::span<const std::uint8_t> bytes) {
     const std::size_t at = bn - kPreferredGuestSlide;
     return g_image && at <= g_image_size && bytes.size() <= g_image_size - at &&
            !std::memcmp(g_image + at, bytes.data(), bytes.size());
 }
 
-// A param byte a cheat may change: its original value (the snapshot) and what is there now.
 struct Byte { std::uint64_t at; std::uint8_t original, now; };
 struct Cheat {
-    const char* name;                  // the log's: "vials", "bullets"
+    const char* name;
     std::uint32_t goods;
-    std::uint8_t cap_bit;              // useHpCureMaxNum / useBulletMaxNum
+    std::uint8_t cap_bit;
     std::atomic<const char*> unavailable{kNotVerified};
     bool disabled = false;
     int active = BbSettings::CheatOff, pending = BbSettings::CheatOff;
     Clock::time_point pending_since{};
-    // The snapshot: taken once from the original values, kept until the game reloads the table.
     bool snapped = false, weapons = false;
     std::uint64_t goods_cap = 0, goods_file = 0, weapon_cap = 0, weapon_file = 0;
-    std::vector<Byte> bytes;           // [0..1] maxNum, [2] isConsume byte, [3] cap byte, then weapons
-    int base_cap = 0;                  // the carry cap while the row's cap bytes are original
-    int floor = -1;                    // infinite: the count it keeps if the param change does not hold
+    std::vector<Byte> bytes;
+    int base_cap = 0;
+    int floor = -1;
     bool floor_logged = false;
     int failures = 0;
 };
-Cheat g_cheats[2] = {{"vials", kBloodVial, kUseHpCureMaxNum}, {"bullets", kQuicksilverBullets, kUseBulletMaxNum}};
+Cheat g_cheats[2] = {{"vials", kBloodVial, kVialsCapBit}, {"bullets", kQuicksilverBullets, kBulletsCapBit}};
 
 struct Handle { std::int32_t id, pad; std::uint64_t row; };
 std::uint64_t GuestRow(std::uint32_t id) {
@@ -155,7 +113,6 @@ int GuestCap(std::uint32_t id) {
     Call(Slot(kGoodsRow), &h, id);
     return h.row ? static_cast<std::int32_t>(Call(Slot(kGoodsCap), &h)) : -1;
 }
-// The count held (0 when the item is not in the inventory); false if the inventory looks wrong.
 bool Count(std::uint64_t equip, std::uint32_t id, int* have) {
     const std::uint64_t inv = equip + kInventory;
     std::uint32_t bound = 0, first = 0;
@@ -176,12 +133,10 @@ bool Count(std::uint64_t equip, std::uint32_t id, int* have) {
     return *have >= 0 && *have <= 9999;
 }
 
-// The game reloaded the table (a new file): the snapshot's addresses are no longer its rows.
 bool SameTables(const Cheat& c) {
     return params_table_file(c.goods_cap) == c.goods_file && (!c.weapons || params_table_file(c.weapon_cap) == c.weapon_file);
 }
 
-// Writes back each original value that is still the one this cheat wrote; never writes elsewhere.
 void RestoreSafe(Cheat& c) {
     if (!c.snapped) return;
     if (!SameTables(c)) { c.snapped = false; c.bytes.clear(); return; }
@@ -202,7 +157,6 @@ void Disable(Cheat& c, const char* why) {
     std::printf("Cheats: %s unavailable: %s\n", c.name, why);
 }
 
-// Reads one table's records and the rows' bytes (one read each); checks the rows' size.
 bool LoadTable(const char* table, std::size_t row_size, ParamTable* t, std::vector<ParamRecord>* records,
                std::vector<std::uint8_t>* data, std::uint64_t* lo) {
     if (!params_table(table, t) || !params_records(*t, records) || records->size() < 2 ||
@@ -215,8 +169,6 @@ bool LoadTable(const char* table, std::size_t row_size, ParamTable* t, std::vect
     return host_read_safe(reinterpret_cast<const void*>(first), data->data(), data->size());
 }
 
-// The snapshot: the goods row's bytes (vials, bullets) and, for bullets, each weapon row's
-// bulletConsumeNum that is not 0. Checked against the game's own row lookup and plausible values.
 const char* Snapshot(Cheat& c) {
     ParamTable goods;
     std::vector<ParamRecord> records;
@@ -245,8 +197,6 @@ const char* Snapshot(Cheat& c) {
         if (!LoadTable("EquipParamWeapon", kWeaponRowSize, &weapons, &records, &data, &lo)) {
             problem = "EquipParamWeapon not found or its rows are not 0x13c bytes";
         } else {
-            // -1 marks rows without a cost (left alone); any other negative value, or one above
-            // 64, would mean the offset is wrong for this table.
             std::size_t none = 0;
             for (const ParamRecord& r : records) {
                 const auto v = static_cast<std::int8_t>(data[r.data - lo + kBulletConsumeNum]);
@@ -260,7 +210,6 @@ const char* Snapshot(Cheat& c) {
                             found.size(), none);
         }
         if (problem) {
-            // The weapon rows stay untouched; infinite bullets keep the count by refilling instead.
             std::printf("Cheats: bullets: weapon params not used (%s); infinite bullets refill instead\n", problem);
         } else {
             c.weapons = true;
@@ -278,9 +227,6 @@ bool CapBytesOriginal(const Cheat& c) {
            c.bytes[3].now == c.bytes[3].original;
 }
 
-// The bytes a mode wants: infinite clears isConsume (vials) or every weapon's bulletConsumeNum
-// (bullets); an amount above the carry cap raises the row's maxNum to it and makes the cap the
-// row's own (clears useHpCureMaxNum / useBulletMaxNum). Everything else: the original values.
 std::vector<std::uint8_t> Wanted(const Cheat& c, int mode) {
     std::vector<std::uint8_t> want(c.bytes.size());
     for (std::size_t i = 0; i < c.bytes.size(); ++i) want[i] = c.bytes[i].original;
@@ -295,8 +241,6 @@ std::vector<std::uint8_t> Wanted(const Cheat& c, int mode) {
     return want;
 }
 
-// Brings the bytes to `want`: every byte to change is checked first (still what this cheat left
-// there), then written. A byte changed by anything else stops the cheat.
 bool Reconcile(Cheat& c, const std::vector<std::uint8_t>& want) {
     for (std::size_t i = 0; i < c.bytes.size(); ++i) {
         std::uint8_t current = 0;
@@ -313,12 +257,11 @@ bool Reconcile(Cheat& c, const std::vector<std::uint8_t>& want) {
     return true;
 }
 
-// A changed setting, after the debounce.
 void Switch(Cheat& c, int mode) {
     c.active = mode;
     c.floor = -1;
     c.failures = 0;
-    g_check = Clock::time_point{}; // the new mode applies at the next frame
+    g_check = Clock::time_point{};
     if (mode == BbSettings::CheatOff) {
         if (c.snapped && SameTables(c)) Reconcile(c, Wanted(c, mode));
         else { c.snapped = false; c.bytes.clear(); }
@@ -330,7 +273,6 @@ void Switch(Cheat& c, int mode) {
     }
 }
 
-// In the world, settled: params to the mode, then the count (at most every kInterval).
 void Run(Cheat& c, std::uint64_t equip) {
     if (c.snapped && !SameTables(c)) {
         std::printf("Cheats: %s: the game reloaded its params; applying again\n", c.name);
@@ -351,10 +293,8 @@ void Run(Cheat& c, std::uint64_t equip) {
     if (cap < 1 || cap > 999) { Disable(c, "carry cap implausible"); return; }
     int target = 0;
     if (c.active > 0) {
-        target = std::min(c.active, cap); // never lowers a count above it
+        target = std::min(c.active, cap);
     } else {
-        // Infinite: kept full (the carry cap), from none too. Where the param change applies,
-        // using one does not lower the count at all; otherwise it is refilled.
         if (c.floor == cap && have < cap && !c.floor_logged) {
             c.floor_logged = true;
             std::printf("Cheats: %s dropped while infinite; keeping the count by refilling\n", c.name);
@@ -369,14 +309,6 @@ void Run(Cheat& c, std::uint64_t equip) {
     else if (++c.failures >= 3) Disable(c, "refill had no effect");
 }
 
-// ---------------------------------------------------------------------------------------------
-// The other cheats.
-//
-// Stamina: the hunter's ChrIns is WorldChrMan (0x593e878) +0x60; its module container (+0x3b0)
-// holds the data module at +0x20 (droogie/bbhost world_chr.cpp, rebirth.cpp heal()), where the
-// stamina spending code keeps stamina at +0x134 between -50 and the maximum at +0x138
-// (kSigStaminaClamp, one of ten such sites; each first tests the debug menu's "All No Stamina
-// Consume" flag 0x593e88a, which would spare every character, so the cheat does not use it).
 constexpr std::uint64_t kWorldChrMan = 0x593e878;
 constexpr std::uint64_t kPlayerIns = 0x60, kModules = 0x3b0, kDataModule = 0x20, kStamina = 0x134, kMaxStamina = 0x138;
 constexpr std::uint8_t kSigStaminaLoad[] = {0x49,0x8b,0x8c,0x24,0xb0,0x03,0x00,0x00,0x4c,0x8b,0x79,0x20,0x41,0x8b,
@@ -384,44 +316,28 @@ constexpr std::uint8_t kSigStaminaLoad[] = {0x49,0x8b,0x8c,0x24,0xb0,0x03,0x00,0
 constexpr std::uint8_t kSigStaminaClamp[] = {0x48,0x8d,0x05,0xe1,0x83,0xc8,0x03,0x80,0x38,0x00,0x75,0x1f,0xb8,0xce,
     0xff,0xff,0xff,0x83,0xfb,0xce,0x7c,0x0e,0x41,0x8b,0x87,0x38,0x01,0x00,0x00,0x39,0xd8,0x0f,0x4e,0xd8,0x89,
     0xd8,0x41,0x89,0x87,0x34,0x01,0x00,0x00};
-// Stealth: the static ChrDbg flag bytes the debug menu's "Player Hide" and "Player Silence" toggle
-// (the menu builder passes their addresses with those labels, kSigStealthMenu / kSigSilentMenu),
-// read live by the game (kSigStealthUse / kSigSilentUse); Kyo's XML patches write the same bytes.
-// 0x593e888 next to them is "Player No Dead" and is never touched.
 constexpr std::uint64_t kPlayerHide = 0x593e88e, kPlayerSilence = 0x593e88f;
 constexpr std::uint8_t kSigStealthMenu[] = {0x48,0x8d,0x35,0xfc,0x48,0x06,0x03,0x48,0x8d,0x15,0xc9,0xd3,0xc1};
 constexpr std::uint8_t kSigSilentMenu[] = {0x48,0x8d,0x35,0xda,0x48,0x06,0x03,0x48,0x8d,0x15,0x88,0xd3,0xc1};
 constexpr std::uint8_t kSigStealthUse[] = {0x48,0x8d,0x05,0xac,0x93,0xae,0x03,0x8a,0x00,0x88,0x43,0x64};
 constexpr std::uint8_t kSigSilentUse[] = {0x48,0x8d,0x05,0xc5,0x95,0xae,0x03,0x80,0x38,0x00};
-// Echoes and insight: PlayerGameData +0x94 (capped at 999,999,999 by the game's own add, kSigEchoes)
-// and +0x84 (capped at 99, kSigInsight); engine_state's player_stat "echoes" / "insight".
 constexpr std::int64_t kEchoCap = 999999999, kInsightCap = 99;
 constexpr std::uint8_t kSigInsight[] = {0x44,0x03,0xb8,0x84,0x00,0x00,0x00,0x78,0x0d,0x41,0x83,0xff,0x63,0xb9,0x63,
     0x00,0x00,0x00,0x41,0x0f,0x4e,0xcf,0x89,0x88,0x84,0x00,0x00,0x00};
 constexpr std::uint8_t kSigEchoes[] = {0x48,0x8b,0x93,0xc0,0x03,0x00,0x00,0x8b,0xb2,0x94,0x00,0x00,0x00,0x31,0xc9,
     0x89,0xf7,0x01,0xc7,0x78,0x0e,0x81,0xff,0xff,0xc9,0x9a,0x3b,0xb9,0xff,0xc9,0x9a,0x3b,0x0f,0x4e,0xcf,0x89,
     0x8a,0x94,0x00,0x00,0x00};
-// Keeping echoes on death: the blood mark commit (droogie/bbhost death_events.hpp
-// BLOOD_MARK_COMMIT_FN 0x17d2910, which the death events call with capture=1) adds the carried
-// echoes (+0x94) and a pending amount into r12d, stores r12d as the mark's echoes (+0x38) and
-// zeroes the carried echoes. The patch keeps the carried echoes and leaves only the pending part
-// in the mark (r12d -= carried), so picking the bloodstain up cannot give them a second time.
 constexpr std::uint64_t kBloodMarkSite = 0x17d2bd2;
 constexpr std::uint8_t kSigBloodMark[] = {0x45,0x8b,0xa5,0x94,0x00,0x00,0x00,0x48,0x8d,0x05,0x78,0x85,0x16,0x04,
     0x48,0x8b,0x00,0x48,0x85,0xc0,0x75,0x2b,0x48,0x8d,0x3d,0xca,0x87,0x56,0x03,0x48,0x8d,0x15,0x17,0x88,0x56,
     0x03,0x48,0x8d,0x0d,0xfe,0x85,0x56,0x03,0xbe,0xb1,0x00,0x00,0x00,0x31,0xc0,0xe8,0xf7,0x29,0xce,0x00,0x48,
     0x8d,0x05,0x48,0x85,0x16,0x04,0x48,0x8b,0x00,0x48,0x8b,0x40,0x08,0x44,0x03,0x60,0x28,0xc7,0x40,0x28,0x00,
     0x00,0x00,0x00,0x44,0x89,0x63,0x38,0x41,0xc7,0x85,0x94,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
-// mov [rbx+0x38], r12d; mov dword [r13+0x94], 0  ->  sub r12d, [r13+0x94]; mov [rbx+0x38], r12d; nop4
 constexpr std::uint8_t kBloodMarkOriginal[] = {0x44,0x89,0x63,0x38,0x41,0xc7,0x85,0x94,0x00,0x00,0x00,0x00,0x00,
     0x00,0x00};
 constexpr std::uint8_t kBloodMarkKeep[] = {0x45,0x2b,0xa5,0x94,0x00,0x00,0x00,0x44,0x89,0x63,0x38,0x0f,0x1f,0x40,
     0x00};
 static_assert(sizeof(kBloodMarkOriginal) == sizeof(kBloodMarkKeep));
-// Durability: sub_18d24e0 (EquipGameData*, slot 0-7, change) adds the change to the durability of
-// the weapon in an equipment slot, clamped to 0..EquipParamWeapon durabilityMax (+0xbe); the
-// game's PlayerIns calls it with rdi = PlayerGameData + 0x1d0 (kSigDurabilityCall). A slot's item
-// handle is EquipGameData +0x94 + 4 * slot, its id from sub_1e89070 (&{handle, 0, 0, -1}) at +0x10.
 constexpr std::uint64_t kChangeDurability = 0x18d24e0, kGaitemLookup = 0x1e89070, kEquipHandles = 0x94;
 constexpr int kDurabilitySlots = 8;
 constexpr std::size_t kDurabilityMax = 0xbe;
@@ -437,39 +353,23 @@ constexpr std::uint8_t kSigDurabilityClamp[] = {0x44,0x01,0xf3,0x48,0x8b,0x4d,0x
     0x58,0x71,0x00,0x00};
 constexpr std::uint8_t kSigDurabilityCall[] = {0x49,0x8b,0xbf,0xc0,0x03,0x00,0x00,0x48,0x81,0xc7,0xd0,0x01,0x00,0x00,
     0x89,0xde,0x44,0x89,0xe2,0xe8,0xfd,0x69,0xbd,0xff};
-// Firearm range: the guns' BehaviorParam_PC rows (variationId = the weapons' behaviorVariationId:
-// 600 Blunderbuss, 610 Ludwig's Rifle, 1000 Rifle Spear, 1010 Reiterpallasch, 1400 Hunter Pistol
-// and Evelyn, 1410 Repeating Pistol, 1500 Cannon, 3300 Gatling Gun, 3500 Church Cannon, 3600
-// Piercing Rifle) with refType 1 name a Bullet row; each shot is a chain of Bullet rows (HitBulletID,
-// the next segment). The moving segments' life (+0x10) and dist (+0x14, where gravity and
-// acceleration change) are scaled. Rows any other player behaviour reaches (spells, hunter tools,
-// the shared non-moving 77) are left alone. 1.09: 45 rows, none shared with enemies.
 constexpr std::uint32_t kFirearmVariations[] = {600, 610, 1000, 1010, 1400, 1410, 1500, 3300, 3500, 3600};
 constexpr std::size_t kBehaviorRowSize = 0x20, kBehaviorVariation = 0x0, kBehaviorRefType = 0x9, kBehaviorRefId = 0xc;
 constexpr std::size_t kBulletRowSize = 0xa0, kBulletLife = 0x10, kBulletDist = 0x14, kBulletVelocity = 0x28,
     kBulletNext = 0x68;
-// Echo multiplier: NpcParam getSoul (+0x28, an enemy's echoes; 11025 at most in 1.09) and
-// GameAreaParam bonusSoul_single / _multi (+0x0 / +0x4, a boss's; 230000 at most).
 constexpr std::size_t kNpcRowSize = 0x184, kGetSoul = 0x28, kAreaRowSize = 0x20;
-// Consumables: the stackable usable goods whose isConsume bit is cleared (the game then does not
-// lower the count, as for the Hunter's Mark). Not the Blood Vials (1000) and Quicksilver Bullets
-// (900), which have their own cheats; not keys, materials, Blood Echo and Insight items (Coldblood,
-// Madman's Knowledge, Great One's Wisdom, Blood Dreg), the Bold Hunter's Mark, Vermin, one-of
-// items (runes, gems, Umbilical Cords) or the unnamed rows.
 constexpr std::uint32_t kConsumables[] = {
-    1100, 1101, // Antidote, Sedative
-    1110, 1120, // Beast Blood Pellet, Blue Elixir
-    1200, 1201, 1250, 1251, // Molotov Cocktail, Delayed Molotov, Rope / Delayed Rope Molotov
-    1210, 1240, 1230, // Poison Knife, Throwing Knife, Pebble
-    1220, 1260, 1270, // Oil Urn, Pungent Blood Cocktail, Numbing Mist
-    1300, 1320, 1330, // Fire Paper, Bolt Paper, Bone Marrow Ash
-    1410, // Shining Coins
-    2030, 2090, // Lead Elixir, Shaman Bone Blade
+    1100, 1101,
+    1110, 1120,
+    1200, 1201, 1250, 1251,
+    1210, 1240, 1230,
+    1220, 1260, 1270,
+    1300, 1320, 1330,
+    1410,
+    2030, 2090,
 };
 constexpr std::size_t kGoodsType = 0x3a, kRefCategory = 0x3b;
 
-// The bytes one of these cheats changes: each original (the snapshot) and what is there now, and
-// the param tables they are in (a reloaded table voids the snapshot).
 struct Patch {
     std::vector<Byte> bytes;
     std::vector<ParamTable> tables;
@@ -486,11 +386,7 @@ std::vector<std::uint8_t> Originals(const Patch& p) {
     for (std::size_t i = 0; i < v.size(); ++i) v[i] = p.bytes[i].original;
     return v;
 }
-// Brings the bytes to `want` after checking every byte to change still holds what this cheat
-// left there; false (nothing written) if one does not. Code (one contiguous range) goes through
-// WriteCode, data and params are written directly.
 bool Write(Patch& p, const std::vector<std::uint8_t>& want) {
-    // Consecutive bytes are read in one go (the echo multiplier changes about 20000).
     bool change = false;
     std::vector<std::uint8_t> run;
     for (std::size_t i = 0, j = 0; i < p.bytes.size(); i = j) {
@@ -517,13 +413,10 @@ bool Write(Patch& p, const std::vector<std::uint8_t>& want) {
     }
     return true;
 }
-// Writes back the originals where they are still what this cheat wrote.
 void RestoreSafe(Patch& p) {
     if (!p.snapped) return;
     if (!Current(p)) { Forget(p); return; }
     if (!Write(p, Originals(p)) && !p.code) {
-        // Something else changed a byte: put back only the ones still ours, byte by byte. Code is
-        // left as it is (half an instruction sequence would be worse than either).
         for (Byte& b : p.bytes) {
             std::uint8_t current = 0;
             if (b.now == b.original || !Read(b.at, &current) || current != b.now) continue;
@@ -537,7 +430,7 @@ enum Kind { Refill, Flags, Params, Code };
 struct Extra {
     Which which;
     Kind kind;
-    const char* name;                  // the log's and the reasons': "stamina", "firearm range"
+    const char* name;
     std::atomic<const char*> unavailable{kNotVerified};
     bool disabled = false;
     int active = 0, pending = 0;
@@ -566,8 +459,6 @@ void Disable(Extra& e, const char* why) {
     std::printf("Cheats: %s unavailable: %s\n", e.name, why);
 }
 
-// Online (BB_ONLINE=1, scripts/online.py): other players share the world, so no cheat runs. Off
-// for the whole session.
 bool SharedWorld() {
     static const bool shared = [] {
         const char* online = std::getenv("BB_ONLINE");
@@ -591,7 +482,6 @@ int SettingOf(const Extra& e, const BbSettings::Values& s) {
                    std::end(BbSettings::CheatGunRanges) ? v : 0;
     }
     case EchoMultiplier: {
-        // Off is 0 here (x1 changes nothing).
         const int v = s.cheat_echo_multiplier.load(std::memory_order_relaxed);
         return v > 1 && std::find(std::begin(BbSettings::CheatEchoMultipliers),
                                   std::end(BbSettings::CheatEchoMultipliers), v) !=
@@ -601,7 +491,6 @@ int SettingOf(const Extra& e, const BbSettings::Values& s) {
     }
 }
 
-// Param snapshots (taken in the world, the first time the cheat runs and after a table reload).
 const char* SnapshotGunRange(Patch& p) {
     ParamTable behavior, bullets;
     std::vector<ParamRecord> brecords, records;
@@ -615,7 +504,6 @@ const char* SnapshotGunRange(Patch& p) {
         const auto it = std::find_if(records.begin(), records.end(), [&](const ParamRecord& r) { return std::int32_t(r.id) == id; });
         return it == records.end() ? nullptr : &*it;
     };
-    // Every Bullet row a behaviour reaches through its chain (at most 8 segments).
     const auto reach = [&](bool firearm, std::vector<std::uint64_t>* out, std::size_t* variations) {
         std::vector<std::uint32_t> seen;
         for (const ParamRecord& b : brecords) {
@@ -653,7 +541,7 @@ const char* SnapshotGunRange(Patch& p) {
         std::memcpy(&life, r + kBulletLife, 4);
         std::memcpy(&dist, r + kBulletDist, 4);
         std::memcpy(&velocity, r + kBulletVelocity, 4);
-        if (!std::isfinite(velocity) || velocity <= 0) continue; // spawners and blasts stay as they are
+        if (!std::isfinite(velocity) || velocity <= 0) continue;
         if (velocity > 200 || !std::isfinite(life) || life <= 0 || life > 5 || !std::isfinite(dist) || dist < 0 ||
             dist > 50)
             return "a firearm bullet's life, range or speed is implausible";
@@ -688,7 +576,6 @@ const char* SnapshotEchoes(Patch& p) {
                 std::uint32_t echoes = 0;
                 std::memcpy(&echoes, v, 4);
                 if (!echoes) continue;
-                // x10 must stay far from the int32 the game adds it as.
                 if (echoes > f.most) return "an enemy's Blood Echoes are implausible";
                 for (std::size_t b = 0; b < 4; ++b) p.bytes.push_back({r.data + f.offsets[k] + b, v[b], v[b]});
                 ++rows;
@@ -715,7 +602,6 @@ const char* SnapshotConsumables(Patch& p) {
         const std::uint8_t* row = data.data() + (it->data - lo);
         std::int16_t max_num = 0;
         std::memcpy(&max_num, row + kMaxNum, 2);
-        // An ordinary (type 0) stackable item that is used up and uses an effect or an attack.
         if (row[kGoodsType] != 0 || max_num < 2 || max_num > 99 || !(row[kConsumeByte] & kIsConsume) ||
             (row[kRefCategory] != 1 && row[kRefCategory] != 2))
             return "a consumable's goods row is not a stackable consumable";
@@ -725,7 +611,6 @@ const char* SnapshotConsumables(Patch& p) {
     return nullptr;
 }
 
-// The bytes a mode wants; mode 0: the originals.
 std::vector<std::uint8_t> WantedOf(const Extra& e, int mode) {
     std::vector<std::uint8_t> want = Originals(e.patch);
     if (!mode) return want;
@@ -773,8 +658,6 @@ void LogSwitch(const Extra& e, int mode) {
     }
 }
 
-// A changed setting, after the debounce. Flags and code change at once (they need no character);
-// params change in the world (Run), and are restored here.
 void Switch(Extra& e, int mode) {
     e.active = mode;
     e.failures = 0;
@@ -794,12 +677,10 @@ void Switch(Extra& e, int mode) {
         if (!Current(e.patch)) { Forget(e.patch); return; }
         if (!Write(e.patch, WantedOf(e, mode)))
             Disable(e, e.kind == Code ? "the game code changed outside the cheat" : "a byte changed outside the cheat");
-        // Flags are taken again next time: the debug menu or a patch may have set them meanwhile.
         if (e.kind == Flags && !mode) Forget(e.patch);
     }
 }
 
-// The hunter's data module, or 0: checked each time (the chain changes on every load).
 std::uint64_t DataModule() {
     std::uint64_t man = 0, chr = 0, modules = 0, data = 0;
     if (!Read(Slot(kWorldChrMan), &man) || !Plausible(man) || !Read(man + kPlayerIns, &chr) || !Plausible(chr) ||
@@ -808,7 +689,6 @@ std::uint64_t DataModule() {
     return data;
 }
 
-// Every frame while settled: stamina back to its maximum (the game spends it within a frame).
 void RefillStamina() {
     const std::uint64_t data = DataModule();
     std::int32_t value[2] = {};
@@ -818,8 +698,6 @@ void RefillStamina() {
     std::memcpy(reinterpret_cast<void*>(data + kStamina), &value[1], 4);
 }
 
-// Each weapon's durabilityMax by id, read once per table file (the slots are checked four times
-// a second).
 ParamTable g_weapons;
 std::vector<std::pair<std::uint32_t, std::uint16_t>> g_durability;
 bool LoadDurability() {
@@ -838,8 +716,6 @@ bool LoadDurability() {
     return !g_durability.empty();
 }
 
-// The equipped weapons' durability raised to their maximum with the game's own change (a large
-// increase, clamped by it); slots whose weapon has no durability (fists) are left alone.
 void RefillDurability(Extra& e, std::uint64_t equip) {
     if (!LoadDurability()) { Disable(e, "EquipParamWeapon not found or its rows are not 0x13c bytes"); return; }
     int touched = 0;
@@ -849,7 +725,6 @@ void RefillDurability(Extra& e, std::uint64_t equip) {
         if (!handle || handle == 0xffffffffu) continue;
         struct { std::uint32_t handle, pad; std::uint64_t item; std::uint32_t id, pad2; } gaitem{handle, 0, 0, 0xffffffffu, 0};
         Call(Slot(kGaitemLookup), &gaitem);
-        // Weapons are item type 0 (the top four bits); armour (1) and the rest are left alone.
         const std::uint32_t id = gaitem.id;
         if (id == 0xffffffffu || (id & 0xfffffff) == 0xfffffff || id >> 28) continue;
         const auto it = std::lower_bound(g_durability.begin(), g_durability.end(), std::make_pair(id, std::uint16_t(0)));
@@ -858,12 +733,11 @@ void RefillDurability(Extra& e, std::uint64_t equip) {
         ++touched;
     }
     if (!e.failures) {
-        e.failures = 1; // logged once per switch
+        e.failures = 1;
         std::printf("Cheats: durability: %d equipped weapons kept at their maximum\n", touched);
     }
 }
 
-// In the world, settled.
 void Run(Extra& e, std::uint64_t record) {
     if (e.kind == Refill) {
         if (e.which == NoDurability) RefillDurability(e, record + kEquipGameData);
@@ -884,7 +758,6 @@ void Run(Extra& e, std::uint64_t record) {
     if (!Write(e.patch, WantedOf(e, e.active))) Disable(e, "a param byte changed outside the cheat");
 }
 
-// The overlay's queued echoes / insight, in the world.
 void AddStats() {
     const long long echoes = g_add_echoes.exchange(0), insight = g_add_insight.exchange(0);
     std::int64_t v = 0;
@@ -908,7 +781,6 @@ void AddStats() {
     }
 }
 
-// Install: each cheat's own code checks; one that differs disables only that cheat.
 void InstallExtras() {
     const auto check = [](Which which, std::initializer_list<Signature> signatures) {
         for (const Signature& s : signatures) {
@@ -935,7 +807,6 @@ void InstallExtras() {
     }
     check(NoDurability, {{kChangeDurability, kSigDurability}, {0x18d265d, kSigDurabilityClamp},
                          {0x1cfbacb, kSigDurabilityCall}});
-    // Params only, read and checked in the world; the consumables need the isConsume test.
     check(GunRange, {});
     check(EchoMultiplier, {});
     check(Consumables, {{0x18d0dc0, kSigConsume}});
@@ -943,7 +814,7 @@ void InstallExtras() {
     g_echoes_unavailable.store(stats ? nullptr : "engine code differs from the verified 1.09 image");
     if (!stats) std::printf("Cheats: add echoes / insight unavailable: engine code differs\n");
 }
-} // namespace
+}
 
 bool Install(std::uint8_t* image, std::size_t size) {
     g_image = image;
@@ -971,7 +842,7 @@ bool Install(std::uint8_t* image, std::size_t size) {
         if (e.unavailable.load()) e.disabled = true;
         any = any || !e.disabled;
     }
-    g_image = nullptr; // the checks are done; nothing reads the image through it again
+    g_image = nullptr;
     return any;
 }
 
@@ -1006,7 +877,7 @@ void Tick() {
                                        c.active == BbSettings::CheatOff));
     }
     for (const Extra& e : g_extras) idle = idle && (e.disabled || ((shared || !SettingOf(e, s)) && !e.pending && !e.active));
-    if (idle) return; // all off: nothing read, nothing called
+    if (idle) return;
     const auto now = Clock::now();
     for (int i = 0; i < 2; ++i) {
         Cheat& c = g_cheats[i];
@@ -1026,7 +897,6 @@ void Tick() {
     if (g_settled && !stamina.disabled && stamina.active) RefillStamina();
     if (now < g_check) return;
     g_check = now + kInterval;
-    // Acts only with a character loaded and in the world (not at the title, not while loading).
     const std::uint64_t record = player_record();
     std::uint32_t block = 0;
     const bool present = Plausible(record) && world_player_block(&block);
@@ -1053,4 +923,4 @@ void Tick() {
     }
     if (!g_echoes_unavailable.load()) AddStats();
 }
-} // namespace BbEngine::Cheats
+}

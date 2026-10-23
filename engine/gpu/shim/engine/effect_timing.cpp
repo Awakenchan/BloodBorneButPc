@@ -1,11 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// A character's status effects (its SpEffect list, ChrIns +0x1c8) advance in 0x1cbc980(chr, dt):
-// each effect's remaining time (+0x0) and tick timer (+0x8) go down by dt (0x1bea980), and a
-// tick fires when the timer runs out (poison damage, build-up). It is reached from two places:
-// 0x1cbc470, which loads its step from 0x1cbc4f7 (1/30 in the game, the frame time with the FPS
-// patches), and 0x1cc9d90, which passes its caller's dt. Every 10 s this reports, for each
-// caller, how often it ran per character and how many seconds of effect time it added per real
-// second; at the game's 30 FPS that is what the effects were made for. Binary Ninja addresses.
 #include "effect_timing.h"
 #include "engine_hooks.h"
 #include "engine_state.h"
@@ -23,10 +16,8 @@ namespace {
 #define GUEST_ABI __attribute__((sysv_abi))
 
 constexpr std::uint64_t kAdvanceEffects = 0x1cbc980;
-// push rbp; mov rbp, rsp; push r15; push r14; push r13; push r12; push rbx; sub rsp, 0x58
 const std::uint8_t kAdvancePrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41,
                                          0x55, 0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x58};
-constexpr std::size_t kXmmBelowSaved = 136; // the stub keeps xmm0 136 bytes below saved[0]
 
 std::uint64_t g_image = 0;
 struct Caller {
@@ -40,7 +31,7 @@ std::chrono::steady_clock::time_point g_since = std::chrono::steady_clock::now()
 
 GUEST_ABI std::int64_t AdvanceEffects(std::uint64_t, const std::uint64_t* saved) {
     float dt = 0;
-    std::memcpy(&dt, reinterpret_cast<const std::uint8_t*>(saved) - kXmmBelowSaved, sizeof dt);
+    std::memcpy(&dt, SavedXmm(saved, 0), sizeof dt);
     const std::uint64_t chr = saved[5], ret = saved[6];
     const std::uint64_t site = ret > g_image ? ret - g_image + 0x400000 : 0;
     std::scoped_lock lock{g_mutex};
@@ -63,7 +54,7 @@ GUEST_ABI std::int64_t AdvanceEffects(std::uint64_t, const std::uint64_t* saved)
     }
     return 0;
 }
-} // namespace
+}
 
 bool Install(std::uint8_t* image, std::size_t size) {
     const char* on = std::getenv("BB_EFFECT_TIMING");
@@ -78,4 +69,4 @@ bool Install(std::uint8_t* image, std::size_t size) {
     host_log("Effect timing: on (a report every 10 s)");
     return true;
 }
-} // namespace BbEngine::EffectTiming
+}

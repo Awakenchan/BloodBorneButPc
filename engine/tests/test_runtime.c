@@ -2,7 +2,6 @@
 #include "runtime.h"
 #include <stdlib.h>
 
-/* The settings menu of the GPU library restarts through probe.c, which tests do not link. */
 void runtime_restart(void) { abort(); }
 #include <assert.h>
 #include <stdio.h>
@@ -100,7 +99,6 @@ static void exit_handlers(void) {
     assert(register_plain(add_handler)==0);
     runtime_finalize(NULL);
     assert(count==5 && order[3]==4 && order[4]==1);
-    /* Exercise reallocating the registry and strict LIFO ordering. */
     count=0;
     for (uintptr_t i=0; i<200; ++i) assert(cxa(with_arg,(void *)i,(void *)12)==0);
     runtime_finalize((void *)12);
@@ -135,7 +133,7 @@ static void mutexes(void) {
     assert(unlock(&mutex)==0 && unlock(&mutex)==0 && destroy(&mutex)==0);
     assert((uint32_t)lock(&mutex)==0x80020016);
     mutex=NULL;
-    assert(lock(&mutex)==0); /* static initialization */
+    assert(lock(&mutex)==0);
     assert((uint32_t)lock(&mutex)==0x8002000b);
     assert((uint32_t)trylock(&mutex)==0x80020010);
     assert(unlock(&mutex)==0 && destroy(&mutex)==0);
@@ -193,14 +191,14 @@ static void direct_memory(void) {
     assert(map(&y,length,3,0,a,0)==0);
     assert(*(uint64_t *)x==0);
     *(uint64_t *)x=UINT64_C(0xabcdef0123456789);
-    assert(*(uint64_t *)y==UINT64_C(0xabcdef0123456789)); /* real shared backing */
-    assert((uint32_t)unmap((char *)x+4096,length)==0x80020016); /* unaligned */
+    assert(*(uint64_t *)y==UINT64_C(0xabcdef0123456789));
+    assert((uint32_t)unmap((char *)x+4096,length)==0x80020016);
     assert(unmap(x,length)==0 && unmap(y,length)==0);
     assert(release(a,length)==0 && release(b,length)==0 && release(c,length)==0);
     assert(alloc(0,pool,length,0,0,&a)==0 && a==0);
     x=NULL; assert(map(&x,length,3,0,a,0)==0);
-    assert(*(uint64_t *)x==0); /* released allocation does not leak previous data */
-    assert(release(a,length)==0); /* release also unmaps owned mapping */
+    assert(*(uint64_t *)x==0);
+    assert(release(a,length)==0);
 }
 static void memory_primitives(void) {
     typedef void *(ABI *Set)(void *,int,size_t);
@@ -298,7 +296,7 @@ static void rw_concurrency(void) {
     pthread_t reader,writer;
     assert(rw_read(&f.lock)==0);
     assert(pthread_create(&reader,NULL,reader_worker,&f)==0);
-    barrier(&f.ready); /* two threads now hold read locks at once */
+    barrier(&f.ready);
     assert(rw_unlock(&f.lock)==0);
     assert(pthread_create(&writer,NULL,writer_worker,&f)==0);
     barrier(&f.writer_ready);
@@ -321,7 +319,7 @@ static void rw_timeouts(void) {
     assert((uint32_t)read_timed(&f.lock,&invalid)==0x80020016);
     assert((uint32_t)rw_unlock(&f.lock)==0x80020001);
     barrier(&f.release); assert(pthread_join(writer,NULL)==0);
-    assert(read_timed(&f.lock,&invalid)==0); /* available lock ignores deadline */
+    assert(read_timed(&f.lock,&invalid)==0);
     assert(rw_unlock(&f.lock)==0);
     fixture_destroy(&f);
 }

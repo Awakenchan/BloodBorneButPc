@@ -1,8 +1,3 @@
-/* PS4 virtual memory: direct (physical) pool, flexible memory, reservations,
- * protection changes and queries. One sparse memfd backs the whole direct
- * pool, so any mapping of any physical range aliases the same storage.
- * Guest addresses are placed below 1 TiB (PS4 user range): GPU descriptors
- * encode 40-bit addresses, so host-default 0x7f... addresses would not fit. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -21,8 +16,6 @@
 #include <ucontext.h>
 #include <unistd.h>
 #endif
-/* sceKernelGetDirectMemorySize on retail PS4: 5056 MiB. BB_DMEM_MB raises it (the resolution
- * patches above 1080p need about 4 GiB more; run.sh sets it). */
 static uint64_t pool_size_bytes(void) {
     static uint64_t size;
     if (!size) {
@@ -51,24 +44,13 @@ typedef struct { uintptr_t start, end; int kind, prot, type; uint64_t phys; } Vm
 typedef struct {
     uintptr_t start, end; uint64_t offset; int32_t protection, memory_type;
     uint32_t flags; char name[32];
-} VirtualQueryInfo; /* flags: flexible, direct, stack, pooled, committed */
+} VirtualQueryInfo;
 typedef struct { void *start; uint64_t offset, length; int8_t prot, type; int16_t reserved; int32_t operation; } BatchEntry;
 _Static_assert(sizeof(VirtualQueryInfo)==72,"PS4 virtual query info layout");
 _Static_assert(sizeof(BatchEntry)==32,"PS4 batch map entry layout");
 
-/* Region table lock. Lookups (GPU per-draw queries, VirtualQuery, GPU page
- * protection) share it; map/unmap/protect take it exclusively. Both nest: code
- * under the lock may write guest memory, and a GPU-tracked page then faults into
- * runtime_memory_gpu_protect on the same thread. Nested reads are counted per thread
- * (a second shared acquisition could wait behind a queued writer: SRW locks and
- * writer-preferring rwlocks do that); a thread holding it exclusively skips relocking.
- * bbport: the guest's in/out arguments are read and written with it dropped (locals in
- * between). A fault on a GPU-tracked page under it waited for the page tracking's locks, or
- * for a readback by the GPU thread, while the threads holding those waited for this lock to
- * change a protection or write through the backing view: a hang. */
 static HostRwlock lock=HOST_RWLOCK_INIT;
 static __thread unsigned exclusive_depth, shared_depth;
-/* Odd while a writer holds the lock; readers' region caches are valid for one even value. */
 static uint64_t table_generation;
 static void write_lock(void) {
     if (!exclusive_depth++) { host_write_lock(&lock); __atomic_add_fetch(&table_generation,1,__ATOMIC_ACQ_REL); }
@@ -81,24 +63,16 @@ static void read_unlock(void) { if (!exclusive_depth && !--shared_depth) host_re
 static Block blocks[LIMIT];
 static Vma *vmas; static size_t vma_count, vma_capacity;
 static int pool_fd=-1;
-/* bbport: direct memory in GPU-visible system memory the GPU library allocates (dma-buf chunks,
- * BB_GUEST_GPU_MEMORY=1): the GPU reads the game's data in place instead of the CPU copying it
- * into staging buffers first. Chunks are allocated when the game allocates direct memory in them;
- * a chunk the GPU library cannot provide stays in the memfd. */
 #define CHUNK (UINT64_C(256) << 20)
 typedef int (*GuestChunkAlloc)(uint64_t phys, uint64_t size);
 static GuestChunkAlloc chunk_alloc __attribute__((unused));
-static int *chunk_fds __attribute__((unused)); /* per CHUNK of direct memory: -1 not decided, -2 memfd, else a dma-buf fd */
-/* Drivers whose dma-buf maps at offset 0 only (NVIDIA): a chunk per direct allocation instead of
- * the CHUNK grid. The game maps each of its allocations once, whole, so its mappings and the
- * backing view start at offset 0 of their chunk. */
-static unsigned char *backing_base; /* second view of the pool: host writes bypass guest/GPU page protection */
+static int *chunk_fds __attribute__((unused));
+static unsigned char *backing_base;
 static int whole_chunks __attribute__((unused));
 typedef struct { uint64_t phys, size; int fd; } Region;
 #define MAX_REGIONS 256
 static Region regions[MAX_REGIONS];
 static size_t region_count;
-/* The region holding phys (sorted by phys), or NULL; *next: start of the next region above. */
 static __attribute__((unused)) const Region *region_at(uint64_t phys, uint64_t *next) {
     *next=POOL_SIZE;
     for (size_t i=0;i<region_count;++i) {
@@ -123,13 +97,11 @@ static void add_region(uint64_t phys, uint64_t size) {
 #endif
 #define FLEX_SPAN (UINT64_C(1024) * 1024 * 1024)
 static uint64_t flex_bitmap[FLEX_SPAN/PAGE/64];
-/* GPU hooks (bbgpu): notified outside the lock, in order, after each operation. */
 typedef void (*GpuRange)(uintptr_t address, uint64_t size);
 static GpuRange hook_map, hook_unmap, hook_invalidate;
-static GpuRange hook_note_write; /* bbport: data written into GPU memory (runtime_memory_note_write) */
+static GpuRange hook_note_write;
 enum { HOOK_MAP, HOOK_UNMAP, HOOK_INVALIDATE };
 typedef struct { int kind; uintptr_t address; uint64_t size; } PendingHook;
-/* Grows as needed (a batch map or an unmap across many mappings queues one each). */
 static PendingHook *pending; static size_t pending_count, pending_capacity;
 static size_t allocations, maps, flexible_maps, protects, queries;
 static uint64_t live_bytes, flexible_bytes;
@@ -137,12 +109,9 @@ static uint64_t live_bytes, flexible_bytes;
 static int valid_alignment(uint64_t a) { return a >= PAGE && a <= POOL_SIZE && !(a & (a-1)); }
 static uint64_t align_up(uint64_t n, uint64_t a) { return (n+a-1) & ~(a-1); }
 static int host_prot(int prot) {
-    /* GPU read/write bits (0x10/0x20) need host access for the future GPU backend. */
     return ((prot & 0x11) ? PROT_READ : 0) | ((prot & 0x22) ? PROT_WRITE|PROT_READ : 0) | ((prot & 4) ? PROT_EXEC|PROT_READ : 0);
 }
-/* Direct memory occupies [0,POOL_SIZE) of the memfd, flexible memory [POOL_SIZE,+FLEX_SPAN). */
 #ifdef _WIN32
-/* Host-owned guest-visible memory (image, stacks) starts at LOW_MIN; see runtime_low_map. */
 #define LOW_MIN UINT64_C(0x0800000000)
 static int space(void) { return win_mem_space(LOW_MIN,USER_MAX); }
 #endif
@@ -151,7 +120,7 @@ static int pool(void) {
 #ifdef _WIN32
     void *view;
     if (space() || win_mem_section(POOL_SIZE+FLEX_SPAN,&view)) return -1;
-    backing_base=view; pool_fd=0; /* the section exists */
+    backing_base=view; pool_fd=0;
     return 0;
 #else
     pool_fd=memfd_create("bb-guest-memory", MFD_CLOEXEC);
@@ -165,21 +134,18 @@ static int pool(void) {
     return 0;
 #endif
 }
-/* Released physical pages read as zero when they are reused. */
 static void punch(uint64_t phys, uint64_t size) {
 #ifdef _WIN32
-    win_mem_zero(phys,size); /* committed pages only (BB_POOL_LAZY) */
+    win_mem_zero(phys,size);
 #else
     fallocate(pool_fd,FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE,(off_t)phys,(off_t)size);
 #endif
 }
 #ifndef _WIN32
-/* Size of direct memory chunk c (the last one may be shorter). */
 static uint64_t chunk_size(uint64_t c) {
     const uint64_t start=c*CHUNK;
     return POOL_SIZE-start<CHUNK ? POOL_SIZE-start : CHUNK;
 }
-/* Decides where the chunks of [phys, phys+size) of direct memory live (lock held). */
 static void ensure_chunks(uint64_t phys, uint64_t size) {
     if (!chunk_fds || phys>=POOL_SIZE) return;
     if (whole_chunks) {
@@ -206,7 +172,6 @@ static void ensure_chunks(uint64_t phys, uint64_t size) {
         chunk_fds[c]=fd>=0 ? fd : -2;
     }
 }
-/* mmap of direct or flexible memory at phys, split where it crosses chunks. */
 static void *map_phys(uintptr_t address, uint64_t size, int prot, uint64_t phys) {
     if (!chunk_fds || phys>=POOL_SIZE)
         return mmap((void *)address,size,prot,MAP_SHARED|MAP_FIXED,pool_fd,(off_t)phys);
@@ -246,7 +211,6 @@ static void *map_phys(uintptr_t address, uint64_t size, int prot, uint64_t phys)
     }
     return (void *)address;
 }
-/* Returns released physical memory to zero: hole punching in the memfd, a clear in a chunk. */
 static void zero_phys(uint64_t phys, uint64_t size) {
     for (uint64_t done=0;done<size;) {
         const uint64_t at=phys+done;
@@ -284,7 +248,6 @@ static void queue_hook(int kind, uintptr_t address, uint64_t size) {
     }
     pending[pending_count++]=(PendingHook){kind,address,size};
 }
-/* Runs queued GPU notifications; callers invoke it after dropping the lock. */
 static void flush_hooks(void) {
     for (;;) {
         write_lock();
@@ -314,7 +277,7 @@ static void flex_free(uint64_t phys, uint64_t size) {
     flex_set((phys-POOL_SIZE)/PAGE,size/PAGE,0);
     punch(phys,size);
 }
-static size_t vma_index(uintptr_t a) { /* first VMA with end > a */
+static size_t vma_index(uintptr_t a) {
     size_t lo=0, hi=vma_count;
     while (lo<hi) { size_t mid=(lo+hi)/2; if (vmas[mid].end<=a) lo=mid+1; else hi=mid; }
     return lo;
@@ -341,7 +304,6 @@ static int split_at(uintptr_t a) {
     vmas[i].end=a;
     return vma_insert(i+1,right);
 }
-/* Range [start,end) split on its edges; returns the first index inside it. */
 static size_t carve(uintptr_t start, uintptr_t end, int *error) {
     *error = split_at(start) || split_at(end);
     return vma_index(start);
@@ -359,7 +321,6 @@ static int overlaps(uintptr_t start, uintptr_t end, int ignore_reserved) {
         if (!ignore_reserved || vmas[i].kind!=KIND_RESERVED) return 1;
     return 0;
 }
-/* First-fit search in the PS4 user range, starting from the hint. */
 static uintptr_t find_free(uintptr_t hint, uint64_t size, uint64_t alignment) {
     uintptr_t at=align_up(hint<USER_MIN ? USER_MIN : hint, alignment);
     for (size_t i=vma_index(at); at+size<=USER_MAX; ++i) {
@@ -380,9 +341,6 @@ static void drop_range(uintptr_t start, uintptr_t end) {
     vma_erase(i,n);
 }
 #ifdef _WIN32
-/* A view piece remapped around a removed range (win32_memory.c) gets its pages' guest
- * protection back; the GPU forgets its page tracking state there. Runs before the table
- * changes, so the regions still describe the piece. */
 static void restore_remnant(uintptr_t start, uintptr_t end) {
     for (size_t i=vma_index(start); i<vma_count && vmas[i].start<end; ++i) {
         if (vmas[i].kind==KIND_RESERVED) continue;
@@ -392,7 +350,6 @@ static void restore_remnant(uintptr_t start, uintptr_t end) {
     queue_hook(HOOK_INVALIDATE,start,end-start);
 }
 #endif
-/* Places a host mapping; with MAP_FIXED it replaces what the guest had there. */
 static int32_t place(void **inout, uint64_t size, int prot, int flags, uint64_t alignment,
                      int kind, int type, uint64_t phys) {
     uintptr_t address=(uintptr_t)*inout;
@@ -438,9 +395,6 @@ static int direct_range_allocated(uint64_t phys, uint64_t size) {
 }
 
 static ABI uint64_t direct_size(void) { return POOL_SIZE; }
-/* bbport: the game doesn't check a failed allocation (it writes through the null result a moment
- * later, "writing address 0"), so the log says why. A patch that enlarges the game's heaps
- * ("Increased Graphics Heap Sizes", the resolution patches above 1080p) needs the larger pool. */
 static void report_pool_full(uint64_t size, uint64_t used) {
     static unsigned reported;
     if (__atomic_fetch_add(&reported,1,__ATOMIC_RELAXED)>=3) return;
@@ -481,7 +435,7 @@ static ABI int32_t direct_allocate(int64_t low, int64_t high, uint64_t size,
     ensure_chunks(start,size);
     ++allocations; live_bytes += size;
     write_unlock();
-    *out = (int64_t)start; /* guest memory: unlocked (see lock) */
+    *out = (int64_t)start;
     printf("Runtime: direct allocation offset=0x%" PRIx64 ", size=%" PRIu64 " bytes, type=%d\n", start, size, type);
     return 0;
 }
@@ -495,7 +449,7 @@ static int32_t map_direct_locked(void **out, uint64_t size, int prot, int flags,
     return result;
 }
 static ABI int32_t direct_map(void **out, uint64_t size, int prot, int flags, int64_t physical, uint64_t alignment) {
-    void *address=out ? *out : NULL; /* guest memory: unlocked (see lock) */
+    void *address=out ? *out : NULL;
     write_lock();
     int32_t result=map_direct_locked(out ? &address : NULL,size,prot,flags,physical,alignment);
     write_unlock();
@@ -530,13 +484,10 @@ static int32_t unmap_locked(uintptr_t start, uint64_t size) {
     return 0;
 }
 static ABI int32_t direct_unmap(void *address, uint64_t size) {
-    /* The GPU forgets the range before it disappears (as shadPS4's early GPU unmap). */
     if (hook_unmap && !((uintptr_t)address%PAGE) && size) hook_unmap((uintptr_t)address,align_up(size,PAGE));
     write_lock();
     size_t before=pending_count, kept=before;
     int32_t result=unmap_locked((uintptr_t)address,size);
-    /* The unmaps were notified above; the invalidations of view pieces remapped around the
-     * range (restore_remnant: their GPU protection is gone) still go out. */
     for (size_t i=before;i<pending_count;++i) if (pending[i].kind!=HOOK_UNMAP) pending[kept++]=pending[i];
     pending_count=kept;
     write_unlock();
@@ -548,7 +499,6 @@ static ABI int32_t direct_release(uint64_t start, uint64_t size) {
     if (!size) return 0;
     write_lock();
     if (!direct_range_allocated(start,size)) { write_unlock(); return INVALID; }
-    /* Mappings of released physical pages disappear with them. */
     for (size_t i=0; i<vma_count;) {
         Vma v=vmas[i];
         uint64_t length=v.end-v.start;
@@ -571,7 +521,7 @@ static ABI int32_t direct_release(uint64_t start, uint64_t size) {
         if (right.size) for (int j=0;j<LIMIT;++j) if (!blocks[j].used) { blocks[j]=right; break; }
         live_bytes-=e-a;
     }
-    zero_phys(start,size); /* zero on reuse */
+    zero_phys(start,size);
     write_unlock();
     flush_hooks();
     return 0;
@@ -586,7 +536,7 @@ static int32_t map_flexible_locked(void **inout, uint64_t size, int prot, int fl
     return result;
 }
 static ABI int32_t map_flexible(void **inout, uint64_t size, int prot, int flags) {
-    void *address=inout ? *inout : NULL; /* guest memory: unlocked (see lock) */
+    void *address=inout ? *inout : NULL;
     write_lock();
     int32_t result=map_flexible_locked(inout ? &address : NULL,size,prot,flags);
     write_unlock();
@@ -601,10 +551,6 @@ static ABI int32_t map_flexible_named(void **inout, uint64_t size, int prot, int
     (void)name; return map_flexible(inout,size,prot,flags);
 }
 static ABI int32_t release_flexible(void *address, uint64_t size) { return direct_unmap(address,size); }
-/* POSIX mmap: the game's libc grows its malloc heap with anonymous private mappings once the
- * heap it started with is full (seen after minutes of area streaming). They come from flexible
- * memory as sceKernelMapFlexibleMemory does; files are not mapped. MAP_FAILED (-1) and errno on
- * failure, as POSIX. */
 static _Atomic uint64_t heap_growths;
 uint64_t runtime_heap_growths(void) { return atomic_load(&heap_growths); }
 static ABI void *posix_mmap(void *addr, uint64_t size, int prot, int flags, int fd, int64_t offset) {
@@ -624,7 +570,7 @@ static ABI void *posix_mmap(void *addr, uint64_t size, int prot, int flags, int 
 static ABI int32_t reserve_range(void **inout, uint64_t size, int flags, uint64_t alignment) {
     if (!alignment) alignment=PAGE;
     if (!inout || !size || size%PAGE || !valid_alignment(alignment)) return INVALID;
-    void *address=*inout; /* guest memory: unlocked (see lock) */
+    void *address=*inout;
     write_lock();
     if ((flags & MAP_FIXED_FLAG) && overlaps((uintptr_t)address,(uintptr_t)address+size,0)) {
         write_unlock(); return NO_MEMORY;
@@ -664,7 +610,6 @@ static ABI int32_t query_protection(void *address, void **start, void **end, uin
     if (i==vma_count || vmas[i].start>(uintptr_t)address || vmas[i].kind==KIND_RESERVED) {
         read_unlock(); return ACCESS;
     }
-    /* Report the whole contiguous run with identical protection. */
     size_t first=i, last=i;
     while (first && vmas[first-1].end==vmas[first].start && vmas[first-1].kind!=KIND_RESERVED && vmas[first-1].prot==vmas[i].prot) --first;
     while (last+1<vma_count && vmas[last+1].start==vmas[last].end && vmas[last+1].kind!=KIND_RESERVED && vmas[last+1].prot==vmas[i].prot) ++last;
@@ -672,7 +617,6 @@ static ABI int32_t query_protection(void *address, void **start, void **end, uin
     const uint32_t run_prot=(uint32_t)vmas[i].prot;
     __atomic_add_fetch(&queries,1,__ATOMIC_RELAXED);
     read_unlock();
-    /* Guest memory: unlocked (see lock). */
     if (start) *start=(void *)run_start;
     if (end) *end=(void *)run_end;
     if (prot) *prot=run_prot;
@@ -686,7 +630,6 @@ static ABI int32_t virtual_query(const void *address, int flags, VirtualQueryInf
     Vma v=vmas[i];
     __atomic_add_fetch(&queries,1,__ATOMIC_RELAXED);
     read_unlock();
-    /* Built here and copied out unlocked (guest memory, see lock). */
     VirtualQueryInfo result;
     memset(&result,0,sizeof(result));
     result.start=v.start; result.end=v.end;
@@ -702,7 +645,6 @@ static ABI int32_t direct_memory_type(uint64_t phys, int *type, void **start, vo
     for (int i=0;i<LIMIT;++i) if (blocks[i].used && phys>=blocks[i].start && phys-blocks[i].start<blocks[i].size) {
         const Block b=blocks[i];
         read_unlock();
-        /* Guest memory: unlocked (see lock). */
         if (type) *type=b.type;
         if (start) *start=(void *)(uintptr_t)b.start;
         if (end) *end=(void *)(uintptr_t)(b.start+b.size);
@@ -714,8 +656,6 @@ static ABI int32_t direct_memory_type(uint64_t phys, int *type, void **start, vo
 static ABI int32_t batch_map2(BatchEntry *entries, int count, int *processed, int flags) {
     if (!entries || count<0) return INVALID;
     int32_t result=0; int done=0;
-    /* The entries are guest memory: copied in before the lock and the mapped addresses copied
-     * back after it (see lock). */
     BatchEntry small[64], *local=small;
     if (count>64 && !(local=malloc((size_t)count*sizeof(*local)))) return NO_MEMORY;
     if (count) memcpy(local,entries,(size_t)count*sizeof(*local));
@@ -755,7 +695,6 @@ static const RuntimeExport exports[]={
     {"mmap",posix_mmap},
 };
 uintptr_t runtime_memory_resolve(const char *name) {
-    /* Direct-memory NIDs are exercised by test_runtime.c before names are loaded. */
     if (!strcmp(name, "pO96TwzOm5E#p#J")) return (uintptr_t)direct_size;
     if (!strcmp(name, "rTXw65xmLIA#p#J")) return (uintptr_t)direct_allocate;
     if (!strcmp(name, "L-Q3LEjIbgA#p#J")) return (uintptr_t)direct_map;
@@ -763,8 +702,6 @@ uintptr_t runtime_memory_resolve(const char *name) {
     if (!strcmp(name, "cQke9UuBQOk#p#J")) return (uintptr_t)direct_unmap;
     return RUNTIME_LOOKUP(exports,name);
 }
-/* Host-owned memory the guest can see (image, stacks, trampolines) lives in
- * [LOW_MIN, USER_MIN): PS4 code packs pointers into 40-bit fields. */
 #ifndef LOW_MIN
 #define LOW_MIN UINT64_C(0x0800000000)
 #endif
@@ -773,13 +710,12 @@ void *runtime_low_map(size_t size, int prot) {
     size=align_up(size,PAGE);
     write_lock();
 #ifdef _WIN32
-    /* Read/write; the loader changes protection afterwards (VirtualProtect). */
     (void)prot;
     void *p=NULL;
     if (!space())
         while (!p && low_next+size<=USER_MIN) {
             p=win_mem_private(low_next,low_next+size);
-            low_next+=size+PAGE; /* reserved gap catches overruns */
+            low_next+=size+PAGE;
         }
     write_unlock();
     return p;
@@ -787,35 +723,15 @@ void *runtime_low_map(size_t size, int prot) {
     void *p=MAP_FAILED;
     while (low_next+size<=USER_MIN) {
         p=mmap((void *)low_next,size,prot,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);
-        low_next+=size+PAGE; /* unmapped gap catches overruns */
+        low_next+=size+PAGE;
         if (p!=MAP_FAILED) break;
     }
     write_unlock();
     return p==MAP_FAILED ? NULL : p;
 #endif
 }
-/* ---- GPU library interface (gpu/shim/bbgpu.cpp) ---- */
-/* Optimizations switched off at run time (diagnostics): the number in the file named by
- * BB_TOGGLE_FILE, re-read every 250 ms. Bits: 1 region cache, 2 fetch shader cache,
- * 4 page tracking early exit, 8 pending-op poll limit, 16 threaded Vulkan recording,
- * 32 texture descriptor cache, 64 lock-free upload check, 128 image lookup cache,
- * 256 buffer uploads on the recording thread, 512 barrier tracker insert memo,
- * 1024 texture binding memo, 2048 page-granular read tracking for barriers,
- * 4096 resource sharps read by the draw-preparation workers,
- * 8192 prepared draws from the draw-preparation workers,
- * 16384 small read-only buffer copies on the recording thread,
- * 32768 hot pages (opt-in with BB_HOT_PAGES=1),
- * 65536 unprotect the 256 KiB window around a guest write fault (BB_FAULT_WINDOW KiB),
- * 131072 large guest memory copies split across copy threads (BB_COPY_THREADS),
- * 262144 with BB_ASYNC_FENCES=1: wait for guest copies at fences again,
- * 524288 small guest copies batched for the copy threads instead of the recording thread,
- * 1073741824 the lock-free UpdateImage path for clean, tracked images. */
-/* Bits 32 and up: the draw pipeline and related GPU thread work (gpu/shim/bbport_toggles.h). */
 uint64_t runtime_disabled_optimizations;
-/* bbport: a second number in BB_TOGGLE_FILE: temporary experiment bits (BbToggle::Experiment). */
 uint64_t runtime_experiment_bits;
-/* Speculative readers of guest memory (GPU draw-preparation workers) register a recovery
- * point: a fault on that thread jumps back to it instead of terminating (probe.c). */
 __thread RuntimeRecoverBuf *runtime_fault_recover;
 static void *toggle_watcher(void *path) {
     for (unsigned long long last=ULLONG_MAX;;) {
@@ -832,14 +748,10 @@ static void *toggle_watcher(void *path) {
     }
     return NULL;
 }
-/* bbport: the second view of the pool and the size of its direct memory part, or NULL before the
- * pool exists. On Windows the GPU library imports pieces of it (BbGuestMemory): direct memory
- * phys lives at backing + phys in every mapping of it. */
 unsigned char *runtime_memory_backing(uint64_t *direct_size) {
     *direct_size=backing_base ? POOL_SIZE : 0;
     return backing_base;
 }
-/* bbport: the GPU library provides direct memory chunks (see CHUNK). */
 void runtime_memory_set_guest_chunk_whole(int whole) { whole_chunks=whole; }
 void runtime_memory_set_guest_chunk_allocator(int (*alloc)(uint64_t phys, uint64_t size)) {
     write_lock();
@@ -857,10 +769,6 @@ void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalid
     write_unlock();
     flush_hooks();
 }
-/* bbport: the CPU is about to write [address, address+size) without the guest's code doing it
- * (a file read into it): the GPU side is told first (Rasterizer::InvalidateMemory), for the parts
- * the GPU can access, as a driver is told of a resource update. Its write tracking then has
- * nothing to catch there. */
 void runtime_memory_set_note_write_hook(GpuRange note) { hook_note_write=note; }
 void runtime_memory_note_write(uintptr_t address, uint64_t size) {
     if (!hook_invalidate || !size) return;
@@ -877,11 +785,6 @@ void runtime_memory_note_write(uintptr_t address, uint64_t size) {
     GpuRange hook=hook_note_write ? hook_note_write : hook_invalidate;
     for (int i=0;i<n;++i) hook(starts[i],ends[i]-starts[i]);
 }
-/* bbport BB_GUEST_IN_PLACE without page protection: pages whose CPU writes the GPU side must hear
- * of (a VRAM copy of them, a texture made from them), one bit per 4 KiB page below 2^40. The GPU
- * side sets and clears them where it used to protect; the writers it cannot see coming (libc
- * imports, file reads, hooked game code) check them after writing and tell it, as a driver is
- * told of a resource update. */
 #define WATCH_LIMIT (1ull<<40)
 static _Atomic(uint64_t) *write_watch;
 static GpuRange hook_cpu_write;
@@ -922,9 +825,6 @@ void runtime_memory_note_cpu_write(uintptr_t address, uint64_t size) {
         }
     }
 }
-/* bbport: where direct memory at a guest address lives (BB_GUEST_IN_PLACE: the GPU uses the game's
- * memory where it is): its offset in direct memory and the end of the mapping, which is contiguous
- * there. 0 for anything else (flexible memory, reserved or unmapped addresses). */
 int runtime_memory_direct_phys(uintptr_t address, uint64_t *phys, uintptr_t *end) {
     read_lock();
     const size_t i=vma_index(address);
@@ -936,8 +836,6 @@ int runtime_memory_direct_phys(uintptr_t address, uint64_t *phys, uintptr_t *end
     read_unlock();
     return ok;
 }
-/* bbport: protection and direct memory type of the mapping at address (type -1: not direct
- * memory); 0 when nothing is mapped there. */
 int runtime_memory_vma_info(uintptr_t address, int *prot, int *type, uintptr_t *end) {
     read_lock();
     const size_t i=vma_index(address);
@@ -950,12 +848,6 @@ int runtime_memory_vma_info(uintptr_t address, int *prot, int *type, uintptr_t *
     read_unlock();
     return ok;
 }
-/* Writes through the backing view; 0 when part of the range has no backing. */
-/* Guest-visible writes from the GPU side (fence labels, WriteData, downloads): every byte is
- * stored once. glibc's memcpy copies 4-7 bytes as two overlapping 4-byte stores (the same
- * 4 bytes twice for a 4-byte label): a thread preempted between them stored the label again
- * after the guest had seen it and freed the block that held it (a free-list link ending in
- * 0x00000004: guest fault 0x263b8e7). Aligned 2, 4 and 8-byte pieces are single stores. */
 static void store_once(unsigned char *dst, const unsigned char *src, uint64_t n) {
     if (n > 64) { memcpy(dst,src,n); return; }
     while (n) {
@@ -979,10 +871,6 @@ int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t s
     read_unlock();
     return ok;
 }
-/* Reads through the backing view: the host's copies of guest memory (uploads), which the GPU's
- * read protection (BB_READBACKS=2: GPU-written pages) must not stop. A fault there would ask the
- * GPU thread for a readback while it waits for these very copies (a hang at start). Gaps read
- * as zeros. */
 void runtime_memory_read_backing(uintptr_t address, void *data, uint64_t size) {
     unsigned char *out=data;
     read_lock();
@@ -1001,8 +889,6 @@ void runtime_memory_read_backing(uintptr_t address, void *data, uint64_t size) {
     }
     read_unlock();
 }
-/* Per-thread cache of recently found regions for the GPU's per-draw queries:
- * entries hold for as long as the table generation they were read at. */
 typedef struct { uint64_t generation; uintptr_t start, end; int kind; } CachedRegion;
 static __thread CachedRegion region_cache[8];
 static __thread unsigned region_cache_next;
@@ -1015,15 +901,12 @@ static const CachedRegion *cached_region(uintptr_t address) {
     }
     return NULL;
 }
-/* Called under the read lock after a lookup of address. */
 static void cache_region(size_t i) {
     uint64_t generation=__atomic_load_n(&table_generation,__ATOMIC_ACQUIRE);
     if (i==vma_count || (generation & 1)) return;
     region_cache[region_cache_next++ % 8]=(CachedRegion){generation,vmas[i].start,vmas[i].end,vmas[i].kind};
 }
-/* The mapping table's generation (odd while it changes): callers cache regions against it. */
 const uint64_t *runtime_memory_generation(void) { return &table_generation; }
-/* Mapped length from address, up to size, across adjacent mappings. */
 uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
     if (c && c->kind!=KIND_RESERVED && size<=c->end-address) return size;
@@ -1037,7 +920,6 @@ uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size) {
     read_unlock();
     return length<size ? length : size;
 }
-/* Region around address: [start,end) mapped or a gap; 0 past the last mapping. */
 int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, int *mapped) {
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
     if (c) { *start=c->start; *end=c->end; *mapped=c->kind!=KIND_RESERVED; return 1; }
@@ -1053,7 +935,6 @@ int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, i
     read_unlock();
     return found;
 }
-/* GPU page tracking: restrict host access, never beyond the guest's own protection. */
 void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write) {
     read_lock();
     for (size_t i=vma_index(address); i<vma_count && vmas[i].start<address+size; ++i) {
@@ -1070,21 +951,15 @@ void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int 
     }
     read_unlock();
 }
-/* bbport: the fault handler's last resort (bbgpu_handle_fault). An access the guest's own
- * protection allows faulted on a page GPU tracking protected, and the tracking did not resolve
- * it (repeated: it claimed the fault, yet the same access keeps faulting; else: no record of the
- * page). An unhandled fault ends the game without a trace, so the page gets the guest's
- * protection back: the GPU may miss writes there until it protects the page again. No locks
- * beyond the table's (nested per thread) and no allocation: this runs in the fault handler. */
 int runtime_memory_restore_access(void *context, uintptr_t address, int repeated) {
     int is_write;
 #ifdef _WIN32
     const ULONG_PTR kind=((EXCEPTION_POINTERS *)context)->ExceptionRecord->ExceptionInformation[0];
-    if (kind==8) return 0; /* execution: never a tracking fault */
+    if (kind==8) return 0;
     is_write=kind==1;
 #else
     const greg_t error=((ucontext_t *)context)->uc_mcontext.gregs[REG_ERR];
-    if (error & 0x10) return 0; /* instruction fetch */
+    if (error & 0x10) return 0;
     is_write=(error & 2)!=0;
 #endif
     const uintptr_t page=address&~(uintptr_t)4095;
@@ -1100,7 +975,6 @@ int runtime_memory_restore_access(void *context, uintptr_t address, int repeated
                 const DWORD mode=info.Protect & 0xff;
                 const int allowed = is_write ? (mode==PAGE_READWRITE || mode==PAGE_EXECUTE_READWRITE)
                                              : (mode!=PAGE_NOACCESS && mode!=PAGE_EXECUTE);
-                /* Already allowed: changed back meanwhile (the tracking, another thread). */
                 restored=!allowed && !win_mem_protect(page,page+4096,guest);
                 ok=allowed || restored;
             }
@@ -1113,7 +987,7 @@ int runtime_memory_restore_access(void *context, uintptr_t address, int repeated
     if (restored) {
         static _Atomic unsigned notes;
         const unsigned n=atomic_fetch_add(&notes,1)+1;
-        if (n<=8 || !(n&(n-1))) { /* the first ones, then at powers of two */
+        if (n<=8 || !(n&(n-1))) {
             char line[256];
             int length=snprintf(line,sizeof(line),
                 "Runtime: %s fault at %#llx: guest page left protected by GPU tracking (%s); "
@@ -1131,7 +1005,6 @@ int runtime_memory_restore_access(void *context, uintptr_t address, int repeated
     }
     return ok;
 }
-/* bbport: whether the guest may write all of [address, address+size) (its own protection). */
 int runtime_memory_guest_writable(uintptr_t address, uint64_t size) {
     if (!size) return 0;
     int ok=1;
@@ -1144,7 +1017,6 @@ int runtime_memory_guest_writable(uintptr_t address, uint64_t size) {
     read_unlock();
     return ok;
 }
-/* Host view of a guest range, for the GPU backend: the range must be mapped. */
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size) {
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
     if (c && c->kind!=KIND_RESERVED && size<=c->end-address) return 1;

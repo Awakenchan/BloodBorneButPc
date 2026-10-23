@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: the menu's debug views over an upscaled output in place, for the scaled path (an output
 // other than 1080p: TemporalUpscaler::RunScaled), where upscale_merge.comp does not run. The same
 // modes: 1 the reactive mask in red over a darkened frame, 2 the motion vectors (red/green:

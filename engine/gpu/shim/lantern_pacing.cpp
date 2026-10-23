@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Lantern Engine: frame pacing (lantern_pacing.h).
 #include "lantern_pacing.h"
 
 #include <algorithm>
@@ -26,9 +25,6 @@ namespace LanternPacing {
 namespace {
 using namespace std::chrono_literals;
 
-/// How late the last timer sleeps woke, in microseconds: a small ring shared by the threads
-/// that wait (the present thread, frame generation). The spin margin is its 90th percentile, so
-/// one slow wake-up does not make every later wait spin long, and a run of them does.
 struct Lateness {
     static constexpr std::size_t Size = 32;
     std::array<std::atomic<std::uint32_t>, Size> us{};
@@ -36,7 +32,7 @@ struct Lateness {
 
     Lateness() {
         for (auto& v : us) {
-            v.store(300, std::memory_order_relaxed); // until measured: 0.3 ms
+            v.store(300, std::memory_order_relaxed);
         }
     }
     void Add(std::chrono::nanoseconds late) {
@@ -66,7 +62,7 @@ HANDLE ThreadTimer() {
     return timer;
 }
 #endif
-} // namespace
+}
 
 bool Enabled() {
     static const bool on = [] {
@@ -109,8 +105,8 @@ bool Sleep(std::chrono::nanoseconds duration, bool alertable) {
 namespace {
 struct VblankWatch {
     std::mutex mutex;
-    std::wstring device;       ///< the display to follow (WatchVblank)
-    unsigned generation = 0;   ///< WatchVblank calls: the watch starts over at each
+    std::wstring device;
+    unsigned generation = 0;
     bool started = false;
     std::atomic<std::int64_t> last_ns{0}, period_ns{0};
     std::atomic<bool> steady{false};
@@ -121,8 +117,6 @@ VblankWatch& Watch() {
 }
 
 #ifdef _WIN32
-// gdi32's D3DKMT entry points (d3dkmthk.h, declared here): the adapter and video present source
-// of a display, and a wait for its next vblank, as DXGI's IDXGIOutput::WaitForVBlank does.
 using KmtHandle = UINT;
 struct KmtOpenAdapterFromHdc {
     HDC hdc;
@@ -142,12 +136,6 @@ using KmtOpen = LONG(APIENTRY*)(KmtOpenAdapterFromHdc*);
 using KmtWait = LONG(APIENTRY*)(const KmtWaitForVblank*);
 using KmtClose = LONG(APIENTRY*)(const KmtCloseAdapter*);
 
-/// Waits for every vblank of the watched display. The period is the time since the first
-/// vblank over the refreshes counted since (wake-up delays shrink as the count grows); the last
-/// vblank is predicted on that grid and pulled a tenth of the way towards each wake-up. An
-/// interval off the grid now and then is a late wake-up; most intervals off it are a variable
-/// refresh (G-Sync/FreeSync, where the refreshes follow the game's flips) or a mode change: the
-/// watch then reports nothing until WatchVblank is called again (a mode or display change).
 void WatchVblanks() {
     const HMODULE gdi = LoadLibraryW(L"gdi32.dll");
     const auto open = gdi ? reinterpret_cast<KmtOpen>(GetProcAddress(gdi, "D3DKMTOpenAdapterFromHdc")) : nullptr;
@@ -221,7 +209,7 @@ void WatchVblanks() {
         }
         const double interval = now - predicted;
         if (period == 0) {
-            period = interval; // the first interval: refined below
+            period = interval;
             refreshes = 1;
             predicted = now;
             continue;
@@ -229,7 +217,7 @@ void WatchVblanks() {
         const double whole = std::round(interval / period);
         if (whole < 1 || std::abs(interval - whole * period) > period * 0.1) {
             if (whole >= 1) {
-                predicted += whole * period; // a late wake-up: the grid stands
+                predicted += whole * period;
                 refreshes += whole;
             } else {
                 predicted = now;
@@ -257,7 +245,7 @@ void WatchVblanks() {
     }
 }
 #endif
-} // namespace
+}
 
 bool VblankPacing() {
     static const bool on = [] {
@@ -310,4 +298,4 @@ void WaitUntil(Clock::time_point deadline, bool exact, std::chrono::nanoseconds 
         _mm_pause();
     }
 }
-} // namespace LanternPacing
+}

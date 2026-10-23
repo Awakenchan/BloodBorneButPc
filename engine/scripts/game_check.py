@@ -38,7 +38,7 @@ def differing_chunks(image):
 
 def image_sha256(game):
     """The SHA-256 of eboot.bin's loaded image (its loadable segments at their addresses)."""
-    from prepare import parse_self, span  # same directory
+    from prepare import parse_self, span
     elf, header, ph, _segments, _missing = parse_self((Path(game) / 'eboot.bin').read_bytes())
     loads = [p for p in ph if p['type'] in (1, 0x61000010)]
     image = bytearray(max(p['vaddr'] + p['memsz'] for p in loads))

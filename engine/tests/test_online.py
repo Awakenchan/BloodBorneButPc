@@ -7,7 +7,6 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import os
-# The tests cover the connection itself: online play is paused by default (online.ONLINE_PAUSED).
 os.environ['BB_ONLINE_PAUSED'] = '0'
 from online import (configure_online, game_server, http_base, ONLINE_ENV, GAME_STATUS_ORIGIN, HUNTERS_DREAM,
                     PLAY_LOG_HOSTS, DEFAULT_P2P_PORT, DEFAULT_SIGN_TIMEOUT, SHADNET_HOST, SHADNET_PORT,

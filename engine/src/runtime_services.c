@@ -1,9 +1,3 @@
-/* System services for an offline, single-user console:
- *   - one local user (id 1) who is logged in but not signed in to PSN;
- *   - network cable unplugged: NetCtl disconnected, sockets unavailable;
- *   - common dialogs complete immediately (no UI is drawn yet);
- *   - the whole package is installed (PlayGo reports every chunk local).
- * Every entry here is an explicit contract; unknown functions still stop. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
@@ -46,7 +40,6 @@ static int next_id=1;
 static int new_id(void) { host_lock(&lock); int id=next_id++; host_unlock(&lock); return id; }
 static void note(const char *what) { printf("Runtime: %s\n",what); }
 
-/* ---- UserService ---- */
 static int login_event_pending=1;
 static ABI int32_t user_initialize(const void *params) { (void)params; note("UserService initialized (user 1 logged in)"); return 0; }
 static ABI int32_t user_terminate(void) { return 0; }
@@ -58,7 +51,7 @@ static ABI int32_t user_list(int32_t *ids) {
 static ABI int32_t user_name(int32_t id,char *name,uint64_t size) {
     if (id!=USER_ID || !name) return USER_INVALID_ARGUMENT;
     const char *value=getenv("BB_USER_NAME") ? getenv("BB_USER_NAME") : "Hunter";
-    if (strlen(value)+1>size) return (int32_t)0x8096000a; /* BUFFER_TOO_SHORT */
+    if (strlen(value)+1>size) return (int32_t)0x8096000a;
     strcpy(name,value); return 0;
 }
 static ABI int32_t user_event(int32_t *event) {
@@ -67,27 +60,26 @@ static ABI int32_t user_event(int32_t *event) {
     int pending=login_event_pending; login_event_pending=0;
     host_unlock(&lock);
     if (!pending) return USER_NO_EVENT;
-    event[0]=0; event[1]=USER_ID; /* LOGIN */
+    event[0]=0; event[1]=USER_ID;
     return 0;
 }
 
-/* ---- SystemService ---- */
 static int language(void) { const char *v=getenv("BB_LANGUAGE"); return v ? atoi(v) : 1; }
 static ABI int32_t system_param(int32_t id,int32_t *value) {
     if (!value) return SYSTEM_PARAMETER;
     switch (id) {
-    case 1: *value=language(); break;           /* language (1 = English US, 8 = Russian) */
-    case 2: *value=1; break;                    /* date format DD/MM/YYYY */
-    case 3: *value=1; break;                    /* 24-hour clock */
+    case 1: *value=language(); break;
+    case 2: *value=1; break;
+    case 3: *value=1; break;
 #ifdef _WIN32
     case 4: *value=(int32_t)(runtime_utc_offset(time(NULL))/60); break;
 #else
     case 4: { time_t now=time(NULL); struct tm t; localtime_r(&now,&t); *value=(int32_t)(t.tm_gmtoff/60); break; }
 #endif
-    case 5: *value=0; break;                    /* summer time */
-    case 7: *value=0; break;                    /* parental level off */
-    case 1000: *value=1; break;                 /* enter button = cross */
-    default: /* bbport: the parameter error instead of ending the game (exit 21) */
+    case 5: *value=0; break;
+    case 7: *value=0; break;
+    case 1000: *value=1; break;
+    default:
         fprintf(stderr,"Runtime: unsupported system parameter %d\n",id);
         return SYSTEM_PARAMETER;
     }
@@ -95,14 +87,13 @@ static ABI int32_t system_param(int32_t id,int32_t *value) {
 }
 static ABI int32_t system_status(unsigned char *status) {
     if (!status) return SYSTEM_PARAMETER;
-    memset(status,0,12); /* event_num=0, no overlay, foreground, normal CPU mode */
+    memset(status,0,12);
     return 0;
 }
 static ABI int32_t system_event(void *event) { (void)event; return SYSTEM_NO_EVENT; }
 static ABI int32_t hide_splash(void) { note("SystemService: splash screen hidden"); return 0; }
 static ABI int32_t launch_browser(void) { note("SystemService: web browser request ignored (offline)"); return 0; }
 
-/* ---- NetCtl / Net / Http / Ssl: no network ---- */
 static int32_t net_errno;
 static ABI int32_t net_init(void) { return 0; }
 static ABI int32_t net_term(void) { return 0; }
@@ -141,29 +132,27 @@ static ABI int32_t netctl_check(void) { return 0; }
 static ABI int32_t netctl_unregister(int cid) { (void)cid; return 0; }
 static ABI int32_t netctl_nat(uint32_t *info) {
     if (!info) return NET_CTL_INVALID_ADDR;
-    info[1]=0; info[2]=3; info[3]=0; /* stun failed, NAT type 3, no mapped address */
+    info[1]=0; info[2]=3; info[3]=0;
     return 0;
 }
 static ABI int32_t lib_init_id(void) { return new_id(); }
 static ABI int32_t ok_void(void) { return 0; }
 static ABI int32_t http_fail(void) { return HTTP_NETWORK; }
-/* Objects are created so setup code proceeds; any transfer fails as unplugged. */
 static ABI int32_t http_object(void) { return new_id(); }
 static ABI int32_t http_epoll(int32_t ctx,void **handle) {
     (void)ctx;
-    if (!handle) return (int32_t)0x80431077; /* HTTP INVALID_VALUE */
+    if (!handle) return (int32_t)0x80431077;
     *handle=(void *)(uintptr_t)(0x100+new_id()); return 0;
 }
 static ABI int32_t http_wait(void *handle,void *events,int32_t max,int64_t timeout) {
     (void)handle; (void)events; (void)max;
     if (timeout>0) host_sleep_ns((uint64_t)timeout*1000);
-    return 0; /* no events: nothing is in flight */
+    return 0;
 }
 
-/* ---- NP (PSN): signed out ---- */
 static ABI int32_t np_state(int32_t user,int32_t *state) {
     if (!state) return NP_INVALID_ARGUMENT;
-    (void)user; *state=1; /* SIGNED_OUT */
+    (void)user; *state=1;
     return 0;
 }
 static ABI int32_t np_signed_out(void) { return NP_SIGNED_OUT; }
@@ -174,21 +163,19 @@ static ABI int32_t np_request_ctx(int32_t ctx,const void *param) { (void)ctx; (v
 static ABI int32_t np_poll(int32_t request,int32_t *result) { (void)request; if (result) *result=NP_SIGNED_OUT; return 0; }
 static ABI int32_t np_compare(const void *a,const void *b) {
     if (!a || !b) return NP_INVALID_ARGUMENT;
-    return memcmp(a,b,16) ? (int32_t)0x80550609 : 0; /* NP_UTIL NOT_MATCH */
+    return memcmp(a,b,16) ? (int32_t)0x80550609 : 0;
 }
 
-/* ---- Voice chat: ports exist, carry no audio ---- */
 static ABI int32_t voice_port(void *param,uint32_t *port) { (void)param; if (!port) return (int32_t)0x8029000b; *port=(uint32_t)new_id(); return 0; }
 static ABI int32_t voice_read(uint32_t port,void *data,uint32_t *size) { (void)port; (void)data; if (size) *size=0; return 0; }
 static ABI int32_t voice_write(uint32_t port,const void *data,uint32_t *size) { (void)port; (void)data; (void)size; return 0; }
 static ABI int32_t voice_info(uint32_t port,uint32_t *info) {
     (void)port;
     if (!info) return (int32_t)0x8029000b;
-    memset(info,0,40); /* type, state=unconnected, no bytes available */
+    memset(info,0,40);
     return 0;
 }
 
-/* ---- Common dialogs: nothing is displayed; an opened dialog finishes. ---- */
 typedef struct { const char *name; int initialized, status; } Dialog;
 static Dialog dialogs[]={{"CommonDialog",0,0},{"MsgDialog",0,0},{"SaveDataDialog",0,0},
                          {"NpProfileDialog",0,0},{"NpCommerceDialog",0,0},{"ImeDialog",0,0}};
@@ -214,9 +201,6 @@ static int32_t dialog_term(int i) {
     static ABI int32_t tag##_term(void) { return dialog_term(i); }
 DIALOG(msg,1) DIALOG(save,2) DIALOG(profile,3) DIALOG(commerce,4)
 static ABI int32_t profile_result(void *result) { if (result) memset(result,0,4); return 0; }
-/* ImeDialog: text typed on the keyboard into the game window (title bar shows it).
- * OrbisImeDialogParam: user, type, languages(8), enter label, method, filter,
- * option, max length, char16 buffer, position, alignment, placeholder, title. */
 typedef struct {
     int32_t user; uint32_t type; uint64_t languages; uint32_t enter_label, input_method;
     void *filter; uint32_t option, max_length; uint16_t *buffer;
@@ -255,8 +239,8 @@ static void ime_complete(int end_status, const char *text) {
 }
 static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     (void)extended;
-    if (!param || !param->buffer || !param->max_length) return (int32_t)0x80BC0004; /* IME INVALID_ADDRESS */
-    if (ime.running) return (int32_t)0x80BC0003;                                  /* BUSY */
+    if (!param || !param->buffer || !param->max_length) return (int32_t)0x80BC0004;
+    if (ime.running) return (int32_t)0x80BC0003;
     memset(&ime,0,sizeof(ime));
     ime.buffer=param->buffer; ime.max_length=param->max_length; ime.running=1;
     char initial[512], prompt[256];
@@ -264,8 +248,6 @@ static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     utf16_to_utf8(param->title,128,prompt,sizeof(prompt));
     const char *preset=getenv("BB_IME_TEXT");
     if (preset) { ime_complete(0,preset); return 0; }
-    /* An empty field starts with the player name (launcher) or "Hunter", so a controller alone
-     * can accept it: there is no on-screen keyboard (Supermedo/bloodborne_pc 1d34202). */
     const char *name=getenv("BB_USER_NAME");
     const char *start=initial[0] ? initial : name && *name ? name : "Hunter";
     if (!bbgpu_text_input_begin(start,prompt[0] ? prompt : "Text")) {
@@ -279,16 +261,15 @@ static ABI int32_t ime_status(void) {
         int state=bbgpu_text_input_poll(text,sizeof(text));
         if (state) ime_complete(state==1 ? 0 : 1,text);
     }
-    return ime.running ? 1 : ime.finished ? 2 : 0; /* Running / Finished / None */
+    return ime.running ? 1 : ime.finished ? 2 : 0;
 }
 static ABI int32_t ime_result(uint32_t *result) {
-    if (!ime.finished) return (int32_t)0x80BC0101; /* DIALOG NOT_FINISHED */
+    if (!ime.finished) return (int32_t)0x80BC0101;
     if (result) *result=(uint32_t)ime.end_status;
     return 0;
 }
 static ABI int32_t ime_term(void) { memset(&ime,0,sizeof(ime)); return 0; }
 
-/* ---- Trophies: accepted locally, recorded in the log ---- */
 static ABI int32_t trophy_context(int32_t *ctx,int32_t user,uint32_t label,uint64_t options) {
     (void)user; (void)label; (void)options;
     if (!ctx) return TROPHY_INVALID;
@@ -312,7 +293,6 @@ static ABI int32_t trophy_info(int32_t ctx,int32_t handle,int32_t id,void *detai
     (void)id; return trophy_game_info(ctx,handle,details,data);
 }
 
-/* ---- PlayGo: fully installed package ---- */
 static int playgo_handle, playgo_chunks=-1;
 static ABI int32_t playgo_init(const void *params) {
     (void)params;
@@ -346,13 +326,12 @@ static ABI int32_t playgo_locus(int32_t handle,const uint16_t *ids,uint32_t coun
     if (!count) return PLAYGO_BAD_SIZE;
     for (uint32_t i=0;i<count;++i) {
         if (ids[i]>=playgo_chunks) return PLAYGO_BAD_CHUNK;
-        loci[i]=3; /* LocalFast */
+        loci[i]=3;
     }
     return 0;
 }
 static ABI int32_t playgo_speed(int32_t handle,int32_t speed) { (void)speed; return handle==playgo_handle && handle ? 0 : PLAYGO_BAD_HANDLE; }
 
-/* ---- DiscMap: the game is fully installed, no disc bitmap exists ---- */
 #define DISC_MAP_NO_BITMAP ((int32_t)0x81100004)
 static ABI int32_t discmap_on_hdd(const char *path,int64_t offset,int64_t size,int32_t *result) {
     (void)path; (void)offset; (void)size; (void)result; return DISC_MAP_NO_BITMAP;
@@ -361,13 +340,11 @@ static ABI int32_t discmap_8a82(const char *path,int64_t offset,int64_t size,int
     (void)path; (void)offset; (void)size; (void)flags; (void)r1; (void)r2; return DISC_MAP_NO_BITMAP;
 }
 
-/* ---- Devices that are absent: mouse, microphone, voice chat ---- */
-/* A mouse port opens but never reports a connected device. */
 static ABI int32_t mouse_open(int32_t user,int32_t type,int32_t index,const void *param) { (void)user; (void)type; (void)index; (void)param; return new_id(); }
 static ABI int32_t mouse_read(int32_t handle,unsigned char *data,int32_t count) {
     (void)handle;
     if (!data || count<1) return (int32_t)0x80DF0001;
-    memset(data,0,40); return 1; /* timestamp 0, connected=false */
+    memset(data,0,40); return 1;
 }
 static ABI int32_t mouse_close(int32_t handle) { (void)handle; return 0; }
 static ABI int32_t audio_in_open(void) { return AUDIO_IN_NOT_OPENED; }
@@ -488,7 +465,6 @@ static const RuntimeExport exports[]={
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
     {"sceVoiceInit",ok_void}, {"sceVoiceEnd",ok_void},
 };
-/* Opt-in native networking. Saves, trophies and dialogs retain their local contracts. */
 static int online_symbol(const char *symbol) {
     static const char *const prefixes[]={"sceNet","sceNp","sceHttp","sceSsl"};
     static const char *const local[]={"sceNpTrophy","sceNpCommerce","sceNpProfileDialog"};

@@ -803,7 +803,10 @@ namespace BloodborneLauncher
             var choice = Workspace.Current.Settings.Str("app_icon");
             AppIcon.Apply(this, choice);
             if (Paths.DetectPortDir() is { } package)
+            {
                 AppIcon.SyncGameWindow(package, choice);
+                AppIcon.SyncShortcuts(package, choice);
+            }
         }
 
         /// <summary>

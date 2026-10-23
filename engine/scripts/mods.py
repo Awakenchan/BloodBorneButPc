@@ -10,16 +10,12 @@ import stat
 import sys
 import tempfile
 
-# Windows: symbolic links need administrator rights or developer mode. Directories become
-# junctions and files hard links instead (a copy when the mod is on another volume).
 WINDOWS = os.name == 'nt'
 
-# Top-level folders of the game's dvdroot_ps4: a mod made of these is a dvdroot_ps4 itself.
 GAME_FOLDERS = {'action', 'chr', 'event', 'facegen', 'font', 'map', 'menu', 'movie', 'msg', 'mtd',
                 'obj', 'other', 'param', 'paramdef', 'parts', 'remo', 'script', 'sfx', 'shader',
                 'sound'}
 
-# Every retail serial (all run the same 1.09 game): mods wrap their files in any of them.
 SERIALS = ('CUSA00207', 'CUSA00208', 'CUSA00299', 'CUSA00900', 'CUSA01363', 'CUSA03014',
            'CUSA03023', 'CUSA03173', 'CUSA03179')
 
@@ -80,7 +76,6 @@ def selected(root, config):
     order = settings.get('order', [])
     if not isinstance(order, list) or not all(isinstance(n, str) for n in order):
         raise ValueError('Mod order must be a list of folder names')
-    # New folders are enabled automatically and appended in alphabetical order.
     return list(dict.fromkeys(n for n in [*order, *available]
                              if n in available and n not in disabled))
 
@@ -94,7 +89,6 @@ def mod_files(folder):
     root = root.resolve()
     for directory, folders, files in os.walk(root, followlinks=False):
         directory = Path(directory)
-        # A link (shortcut-like entry) is left out, never followed: it could point anywhere (#34).
         for name in [n for n in folders if (directory / n).is_symlink()]:
             print(f'Mods: skipped the link {directory / name} (links are not followed)', file=sys.stderr)
             folders.remove(name)
@@ -104,8 +98,6 @@ def mod_files(folder):
                 print(f'Mods: skipped the link {source} (links are not followed)', file=sys.stderr)
                 continue
             relative = Path(prefix) / source.relative_to(root) if prefix else source.relative_to(root)
-            # Readme/metadata stay outside the mounted game. This loader handles assets;
-            # executable patches use the existing patch compiler, with address validation.
             if relative.parts[0].casefold() != 'dvdroot_ps4':
                 if relative.parts[0].casefold() in ('eboot.bin', 'sce_module', 'sce_sys'):
                     raise ValueError(f'Executable/system replacement is unsupported: {source}')
@@ -187,7 +179,7 @@ def unlink(path):
     except PermissionError:
         if not WINDOWS or is_link(path):
             raise
-        os.chmod(path, stat.S_IWRITE)  # a read-only copy (hard links share the attribute)
+        os.chmod(path, stat.S_IWRITE)
         path.unlink()
 
 
@@ -281,7 +273,6 @@ def build_overlay(game, out, mods, update=None):
             link(overlay / entry.name, entry)
         replaced = added = 0
         for relative, source in replacements:
-            # Each component takes the game's spelling when it exists in another case.
             parent = overlay
             for part in relative.parts[:-1]:
                 parent = child(parent, part)
@@ -291,7 +282,6 @@ def build_overlay(game, out, mods, update=None):
                 replaced += destination.resolve().is_relative_to(game)
                 destination.unlink()
             elif WINDOWS and destination.is_file():
-                # A hard link or copy: every file in the overlay is one of ours.
                 replaced += 1
                 unlink(destination)
             elif destination.exists():
@@ -316,11 +306,9 @@ def main():
     args = parser.parse_args()
     layers = []
     if args.enabled == '1':
-        # shadPS4's loose overlay convention, beside the original game.
         legacy = Path(str(args.game.resolve()) + '-mods')
         if legacy.is_dir():
             layers.append((legacy.name, legacy))
-        # A directly selected loose overlay is also accepted.
         if child(args.mods_dir, 'dvdroot_ps4').is_dir():
             layers.append((args.mods_dir.name, args.mods_dir))
         else:

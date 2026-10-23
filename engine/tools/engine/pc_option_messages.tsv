@@ -12,16 +12,17 @@
 # depth of field and chromatic aberration moved to PC Effects with their
 # 117000 ids.)
 #
-# bbhost builds this file in and writes these into menu.msgbnd.dcx at start
-# (src/engine/menu_assets.cpp); the ids
-# are what src/engine/option_menu.cpp asks the message repository for, so the
-# text lives here and nowhere else.
+# bb-engine-assets builds this file in and writes these into each language's
+# menu.msgbnd.dcx at start (tools/engine/menu_assets.cpp); the ids are what
+# gpu/shim/engine/option_menu.cpp and option_keys.cpp ask the message
+# repository for, so the text lives here and nowhere else.
 #
 # Ids 920000..929999 are dialog text instead (group 78, the generic yes/no
-# dialog's - engine/live_resolution.cpp opens one); the help column is unused.
+# dialog's, and 204, the option screens' questions: Quit to Desktop asks
+# 920001); the help column is unused.
 # Ids 14000332..14000399 are event text (group 30): the talk menus' entries and
 # the messages their scripts show - the Altar of Despair's rebirth
-# (engine/rebirth_script.h); the help column is unused.
+# (tools/engine/rebirth_script.h); the help column is unused.
 # A "\n" in the text is a line break.
 #
 # Optional columns 4 and 5: Simplified Chinese text and help for msg/zhocn.
@@ -94,7 +95,7 @@
 118003	Mouse Y-Axis	The mouse's vertical camera direction.	鼠标 Y 轴	鼠标控制镜头的垂直方向。
 118020	PC Controls		PC 控制
 # Key Bindings. The seven action rows' captions and line help are replaced by
-# the port at runtime (engine/option_menu.cpp); these are what they stand in
+# the port at runtime (gpu/shim/engine/option_keys.cpp); these are what they stand in
 # for until then.
 119000	Page	Left and right change the group of actions shown.	分类	使用左右方向切换显示的动作分类。
 119001	Action		动作

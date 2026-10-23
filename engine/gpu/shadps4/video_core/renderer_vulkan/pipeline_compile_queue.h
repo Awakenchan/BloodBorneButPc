@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: pipelines first seen during play (docs/pipeline_compiles.md). The compile threads'
 // job queue, from which a thread that needs a pipeline right away takes its job, the rule for
 // how long draws of a pipeline still compiling may be left out, and the statistics of both

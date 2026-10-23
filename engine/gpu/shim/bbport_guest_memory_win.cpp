@@ -1,11 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: the PC memory model on Windows (BB_GUEST_IN_PLACE=1). The game's memory is a pagefile
-// section (src/win32_memory.c) the runtime also maps whole as its backing view; direct memory phys
-// lives at backing + phys in every view of it. Here the GPU imports that view in 256 MiB chunks
-// (VK_EXT_external_memory_host), each when the GPU side first asks for it (Find): the GPU then
-// reads and writes the game's memory in place, with no page protection, write faults or uploads.
-// tools/host_import_probe_win.cpp checks a driver by hand (CPU and GPU see each other's writes in
-// every view; imports at any 4 KiB offset; the arena binds them).
+// SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef _WIN32
 #include "bbport_guest_memory.h"
 
@@ -19,8 +12,6 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 
 extern "C" unsigned char* runtime_memory_backing(uint64_t* direct_size);
-// src/win32_memory.c: BB_POOL_LAZY commits the pool's pages as they are mapped; an import pins
-// pages, so a chunk is committed whole first (a no-op on a committed pool).
 extern "C" int win_mem_commit(uint64_t phys, uint64_t size);
 
 namespace BbGuestMemory {
@@ -30,9 +21,9 @@ constexpr u64 ChunkSize = u64(256) << 20;
 constexpr std::size_t MaxChunks = 256;
 
 const Vulkan::Instance* vk_instance = nullptr;
-std::uint32_t import_types = 0; // memory types a host import may use (from the self-test)
+std::uint32_t import_types = 0;
 std::mutex mutex;
-std::array<Chunk*, MaxChunks> chunks{}; // by chunk number: phys / ChunkSize
+std::array<Chunk*, MaxChunks> chunks{};
 std::array<bool, MaxChunks> failed{};
 std::atomic<u64> chunk_bytes{0};
 
@@ -47,7 +38,6 @@ std::uint32_t PickType(std::uint32_t bits) {
     return ~0u;
 }
 
-/// A buffer over `size` bytes of host memory at `pointer`, imported; false (nothing kept) if not.
 bool Import(void* pointer, u64 size, vk::Buffer& buffer, vk::DeviceMemory& memory,
             const char** failed_step) {
     const vk::Device dev = vk_instance->GetDevice();
@@ -97,7 +87,7 @@ bool Import(void* pointer, u64 size, vk::Buffer& buffer, vk::DeviceMemory& memor
     memory = imported;
     return true;
 }
-} // namespace
+}
 
 vk::ExternalMemoryHandleTypeFlagBits ChunkHandleType() {
     return vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT;
@@ -123,7 +113,6 @@ bool Usable(const Vulkan::Instance& instance) {
             return false;
         }
         vk_instance = &instance;
-        // A section view, as the game's memory is: imported, then dropped.
         constexpr u64 Size = 2 << 20;
         HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
                                             DWORD(Size), nullptr);
@@ -134,9 +123,6 @@ bool Usable(const Vulkan::Instance& instance) {
         const bool imported = view && Import(view, Size, buffer, memory, &step);
         if (imported) {
             const vk::Device dev = instance.GetDevice();
-            // The arena (a sparse buffer) binds this memory at its blocks. Outside the types the
-            // arena lists the binding is outside the spec; NVIDIA's driver binds it all the same
-            // (tools/host_import_probe_win.cpp checks the data), so it is reported, not refused.
             const auto [arena_result, arena] = dev.createBuffer({
                 .flags = vk::BufferCreateFlagBits::eSparseBinding |
                          vk::BufferCreateFlagBits::eSparseResidency,
@@ -161,7 +147,7 @@ bool Usable(const Vulkan::Instance& instance) {
             dev.freeMemory(memory);
         } else {
             std::printf("Guest memory: importing a section view failed at %s\n", step);
-            vk_instance = nullptr; // Find imports nothing
+            vk_instance = nullptr;
         }
         if (view) {
             UnmapViewOfFile(view);
@@ -175,8 +161,6 @@ bool Usable(const Vulkan::Instance& instance) {
 }
 
 void Install(const Vulkan::Instance& instance) {
-    // Nothing to hand the runtime: its pool section already holds direct memory; chunks are
-    // imported on demand (Find). Usable() ran the self-test and set vk_instance.
     const char* in_place = std::getenv("BB_GUEST_IN_PLACE");
     if (!(in_place && in_place[0] == '1') || !Usable(instance)) {
         return;
@@ -189,9 +173,6 @@ void Install(const Vulkan::Instance& instance) {
 namespace {
 std::array<bool, MaxChunks> queued{};
 
-/// Imports chunk n on a thread of its own: an import pins every page of 256 MiB (65536 page
-/// faults, up to a second). Inline on the draw thread it froze the first frame after a load for
-/// 2.8 s (three chunks at once).
 void ImportChunk(u64 n) {
     u64 direct_size = 0;
     unsigned char* backing = runtime_memory_backing(&direct_size);
@@ -225,7 +206,7 @@ void ImportChunk(u64 n) {
                 (unsigned long long)(n * ChunkSize), (unsigned long long)(size >> 20),
                 (unsigned long long)(total >> 20));
 }
-} // namespace
+}
 
 const Chunk* Find(std::uint64_t phys) {
     if (!vk_instance) {
@@ -237,15 +218,15 @@ const Chunk* Find(std::uint64_t phys) {
     }
     std::scoped_lock lk{mutex};
     if (chunks[n] || failed[n] || queued[n]) {
-        return chunks[n]; // null while the import runs: the block keeps a VRAM copy meanwhile
+        return chunks[n];
     }
     u64 direct_size = 0;
     if (!runtime_memory_backing(&direct_size) || n * ChunkSize >= direct_size) {
-        return nullptr; // no pool yet, or not direct memory: asked again later
+        return nullptr;
     }
     queued[n] = true;
     std::thread([n] { ImportChunk(n); }).detach();
     return nullptr;
 }
-} // namespace BbGuestMemory
+}
 #endif

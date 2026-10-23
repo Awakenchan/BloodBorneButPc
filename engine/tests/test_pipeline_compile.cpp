@@ -1,7 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// Pipeline compiles off the frame path (docs/pipeline_compiles.md): the compile job queue a
-// waiting thread takes its job from, the bound on leaving draws out, the texture cache's
-// lock-free page watch counts, and the draw pipe's sleeping waits (no Vulkan device).
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -29,19 +26,16 @@ void TestJobQueue() {
     queue.Push(&b, [&] { order.push_back('b'); });
     queue.Push(&c, [&] { order.push_back('c'); });
     assert(queue.Size() == 3);
-    // A thread that needs b takes it out of the queue and runs it itself.
     auto job = queue.Take(&b);
     assert(job);
     job();
-    assert(!queue.Take(&b)); // gone: a second waiter waits for the first one's result
+    assert(!queue.Take(&b));
     assert(queue.Size() == 2);
-    // The compile threads go on first in, first out with the rest.
     queue.Pop()();
     queue.Pop()();
     assert((order == std::vector<char>{'b', 'a', 'c'}));
     assert(!queue.Take(&a) && queue.Size() == 0);
 
-    // A compile thread and takers at once: every job runs exactly once.
     constexpr int Jobs = 2000;
     std::vector<int> owners(Jobs);
     std::vector<std::atomic<int>> runs(Jobs);
@@ -62,7 +56,6 @@ void TestJobQueue() {
             j();
         }
     }
-    // Last in the queue: the compile thread has run every job left before it.
     queue.Push(nullptr, [&] { stop.store(true); });
     worker.join();
     assert(queue.Size() == 0);
@@ -78,10 +71,10 @@ void TestSkipBudget() {
     assert(WithinSkipBudget(first, 5 * Ms, 1000 * Ms) && first == 5 * Ms);
     assert(WithinSkipBudget(first, 500 * Ms, 1000 * Ms) && first == 5 * Ms);
     assert(WithinSkipBudget(first, 1004 * Ms, 1000 * Ms));
-    assert(!WithinSkipBudget(first, 1005 * Ms, 1000 * Ms)); // waits from then on
+    assert(!WithinSkipBudget(first, 1005 * Ms, 1000 * Ms));
     assert(!WithinSkipBudget(first, 9000 * Ms, 1000 * Ms));
     std::uint64_t never = 0;
-    assert(!WithinSkipBudget(never, 7 * Ms, 0)); // BB_SKIP_UNCOMPILED=0
+    assert(!WithinSkipBudget(never, 7 * Ms, 0));
     std::uint64_t at_zero = 0;
     assert(WithinSkipBudget(at_zero, 0, 10) && at_zero != 0);
 }
@@ -89,37 +82,28 @@ void TestSkipBudget() {
 void TestWatchedPages() {
     auto pages = std::make_unique<VideoCore::WatchedPages>();
     constexpr std::uint64_t P = 4096;
-    const std::uint64_t base = 0x2'4000'0000ull; // another chunk than below
+    const std::uint64_t base = 0x2'4000'0000ull;
     assert(!pages->Any(base, 8));
-    // An image over three pages, not page aligned (TrackImage: the whole image).
     const std::uint64_t begin = base + 0x800, end = base + 2 * P + 0x100;
     pages->Add(begin, end - begin, 1);
     assert(pages->Any(base, 8) && pages->Any(base + P, 8) && pages->Any(base + 2 * P + 0xff0, 8));
     assert(!pages->Any(base + 3 * P, 8) && !pages->Any(base - 8, 8));
-    // UntrackImageHead: [begin, next page), then UntrackImageTail: [page of end, end): the
-    // counts follow the page manager's (each sub-range's own pages).
     pages->Add(begin, base + P - begin, -1);
     assert(!pages->Any(base + 0x900, 8) && pages->Any(base + P, 8));
     pages->Add(base + 2 * P, end - (base + 2 * P), -1);
     assert(!pages->Any(base + 2 * P + 8, 8) && pages->Any(base + P + 8, 8));
-    // A second image sharing the middle page keeps it watched after the first one goes.
     pages->Add(base + P + 0x200, 0x100, 1);
-    pages->Add(base + P, P, -1); // UntrackImage of what is left of the first
+    pages->Add(base + P, P, -1);
     assert(pages->Any(base + P, 8));
     pages->Add(base + P + 0x200, 0x100, -1);
     assert(!pages->Any(base, 3 * P));
-    // A range across pages, and a page-aligned tail of size 0 (no page), as the page manager.
     pages->Add(base + 5 * P, 0, -1);
     assert(!pages->Any(base + 5 * P, 1));
-    // Addresses past the table count as watched (the locked path).
     assert(pages->Any(std::uint64_t{1} << 41, 8));
-    // Untracking more than tracked stays at zero instead of wrapping.
     pages->Add(base + 9 * P, P, -1);
     assert(!pages->Any(base + 9 * P, 8));
 }
 
-// The draw pipe's stage A waits: packets that run long (a pipeline compile, an image created
-// with memory short) must not keep stage A spinning, and a wake-up must never be lost.
 std::atomic<int> long_packets{0};
 std::atomic<std::uint64_t> handled{0};
 void Handler(void*, const u8* packet, u32 size) {
@@ -146,7 +130,6 @@ std::uint64_t ThreadCpuUs() {
 
 void TestDrawPipeWaits() {
     Vulkan::DrawPipe pipe(&Handler, nullptr);
-    // A drain behind a 300 ms packet: stage A sleeps (stage B wakes it), using little CPU.
     Post(pipe, 0);
     Post(pipe, 300);
     const std::uint64_t cpu_before = ThreadCpuUs();
@@ -163,11 +146,9 @@ void TestDrawPipeWaits() {
                 static_cast<unsigned long long>(pipe.sleeps));
     if (Vulkan::DrawPipe::SleepEnabled()) {
         assert(pipe.sleeps >= 1);
-        // Spin (4096 pauses) and yield for 0.5 ms, then asleep: far below the 300 ms.
         assert(cpu_us < 60'000);
     }
 
-    // WaitForPacket for one in the middle of long ones.
     const u64 number = pipe.NextPacket() + 1;
     Post(pipe, 20);
     Post(pipe, 20);
@@ -176,8 +157,6 @@ void TestDrawPipeWaits() {
     assert(pipe.ReachedPacket(number));
     pipe.Drain();
 
-    // Many short packets with drains and packet waits in between, a watchdog for a lost
-    // wake-up (stage A asleep with nothing left for stage B to run: a hang).
     std::atomic<bool> finished{false};
     std::thread watchdog([&] {
         std::uint64_t last = handled.load();
@@ -219,7 +198,7 @@ void TestDrawPipeWaits() {
                 static_cast<unsigned long long>(pipe.sleeps), long_packets.load());
 }
 
-} // namespace
+}
 
 int main() {
     TestJobQueue();

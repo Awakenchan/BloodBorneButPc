@@ -1,12 +1,9 @@
-/* host_sync.h: the runtime's threads, clocks and sleeps on each host. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdlib.h>
 #ifdef _WIN32
 #include <process.h>
 
-/* RuntimeRecoverBuf: rbx rbp rdi rsi r12-r15, rsp after the return, return address, xmm6-xmm15,
- * MXCSR, x87 control word. */
 __asm__(".text\n"
         ".globl runtime_setjmp\n"
         ".def runtime_setjmp; .scl 2; .type 32; .endef\n"
@@ -39,8 +36,6 @@ static unsigned __stdcall start(void *p) {
     s.entry(s.argument);
     return 0;
 }
-/* The CRT's thread start (per-thread CRT state). The size is committed up front. The thread
- * starts suspended so *thread is set before it runs (it may detach or join others at once). */
 int host_thread_start(HostThread *thread, size_t stack, void *(*entry)(void *), void *argument) {
     Start *s = malloc(sizeof(*s));
     if (!s) return ENOMEM;
@@ -72,20 +67,14 @@ uint64_t host_monotonic_ns(void) {
 uint64_t host_realtime_ns(void) {
     FILETIME t;
     GetSystemTimePreciseAsFileTime(&t);
-    uint64_t ticks = ((uint64_t)t.dwHighDateTime << 32) | t.dwLowDateTime; /* 100 ns since 1601 */
+    uint64_t ticks = ((uint64_t)t.dwHighDateTime << 32) | t.dwLowDateTime;
     return (ticks - UINT64_C(116444736000000000)) * 100;
 }
 static __thread HANDLE sleep_timer;
 static __thread int sleep_timer_high_resolution;
 enum { PRECISE_SPIN_NS = 600000, ADAPTIVE_MARGIN_NS = 100000 };
-/* How late the high-resolution timer wakes (ns), a running average over ~16 waits, measured on
- * every timer wait. The adaptive spin (SPIN_ADAPTIVE) is that plus a margin: a fixed short
- * spin woke the game's threads late whenever the timer was later than it (~20 sleeps a frame
- * on the game's critical threads), a fixed long one burns a core. */
 static int64_t timer_late_ns = 300000;
 #define SPIN_ADAPTIVE UINT64_MAX
-/* High-resolution waitable timers (Windows 10 1803+) wake within ~0.5 ms; the last spin_ns of
- * a wait is spun (all of it without such a timer). */
 static void sleep_until_spinning(uint64_t deadline, uint64_t spin_ns) {
     uint64_t now = host_monotonic_ns();
     if (now >= deadline) return;
@@ -119,12 +108,7 @@ static void sleep_until_spinning(uint64_t deadline, uint64_t spin_ns) {
     }
     while (host_monotonic_ns() < deadline) YieldProcessor();
 }
-/* Frame pacing and audio deadlines: precise. */
 void host_sleep_until_ns(uint64_t deadline) { sleep_until_spinning(deadline, PRECISE_SPIN_NS); }
-/* The game's own sleeps (sceKernelUsleep, nanosleep: ~20-26 per frame, ~4 ms each in Central
- * Yharnam). By default the spin tail follows the timer (SPIN_ADAPTIVE: as late as it wakes,
- * plus 0.1 ms; ~0.2-0.4 ms instead of 0.6), so a sleep neither burns a fixed 0.6 ms of a core
- * nor overruns. BB_SLEEP_SPIN_US sets a fixed tail (600: as before). */
 static uint64_t guest_sleep_spin_ns(void) {
     static uint64_t spin = 0;
     uint64_t value = __atomic_load_n(&spin, __ATOMIC_RELAXED);

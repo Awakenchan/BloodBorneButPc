@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "prepare.h"
 #include "elf.h"
 
@@ -24,8 +24,6 @@ bool IsLoad(const Ph& p) {
     return p.type == 1 || p.type == 0x61000010;
 }
 
-// --- the game check (was game_check.py) -------------------------------------------------------
-
 std::optional<std::size_t> DifferingChunks(const Bytes& image, const fs::path& engine) {
     std::vector<std::string> expected;
     try {
@@ -45,9 +43,6 @@ std::optional<std::size_t> DifferingChunks(const Bytes& image, const fs::path& e
     return differing;
 }
 
-// Whether the last checked executable is the 1.09 code the patches were made for: the verified
-// image, or one with a few pieces changed (a patched eboot). The edition's title does not matter:
-// CUSA00900 (US) runs the same 1.09 code as CUSA03173.
 bool checked_code_109 = false, game_check_skipped = false;
 
 void CheckGame(const fs::path& game, const Bytes& image, const fs::path& engine) {
@@ -73,8 +68,6 @@ void CheckGame(const fs::path& game, const Bytes& image, const fs::path& engine)
         return;
     }
     const std::string found = "Found " + title + " version " + version + " (sce_sys/param.sfo).";
-    // Another edition (CUSA00900, other regions): started anyway, without the patches and hooks
-    // made for CUSA03173's executable (bb-start leaves them out, main.cpp).
     if (title != kSupportedTitle) {
         Log("Game check: %s Works best with Bloodborne CUSA03173 (update 1.09): this edition's executable differs, "
             "so it starts without the FPS, resolution and engine patches made for that one (30 FPS, the game's own "
@@ -90,8 +83,6 @@ void CheckGame(const fs::path& game, const Bytes& image, const fs::path& engine)
                                  "1.09 update into the game folder, replacing the old one.");
 }
 
-// A game executable read for the boot image: an empty or cut-short one (antivirus quarantine, a
-// disk error, a copy stopped half way) is named, with what to do, instead of a parser error.
 Executable ReadExecutable(const fs::path& path, const char* shown) {
     const Bytes data = ReadFile(path);
     try {
@@ -105,8 +96,6 @@ Executable ReadExecutable(const fs::path& path, const char* shown) {
                              "and check that your antivirus has not quarantined or cut it.");
     }
 }
-
-// --- a module's dynamic information (was link_modules.module) ---------------------------------
 
 struct Identity {
     std::string nid;
@@ -138,7 +127,7 @@ struct Relocation {
 
 struct Module {
     Executable exe;
-    std::map<std::uint64_t, std::uint64_t> tags;  // last value of each tag, as dict(...)
+    std::map<std::uint64_t, std::uint64_t> tags;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> dynamic;
     std::vector<Symbol> symbols;
     std::vector<Relocation> relocs;
@@ -240,8 +229,6 @@ Module ReadModule(Executable exe, bool stop_at_null) {
     return m;
 }
 
-// --- the boot image (was prepare.py prepare) --------------------------------------------------
-
 struct Segment {
     std::uint64_t address, size, flags;
 };
@@ -283,7 +270,6 @@ std::string Nid(const std::string& name) {
     return out;
 }
 
-/// Whether this dump's libc _init_env is exactly RET (never assumed).
 bool InitEnvIsRet(const fs::path& libc) {
     Module m = ReadModule(ReadExecutable(libc, "sce_module/libc.prx"), false);
     const std::string init_env = Nid("_init_env");
@@ -370,11 +356,9 @@ Boot PrepareBoot(const fs::path& game, Module& main, const fs::path& engine) {
     return boot;
 }
 
-// --- linking the bundled modules (was link_modules.py link) -----------------------------------
-
-const Bytes kFsLoad = {0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};  // mov rax, fs:[0]
-const Bytes kLeaDown = {0x48, 0x8d, 0x64, 0x24, 0x80};                        // lea rsp, [rsp-0x80]
-const Bytes kLeaUp = {0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00};        // lea rsp, [rsp+0x80]
+const Bytes kFsLoad = {0x64, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
+const Bytes kLeaDown = {0x48, 0x8d, 0x64, 0x24, 0x80};
+const Bytes kLeaUp = {0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00};
 
 int PatchFsLoads(Bytes& image, const std::vector<Ph>& ph, std::uint64_t base) {
     int patched = 0;
@@ -394,8 +378,6 @@ int PatchFsLoads(Bytes& image, const std::vector<Ph>& ph, std::uint64_t base) {
     return patched;
 }
 
-/// Red-zone leaf stores run with rsp 128 bytes lower (Windows, Intel 12th gen and later): see
-/// link_modules.py protect_red_zones (patches/redzone.json, tools/redzone_sites.py).
 Bytes ProtectRedZones(Bytes& image, const nlohmann::json& sites, std::uint64_t base,
                       const std::vector<std::uint64_t>& skip, int& applied) {
     Bytes code;
@@ -429,9 +411,6 @@ Bytes ProtectRedZones(Bytes& image, const nlohmann::json& sites, std::uint64_t b
     return code;
 }
 
-/// BB_RED_ZONE_FUNCTIONS=1: whole red-zone leaf functions run with their locals above rsp, so
-/// nothing Windows writes below a guest thread's rsp can reach them: see link_modules.py
-/// rewrite_red_zone_functions (patches/redzone_functions.json, tools/redzone_functions.py).
 Bytes RewriteRedZoneFunctions(Bytes& image, const nlohmann::json& functions, std::uint64_t base,
                               const std::vector<std::uint64_t>& skip, int& applied) {
     Bytes code;
@@ -445,8 +424,8 @@ Bytes RewriteRedZoneFunctions(Bytes& image, const nlohmann::json& functions, std
             continue;
         const std::uint64_t here = base + code.size();
         Bytes body;
-        std::unordered_map<std::uint64_t, std::size_t> at;             // old offset -> offset in body
-        std::vector<std::pair<std::size_t, std::uint64_t>> jumps;      // rel32 position, old target
+        std::unordered_map<std::uint64_t, std::size_t> at;
+        std::vector<std::pair<std::size_t, std::uint64_t>> jumps;
         std::uint64_t pos = 0;
         bool bad = false;
         for (const auto& item : f.at("insns")) {
@@ -458,7 +437,7 @@ Bytes RewriteRedZoneFunctions(Bytes& image, const nlohmann::json& functions, std
             }
             Bytes insn(image.begin() + std::ptrdiff_t(start + pos), image.begin() + std::ptrdiff_t(start + pos + n));
             at[pos] = body.size();
-            if (kind == 1) {  // [rsp+d] -> [rsp+d+0x80]
+            if (kind == 1) {
                 const std::size_t modrm = item.at(2).get<std::size_t>(), disp = item.at(3).get<std::size_t>();
                 const int width = item.at(4).get<int>();
                 const std::int32_t old = width == 0 ? 0
@@ -469,7 +448,7 @@ Bytes RewriteRedZoneFunctions(Bytes& image, const nlohmann::json& functions, std
                     insn[disp] = std::uint8_t(value);
                 } else if (width == 4) {
                     Store<std::int32_t>(insn.data() + disp, value);
-                } else {  // mod 00/01 -> 10: disp32 in place of the disp8 (or after the SIB)
+                } else {
                     insn[modrm] = std::uint8_t((insn[modrm] & 0x3f) | 0x80);
                     Bytes disp32;
                     Append<std::int32_t>(disp32, value);
@@ -477,12 +456,12 @@ Bytes RewriteRedZoneFunctions(Bytes& image, const nlohmann::json& functions, std
                     insn.insert(insn.begin() + std::ptrdiff_t(disp), disp32.begin(), disp32.end());
                 }
                 body.insert(body.end(), insn.begin(), insn.end());
-            } else if (kind == 2) {  // rip-relative: same target from the copy
+            } else if (kind == 2) {
                 const std::size_t disp = item.at(2).get<std::size_t>();
                 const std::int64_t target = std::int64_t(start + pos + n) + Load<std::int32_t>(insn.data() + disp);
                 Store<std::int32_t>(insn.data() + disp, std::int32_t(target - std::int64_t(here + body.size() + n)));
                 body.insert(body.end(), insn.begin(), insn.end());
-            } else if (kind == 3) {  // jump inside the function, as rel32
+            } else if (kind == 3) {
                 const int cc = item.at(2).get<int>();
                 if (cc == 16) {
                     body.push_back(0xe9);
@@ -492,10 +471,10 @@ Bytes RewriteRedZoneFunctions(Bytes& image, const nlohmann::json& functions, std
                 }
                 jumps.push_back({body.size(), item.at(3).get<std::uint64_t>()});
                 body.insert(body.end(), 4, 0);
-            } else if (kind == 4) {  // prologue sub rsp, then the frame 0x80 lower
+            } else if (kind == 4) {
                 body.insert(body.end(), insn.begin(), insn.end());
                 body.insert(body.end(), kLeaDown.begin(), kLeaDown.end());
-            } else if (kind == 5) {  // epilogue: back up, then add rsp
+            } else if (kind == 5) {
                 body.insert(body.end(), kLeaUp.begin(), kLeaUp.end());
                 body.insert(body.end(), insn.begin(), insn.end());
             } else if (kind == 0) {
@@ -530,8 +509,6 @@ struct Export {
 void LinkModules(const fs::path& game, const fs::path& out, Module& main, Boot boot, const fs::path& engine) {
     Bytes& image = boot.image;
     const std::uint64_t size = image.size();
-    // Imports in first-seen order; a later import of the same identity takes its index, as
-    // the dict link_modules.py kept.
     std::vector<std::optional<Identity>> order;
     std::vector<std::size_t> index_of;
     std::unordered_map<Identity, std::size_t, IdentityHash> position;
@@ -630,7 +607,7 @@ void LinkModules(const fs::path& game, const fs::path& out, Module& main, Boot b
                     else
                         boot.relocs.push_back({target, 0, std::int64_t(base + symbol.value) + r.addend, 0});
                 } else if (!symbol.identity && symbol.binding == 2) {
-                    Store<std::uint64_t>(image.data() + target, 0);  // weak undefined (module_start/stop)
+                    Store<std::uint64_t>(image.data() + target, 0);
                 } else {
                     const std::uint64_t kind = symbol.type == 1 ? 2 : 1;
                     if ((kind == 1 && r.addend) || r.addend < 0 || r.addend >= 4096)
@@ -751,8 +728,6 @@ void LinkModules(const fs::path& game, const fs::path& out, Module& main, Boot b
         summary.c_str(), bindings.size(), unresolved, fs_patched, red_zone_sites);
 }
 
-// --- the AppContent profile (was content_profile.py) ------------------------------------------
-
 void ContentProfile(const fs::path& game, const fs::path& out, const std::string& sku) {
     const auto sfo = ParseSfo(ReadFile(game / "sce_sys" / "param.sfo"));
     std::uint32_t params[4] = {};
@@ -783,7 +758,6 @@ std::string PrepareKey(const fs::path& game, const std::string& sku, const fs::p
         for (const auto& entry : fs::directory_iterator(game / "sce_module", error)) modules.push_back(entry.path());
     std::sort(modules.begin(), modules.end());
     paths.insert(paths.end(), modules.begin(), modules.end());
-    // The program itself stands for the scripts the key once listed: a new bb-start prepares again.
     wchar_t self[MAX_PATH * 4];
     paths.push_back(fs::path(std::wstring(self, GetModuleFileNameW(nullptr, self, DWORD(std::size(self))))));
     paths.push_back(engine / "data" / "image_109_hashes.txt");
@@ -804,7 +778,7 @@ std::string PrepareKey(const fs::path& game, const std::string& sku, const fs::p
     return digest.HexDigest();
 }
 
-} // namespace
+}
 
 void PrepareImage(const fs::path& game, const fs::path& out, const fs::path& engine) {
     const auto started = std::chrono::steady_clock::now();
@@ -825,7 +799,7 @@ void PrepareImage(const fs::path& game, const fs::path& out, const fs::path& eng
         Log("Boot image unchanged: reused (%.1f s)", elapsed());
         return;
     }
-    fs::remove(stamp, error);  // a run stopped half way leaves no stamp behind
+    fs::remove(stamp, error);
     fs::create_directories(out);
     Module main = ReadModule(ReadExecutable(game / "eboot.bin", "eboot.bin"), true);
     WriteFile(out / "eboot.elf", main.exe.elf);
@@ -837,4 +811,4 @@ void PrepareImage(const fs::path& game, const fs::path& out, const fs::path& eng
     Log("Boot image prepared in %.1f s (reused on later launches)", elapsed());
 }
 
-} // namespace start
+}

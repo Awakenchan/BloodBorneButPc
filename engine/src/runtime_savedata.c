@@ -1,9 +1,3 @@
-/* libSceSaveData on host directories:
- *   <user>/savedata/<user id>/<title id>/<dir name>/        files the game writes
- *   <user>/savedata/<user id>/<title id>/<dir name>.sce_sys/ param.bin, icon0.png
- *   <user>/savedata/<user id>/<title id>.memory/memory.dat  SaveDataMemory
- * A mounted directory appears to the guest as /savedata0../savedata15.
- * Metadata lives beside the directory so the guest's own files are untouched. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -69,10 +63,6 @@ static char memory_path[720];
 static uint64_t memory_size;
 static size_t mounts_done, memory_writes;
 
-/* Bloodborne "sound hack" (rainvmaker, from the Diegolix29 shadPS4 fork): the game data
- * save carries a flag at 0x204E of userdata0010; with it clear, parts of the game's audio
- * (e.g. the player's weapon sounds) never play. It is set before the game reads the save.
- * BB_SOUND_HACK=0 leaves saves untouched. */
 static void bloodborne_sound_hack(void) {
     static const char *const ids[]={"CUSA00207","CUSA00208","CUSA00299","CUSA00900","CUSA01363","CUSA03014","CUSA03023","CUSA03173","CUSA03179"};
     const char *env=getenv("BB_SOUND_HACK");
@@ -165,8 +155,6 @@ static int32_t mount(int32_t user, const char *title, const DirName *dir, uint32
     }
     if (slot<0) { host_unlock(&lock); return ERR_MOUNT_FULL; }
     if (!exists && (make_dirs(host) || make_dirs(meta))) {
-        /* bbport: the game only says it cannot create the save; the log says where and why
-         * (a read-only or synced folder, an antivirus' controlled folder access...). */
         const int error=errno;
         host_unlock(&lock);
         printf("Runtime: save data '%s' cannot be created in %s: %s\n",dir->data,base,strerror(error));
@@ -180,7 +168,7 @@ static int32_t mount(int32_t user, const char *title, const DirName *dir, uint32
     char point[32];
     snprintf(point,sizeof(point),"/savedata%d",slot&15);
     memcpy(result->point.data,point,strlen(point)+1);
-    result->status=exists ? 0 : 1; /* CREATED */
+    result->status=exists ? 0 : 1;
     runtime_file_mount(result->point.data,host);
     ++mounts_done;
     host_unlock(&lock);
@@ -217,7 +205,7 @@ static ABI int32_t save_set_param(const MountPoint *point, uint32_t type, const 
     if (slot<0) { host_unlock(&lock); return ERR_NOT_MOUNTED; }
     Param p; read_param(slots[slot].meta,&p);
     switch (type) {
-    case 0: if (size<sizeof(Param)) goto bad; memcpy(&p,buffer,sizeof(p)); break;     /* ALL */
+    case 0: if (size<sizeof(Param)) goto bad; memcpy(&p,buffer,sizeof(p)); break;
     case 1: snprintf(p.title,sizeof(p.title),"%.*s",(int)size,(const char *)buffer); break;
     case 2: snprintf(p.subtitle,sizeof(p.subtitle),"%.*s",(int)size,(const char *)buffer); break;
     case 3: snprintf(p.detail,sizeof(p.detail),"%.*s",(int)size,(const char *)buffer); break;
@@ -265,7 +253,6 @@ static ABI int32_t save_delete(const Delete *d) {
     printf("Runtime: save data '%s' deleted\n",d->dir->data);
     return 0;
 }
-/* SQL-LIKE pattern: % any run, _ one character. */
 static int like(const char *s, const char *p) {
     if (!*p) return !*s;
     if (*p=='%') { for (;;++s) { if (like(s,p+1)) return 1; if (!*s) return 0; } }
@@ -315,7 +302,6 @@ static ABI int32_t save_search(const SearchCond *cond, SearchResult *result) {
     free(entries);
     return 0;
 }
-/* SaveDataMemory: one fixed-size blob per user/title. */
 static ABI int32_t memory_setup(int32_t user, uint64_t size, const Param *param) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     if (!size) return ERR_PARAMETER;

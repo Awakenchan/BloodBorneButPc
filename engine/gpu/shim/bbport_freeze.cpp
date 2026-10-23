@@ -1,10 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: when the game stops showing frames for BB_FREEZE_REPORT_S seconds (default 10; 0 turns
-// it off) after its first one, the log gets every thread's call stack (unwound from the
-// executable's and the system DLLs' unwind tables, as module+offset; guest code ends a stack at
-// its first frame) and the GPU side's state, once per freeze. A freeze with every thread waiting on
-// another (#53) is then named by the log alone. Windows only. Loading screens flip at the frame
-// rate, a minimised window too: only a stopped game goes this long without one.
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "bbport_freeze.h"
 #include "bbport_toggles.h"
 
@@ -73,8 +67,6 @@ std::string Module(DWORD64 address) {
 
 constexpr int kMaxFrames = 24;
 
-/// The thread's return addresses, innermost first. Nothing is allocated while it is suspended:
-/// it may hold the heap's lock.
 int Walk(HANDLE thread, DWORD64 (&frames)[kMaxFrames]) {
     if (SuspendThread(thread) == static_cast<DWORD>(-1)) {
         return 0;
@@ -89,7 +81,6 @@ int Walk(HANDLE thread, DWORD64 (&frames)[kMaxFrames]) {
             const PRUNTIME_FUNCTION function =
                 RtlLookupFunctionEntry(context.Rip, &image_base, nullptr);
             if (!function) {
-                // A leaf function has no entry; anything else without one (guest code) ends it.
                 if (count > 1 || !image_base) {
                     break;
                 }
@@ -117,7 +108,6 @@ void Report(long long frozen_ms) {
             state_reporter();
         }
     }
-    // The guest threads' waits: which mutex (and its owner), semaphore or condition variable.
     runtime_blocked_report();
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
@@ -133,7 +123,6 @@ void Report(long long frozen_ms) {
         }
     }
     CloseHandle(snapshot);
-    // Threads with the same stack are listed together.
     std::map<std::string, std::vector<std::string>> stacks;
     for (const DWORD id : ids) {
         HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
@@ -173,8 +162,6 @@ void Watch() {
     }
     std::thread([limit_ms] {
         SetThreadDescription(GetCurrentThread(), L"bb:FreezeWatch");
-        // Once per freeze: a long stall that ends (a first start's shader compiles) and a real
-        // freeze later both get theirs.
         bool reported = false;
         for (;;) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -188,7 +175,7 @@ void Watch() {
         }
     }).detach();
 }
-} // namespace
+}
 
 void NoteFlip() {
     last_flip_ms.store(NowMs(), std::memory_order_relaxed);
@@ -200,8 +187,6 @@ void SetStateReporter(std::function<void()> reporter) {
         std::scoped_lock lock{reporter_mutex};
         state_reporter = std::move(reporter);
     }
-    // bbport: a game that never shows its first frame (a black screen at start, beta 9 reports)
-    // gets the same report once, BB_FIRST_FRAME_REPORT_S (default 45; 0 off) after the start.
     static std::once_flag first_frame_watch;
     std::call_once(first_frame_watch, [] {
         const char* env = std::getenv("BB_FIRST_FRAME_REPORT_S");
@@ -211,8 +196,6 @@ void SetStateReporter(std::function<void()> reporter) {
         }
         std::thread([limit_s] {
             SetThreadDescription(GetCurrentThread(), L"bb:FirstFrameWatch");
-            // A stuck start can still flip (black frames, the overlay shows an FPS): "stuck" is
-            // also next to nothing drawn (the boot logos alone draw thousands).
             std::this_thread::sleep_for(std::chrono::seconds(limit_s));
             const auto drawn = BbStats::draws.load(std::memory_order_relaxed);
             if (last_flip_ms.load(std::memory_order_relaxed) == 0 || drawn < 200) {
@@ -225,11 +208,11 @@ void SetStateReporter(std::function<void()> reporter) {
         }).detach();
     });
 }
-} // namespace BbFreeze
+}
 
 #else
 namespace BbFreeze {
 void NoteFlip() {}
 void SetStateReporter(std::function<void()>) {}
-} // namespace BbFreeze
+}
 #endif

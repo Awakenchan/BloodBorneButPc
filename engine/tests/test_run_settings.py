@@ -15,8 +15,6 @@ class RestartResolutionTests(unittest.TestCase):
     def run_restarts(self, explicit=False, live=False, ini_extra='', caps=None, bare_path=False):
         with tempfile.TemporaryDirectory() as directory:
             data = Path(directory)
-            # Preparation is unrelated to this test; allow the real patch compiler to
-            # validate writes against a single ELF load segment spanning the game image.
             out = data / 'out'
             out.mkdir()
             elf = bytearray(120)
@@ -27,7 +25,7 @@ class RestartResolutionTests(unittest.TestCase):
             (data / 'eboot.bin').touch()
             config = data / 'lantern.ini'
             config.write_text('upscaler=fsr3\npreset=1\noutput_res=1280x720\n' + ini_extra)
-            if caps is not None:  # the GPU check next to the probe (live_resolution=auto)
+            if caps is not None:
                 tool = data / 'bb-gpu-capabilities'
                 tool.write_text(f'#!/bin/sh\necho {caps}\n')
                 tool.chmod(0o755)
@@ -61,7 +59,7 @@ class RestartResolutionTests(unittest.TestCase):
                 env['BB_RENDER_RES'] = '800x450'
             if live:
                 env['BB_LIVE_RES'] = '1'
-            if bare_path:  # the AppImage's PATH: coreutils and bash, no sed/grep
+            if bare_path:
                 tools = data / 'bin'
                 tools.mkdir()
                 for name in ('bash', 'dirname', 'mkdir', 'realpath'):
@@ -73,8 +71,6 @@ class RestartResolutionTests(unittest.TestCase):
 
     def test_outputs_other_than_1080p_patch_the_render_size_and_restarts_recompute_it(self):
         rows = self.run_restarts()
-        # 720p Quality, 720p Ultra Performance after a restart (at least 640x360), then 1080p
-        # (live host targets).
         self.assertEqual([row['BB_RENDER_RES'] for row in rows], ['852x480', '640x360', None])
         self.assertEqual([row['BB_OUTPUT_RES'] for row in rows], ['1280x720', '1280x720', None])
         self.assertEqual([row['BB_AUTO_RENDER_RES'] for row in rows], ['1', '1', None])
@@ -86,18 +82,15 @@ class RestartResolutionTests(unittest.TestCase):
         self.assertTrue(all(row['BB_AUTO_RENDER_RES'] is None for row in rows))
 
     def test_live_resolution_setting_and_gpu_check(self):
-        # Only the first launch matters here: the probe rewrites lantern.ini for the restarts.
         self.assertIsNone(self.run_restarts(ini_extra='live_resolution=1\n')[0]['BB_RENDER_RES'])
         self.assertEqual(self.run_restarts(ini_extra='live_resolution=0\n', caps=1)[0]['BB_RENDER_RES'],
                          '852x480')
-        # Unset: off (the startup patch), whatever the GPU; auto asks the GPU check.
         self.assertEqual(self.run_restarts(caps=1)[0]['BB_RENDER_RES'], '852x480')
         self.assertIsNone(self.run_restarts(ini_extra='live_resolution=auto\n', caps=1)[0]['BB_RENDER_RES'])
         self.assertEqual(self.run_restarts(ini_extra='live_resolution=auto\n', caps=0)[0]['BB_RENDER_RES'],
                          '852x480')
 
     def test_live_resolution_without_sed_or_grep(self):
-        # A missing sed ended run.sh (exit 127) before the game in the AppImage on NixOS.
         self.assertEqual(self.run_restarts(ini_extra='live_resolution=0\n', caps=1,
                                            bare_path=True)[0]['BB_RENDER_RES'], '852x480')
         self.assertIsNone(self.run_restarts(ini_extra='live_resolution=auto\n', caps=1,

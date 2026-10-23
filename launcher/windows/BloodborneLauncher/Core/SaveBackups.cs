@@ -13,11 +13,15 @@ namespace BloodborneLauncher.Core
     public static class SaveBackups
     {
         public const int Keep = 10;
+        public const int PlayKeep = 6;
+        public static readonly TimeSpan PlayEvery = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan Quiet = TimeSpan.FromSeconds(30);
+        private const string DuringPlay = "_play";
         private const string Stamp = "yyyy-MM-dd_HH-mm-ss";
         private const string BeforeRestore = "_before-restore";
         private const string FingerprintFile = "fingerprint.txt";
 
-        public sealed record Backup(string Dir, DateTime When, long Bytes, bool MadeBeforeRestore);
+        public sealed record Backup(string Dir, DateTime When, long Bytes, bool MadeBeforeRestore, bool MadeDuringPlay = false);
 
         public static string SaveData(LauncherSettings s) => Path.Combine(GameEnvironment.UserDir(s), "savedata");
 
@@ -38,8 +42,10 @@ namespace BloodborneLauncher.Core
                 var name = Path.GetFileName(dir);
                 var before = name.EndsWith(BeforeRestore, StringComparison.Ordinal);
                 if (before) name = name[..^BeforeRestore.Length];
+                var play = name.EndsWith(DuringPlay, StringComparison.Ordinal);
+                if (play) name = name[..^DuringPlay.Length];
                 if (DateTime.TryParseExact(name, Stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var when))
-                    list.Add(new Backup(dir, when, Size(dir), before));
+                    list.Add(new Backup(dir, when, Size(dir), before, play));
             }
             return list.OrderByDescending(b => b.When).ToList();
         }
@@ -59,11 +65,51 @@ namespace BloodborneLauncher.Core
             if (Directory.Exists(target)) return null; // one a second is plenty
             Copy(source, Path.Combine(target, "savedata"));
             File.WriteAllText(Path.Combine(target, FingerprintFile), print);
-            foreach (var old in List(s).Skip(Keep))
-            {
-                try { Directory.Delete(old.Dir, recursive: true); } catch { /* in use: next time */ }
-            }
+            Prune(s);
             return target;
+        }
+
+        public static string? CreateDuringPlay(LauncherSettings s)
+        {
+            var source = SaveData(s);
+            if (!Directory.Exists(source)) return null;
+            if (Directory.EnumerateFileSystemEntries(source, "*", SearchOption.AllDirectories).Any(Writing)) return null;
+            var files = Directory.GetFiles(source, "*", SearchOption.AllDirectories).Where(f => !Staging(source, f)).ToList();
+            if (files.Count == 0) return null;
+            if (DateTime.UtcNow - files.Max(File.GetLastWriteTimeUtc) < Quiet) return null;
+            var print = Fingerprint(source);
+            if (List(s).FirstOrDefault() is { } newest && ReadFingerprint(newest.Dir) == print) return null;
+
+            var target = Path.Combine(Folder(s), DateTime.Now.ToString(Stamp, CultureInfo.InvariantCulture) + DuringPlay);
+            if (Directory.Exists(target)) return null;
+            var staging = target + ".copying";
+            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+            Copy(source, Path.Combine(staging, "savedata"));
+            if (Fingerprint(source) != print)
+            {
+                Directory.Delete(staging, recursive: true);
+                return null;
+            }
+            File.WriteAllText(Path.Combine(staging, FingerprintFile), print);
+            Directory.Move(staging, target);
+            Prune(s);
+            return target;
+        }
+
+        private static void Prune(LauncherSettings s)
+        {
+            var all = List(s);
+            foreach (var old in all.Where(b => !b.MadeDuringPlay).Skip(Keep).Concat(all.Where(b => b.MadeDuringPlay).Skip(PlayKeep)))
+            {
+                try { Directory.Delete(old.Dir, recursive: true); } catch { }
+            }
+        }
+
+        private static bool Writing(string path)
+        {
+            var name = Path.GetFileName(path);
+            return name.EndsWith(".lantern-work", StringComparison.OrdinalIgnoreCase) ||
+                   name.EndsWith(".lantern-commit", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>Puts a backup's savedata back, after backing up the current one.</summary>
@@ -86,7 +132,7 @@ namespace BloodborneLauncher.Core
         /// an older import held a whole Downloads folder, copied into every backup.</summary>
         private static bool Staging(string from, string path) =>
             Path.GetRelativePath(from, path).Split(Path.DirectorySeparatorChar)
-                .Any(part => part.EndsWith(".importing", StringComparison.OrdinalIgnoreCase));
+                .Any(part => part.EndsWith(".importing", StringComparison.OrdinalIgnoreCase) || Writing(part));
 
         internal static void Copy(string from, string to)
         {

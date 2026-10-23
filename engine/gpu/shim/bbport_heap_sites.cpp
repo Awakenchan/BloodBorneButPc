@@ -1,9 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport BB_HEAP_SITES=1 (diagnostics): the game's malloc replacement (the pointers libc.prx calls
-// through, libc+0xba190: malloc, free, calloc, realloc, memalign, posix_memalign) is wrapped, and
-// the live allocations are counted per call site in the game (the first two return addresses into
-// its code on the stack). Report() prints the sites whose live bytes grew since the last report:
-// what leaks when the guest heap runs out.
 #include "bbport_heap_sites.h"
 
 #include <algorithm>
@@ -41,26 +36,26 @@ MemalignFn orig_memalign;
 PosixMemalignFn orig_posix_memalign;
 
 struct Site {
-    u64 a = 0, b = 0; ///< return addresses into the game (image offsets); a == 0: empty slot
+    u64 a = 0, b = 0;
     s64 live = 0, bytes = 0;
     u64 allocs = 0;
     s64 reported_bytes = 0, reported_live = 0;
-    u64 free_chain[5] = {}; ///< where an allocation of this site was freed last
+    u64 free_chain[5] = {};
 };
 constexpr u64 SiteCount = 1u << 14;
 std::vector<Site> sites;
 
 struct Alloc {
-    u64 ptr; ///< 0 empty, 1 removed
+    u64 ptr;
     u32 site;
     u32 size;
 };
-constexpr u64 AllocBits = 22; // 4M live allocations
+constexpr u64 AllocBits = 22;
 std::vector<Alloc> allocs;
 u64 untracked_frees = 0, table_full = 0;
 
 std::atomic_flag lock = ATOMIC_FLAG_INIT;
-bool tracking = false; ///< BB_HEAP_SITES=1: per call site; else only the counters below
+bool tracking = false;
 std::atomic<u64> count_allocs{0}, count_frees{0};
 std::atomic<u64> release_ok{0}, release_busy{0}, release_missing{0}, release_other{0};
 struct Guard {
@@ -78,7 +73,6 @@ u64 Hash(u64 v, u64 bits) {
     return (v * 0x9E3779B97F4A7C15ull) >> (64 - bits);
 }
 
-/// The first return addresses into the game's code above `frame` (up to `count`).
 void CallChain(const u64* frame, u64* out, int count) {
     int n = 0;
     for (int i = 0; i < 160 && n < count; ++i) {
@@ -212,7 +206,7 @@ int WrapPosixMemalign(void** out, std::size_t alignment, std::size_t size) {
 bool InGame(u64 v) {
     return v >= ImageBase && v < TextEnd;
 }
-} // namespace
+}
 
 namespace {
 void InstallWrappers(bool counters) {
@@ -226,7 +220,7 @@ void InstallWrappers(bool counters) {
     }
     auto* slots = reinterpret_cast<u64*>(LibcBase);
     if (slots[SlotMalloc / 8] == 0) {
-        return; // libc.prx has not set up the game's malloc yet: tried again later
+        return;
     }
     done = true;
     const u64 targets[6] = {slots[SlotMalloc / 8], slots[SlotFree / 8], slots[SlotCalloc / 8],
@@ -262,7 +256,7 @@ void InstallWrappers(bool counters) {
                 (unsigned long long)(targets[0] - ImageBase),
                 (unsigned long long)(targets[1] - ImageBase), tracking ? " per call site" : "");
 }
-} // namespace
+}
 
 void Install() {
     InstallWrappers(false);
@@ -352,4 +346,4 @@ void Report() {
     }
     std::printf("\n");
 }
-} // namespace BbHeapSites
+}

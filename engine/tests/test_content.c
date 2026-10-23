@@ -9,7 +9,6 @@ typedef int32_t (ABI *Init)(const void *,void *);
 typedef int32_t (ABI *Param)(uint32_t,int32_t *);
 typedef int32_t (ABI *List)(uint32_t,void *,uint32_t,uint32_t *);
 #define GET(t,n) ((t)runtime_content_resolve(n))
-/* The runtime's user folder (runtime_file.c): TEST_USER_DIR, else one without add-ons. */
 const char *runtime_file_user_dir(void) {
     const char *dir=getenv("TEST_USER_DIR");
     return dir ? dir : "no-such-user-dir";
@@ -27,7 +26,6 @@ int main(int argc,char **argv) {
     const uint32_t profile[]={1,13,0x80000000,0,7};
     runtime_content_configure(profile);
     if (argc>1 && !strcmp(argv[1],"--addons")) {
-        /* BB_DLC_DIR and TEST_USER_DIR set by the caller (tests/test_content.py). */
         assert(load(0xb4)==0);
         unsigned char initial[32]={0}, boot[40];
         assert(init(initial,boot)==0);
@@ -43,7 +41,6 @@ int main(int argc,char **argv) {
         return 0;
     }
     if (argc>1 && !strcmp(argv[1],"--unknown")) {
-        /* Other system modules are host-provided: reference counted, independent. */
         assert((uint32_t)loaded(0xb5)==0x805a1001);
         assert(load(0xb5)==0 && loaded(0xb5)==0 && (uint32_t)loaded(0xb4)==0x805a1001);
         assert(unload(0xb5)==0 && (uint32_t)loaded(0xb5)==0x805a1001);

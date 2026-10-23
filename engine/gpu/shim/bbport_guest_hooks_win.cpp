@@ -1,9 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: the hooks of bbport_guest_hooks.cpp (the game's resource copies and GPU memory
-// allocators, for BB_GUEST_IN_PLACE) on Windows: the same sites, each checked byte for byte, an
-// int3 there and a vectored exception handler instead of SIGTRAP. Each site is a call, a return or
-// a function entry, so nothing live lies below the stack pointer where Windows builds the
-// exception frame (the System V red zone of the game's code).
+// SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef _WIN32
 #include "bbport_guest_hooks.h"
 #include "bbport_heap_sites.h"
@@ -24,7 +19,6 @@ namespace {
 using u64 = std::uint64_t;
 constexpr u64 ImageBase = 0x800000000ull;
 
-// The sites and their code: see bbport_guest_hooks.cpp, which documents each.
 constexpr u64 AllocReturn = 0x26aa255;
 constexpr unsigned char AllocReturnCode[4] = {0x48, 0x83, 0xc4, 0x18};
 RangeCallback on_range_allocated = nullptr;
@@ -44,7 +38,6 @@ constexpr std::array<CallSite, 2> MemcpySites = {{
 }};
 std::array<std::atomic<u64>, MemcpySites.size()> hits{};
 
-/// The game's memcpy at those sites (called by the game: System V), then the GPU side is told.
 __attribute__((sysv_abi)) void* LoaderCopy(void* dst, const void* src, std::size_t size) {
     std::memcpy(dst, src, size);
     runtime_memory_note_write(reinterpret_cast<u64>(dst), size);
@@ -56,7 +49,7 @@ LONG CALLBACK OnBreakpoint(EXCEPTION_POINTERS* info) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     CONTEXT& c = *info->ContextRecord;
-    const u64 rip = reinterpret_cast<u64>(info->ExceptionRecord->ExceptionAddress); // the int3
+    const u64 rip = reinterpret_cast<u64>(info->ExceptionRecord->ExceptionAddress);
     if (rip < ImageBase || rip >= ImageBase + 0x10000000) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
@@ -79,7 +72,7 @@ LONG CALLBACK OnBreakpoint(EXCEPTION_POINTERS* info) {
                 break;
             }
         }
-        c.Rsp -= 8; // push rbp
+        c.Rsp -= 8;
         *reinterpret_cast<u64*>(c.Rsp) = c.Rbp;
         c.Rip = ImageBase + CollectorEntry + 1;
         return EXCEPTION_CONTINUE_EXECUTION;
@@ -116,7 +109,6 @@ LONG CALLBACK OnBreakpoint(EXCEPTION_POINTERS* info) {
             continue;
         }
         hits[i].fetch_add(1, std::memory_order_relaxed);
-        // The call, to LoaderCopy instead of the game's memcpy: push the return address, jump.
         c.Rsp -= 8;
         *reinterpret_cast<u64*>(c.Rsp) = ImageBase + site.offset + 5;
         c.Rip = reinterpret_cast<u64>(&LoaderCopy);
@@ -141,7 +133,7 @@ bool Patch(u64 address, const unsigned char* expected, std::size_t size) {
     FlushInstructionCache(GetCurrentProcess(), code, size);
     return true;
 }
-} // namespace
+}
 
 void Install(RangeCallback on_gpu_range_allocated) {
     static std::atomic<bool> installed{false};
@@ -149,7 +141,6 @@ void Install(RangeCallback on_gpu_range_allocated) {
         return;
     }
     on_range_allocated = on_gpu_range_allocated;
-    // First in line: the engine's fault handlers see no breakpoints of ours.
     AddVectoredExceptionHandler(1, &OnBreakpoint);
     int patched = 0;
     for (const auto& site : MemcpySites) {
@@ -179,5 +170,5 @@ void Install(RangeCallback on_gpu_range_allocated) {
         Patch(ImageBase + ReleaseCheck, ReleaseCheckCode, sizeof(ReleaseCheckCode));
     }
 }
-} // namespace BbGuestHooks
+}
 #endif

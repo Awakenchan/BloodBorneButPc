@@ -8,16 +8,8 @@ using System.Windows.Input;
 
 namespace BloodborneLauncher.Core
 {
-    /// <summary>
-    /// One game action the engine binds (lantern.ini bind.&lt;name&gt;): one keyboard key and one mouse
-    /// input at most. Pad is the controller button that does it (shown for reference).
-    /// </summary>
     public sealed record ControlDef(string Name, string Label, string Group, string Hint, string Default, string? Pad);
 
-    /// <summary>
-    /// The engine's PC controls (bbhost input, gpu/shim/input/bindings.cpp): 29 actions, keys by SDL
-    /// name ("Left Shift", "Return"), mouse as Mouse1..Mouse5, WheelUp, WheelDown; "none" unbinds.
-    /// </summary>
     public static class InputMap
     {
         public static readonly ControlDef[] Controls =
@@ -53,7 +45,6 @@ namespace BloodborneLauncher.Core
             new("look_right", L.T("Look right"), L.T("Camera keys"), "", "L", "Right stick"),
         };
 
-        /// <summary>Keys the port itself uses while the game runs.</summary>
         public static readonly Dictionary<string, string> Reserved = new(StringComparer.OrdinalIgnoreCase)
         {
             ["Insert"] = "Insert opens the port's settings menu",
@@ -65,7 +56,6 @@ namespace BloodborneLauncher.Core
 
         private static readonly string[] ModifierPrefixes = { "Ctrl+", "Shift+", "Alt+" };
 
-        /// <summary>A combination's key or mouse input, without its "Ctrl+", "Shift+", "Alt+".</summary>
         public static string Base(string name)
         {
             for (var stripped = true; stripped;)
@@ -81,8 +71,6 @@ namespace BloodborneLauncher.Core
             return name;
         }
 
-        /// <summary>A key or mouse input with the modifiers held with it, as the engine reads it
-        /// (bindings.cpp): "Shift+E", "Ctrl+Alt+Mouse4". The modifier keys themselves stay alone.</summary>
         public static string WithModifiers(string name, bool ctrl, bool shift, bool alt)
         {
             if (IsModifierName(name)) return name;
@@ -95,7 +83,6 @@ namespace BloodborneLauncher.Core
         public static bool IsModifierKey(Key key) =>
             key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt;
 
-        /// <summary>A friendly name for a chip: a combination's modifiers, then its input.</summary>
         public static string Display(string name)
         {
             var input = Base(name);
@@ -105,7 +92,6 @@ namespace BloodborneLauncher.Core
         private static string DisplayInput(string name) => name.ToLowerInvariant() switch
         {
             "mouse1" => L.T("Left click"),
-            // SDL numbering, as the engine reads it (input.cpp): 2 is the middle button, 3 the right.
             "mouse2" => L.T("Middle click"),
             "mouse3" => L.T("Right click"),
             "mouse4" => L.T("Mouse 4"),
@@ -121,7 +107,6 @@ namespace BloodborneLauncher.Core
 
         public static string Join(IEnumerable<string> names) => string.Join(", ", names);
 
-        /// <summary>A WPF key as SDL names it (SDL_GetScancodeFromName), or null if SDL has no name for it.</summary>
         public static string? SdlKeyName(Key key)
         {
             if (key >= Key.A && key <= Key.Z) return key.ToString();
@@ -199,8 +184,6 @@ namespace BloodborneLauncher.Core
             return names;
         });
 
-        /// <summary>A key or mouse name in the engine's spelling, with its modifiers ("Shift+E"), or
-        /// null if it is not one.</summary>
         public static string? Canonical(string name)
         {
             name = name.Trim();
@@ -217,7 +200,6 @@ namespace BloodborneLauncher.Core
         }
     }
 
-    /// <summary>The bindings in lantern.ini (bind.&lt;action&gt;), as the engine and its own menu keep them.</summary>
     public static class Bindings
     {
         public static string IniKey(ControlDef c) => "bind." + c.Name;
@@ -230,10 +212,8 @@ namespace BloodborneLauncher.Core
         private static bool Same(List<string> a, List<string> b) =>
             a.Count == b.Count && a.Zip(b).All(p => p.First.Equals(p.Second, StringComparison.OrdinalIgnoreCase));
 
-        /// <summary>The engine reads up to five inputs an action (bindings.cpp).</summary>
         public const int MaxInputs = 5;
 
-        /// <summary>Up to five inputs, each once, in order; written out explicitly ("none" unbinds).</summary>
         public static void Set(IniFile ini, ControlDef c, IEnumerable<string> names)
         {
             var list = names.Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxInputs).ToList();
@@ -241,15 +221,12 @@ namespace BloodborneLauncher.Core
             ini.Set(IniKey(c), value.Length == 0 ? "none" : value);
         }
 
-        /// <summary>A new input for an action: replaces the ones of the same kind (keys or mouse), or all.</summary>
         public static void Assign(IniFile ini, ControlDef c, string name, bool keepOtherKind)
         {
             var current = keepOtherKind ? Get(ini, c).Where(n => InputMap.IsMouse(n) != InputMap.IsMouse(name)) : Enumerable.Empty<string>();
             Set(ini, c, current.Append(name));
         }
 
-        /// <summary>One more input for an action (a second key, a combination); when it has five,
-        /// it replaces the last.</summary>
         public static void Add(IniFile ini, ControlDef c, string name)
         {
             var current = Get(ini, c);
@@ -269,10 +246,6 @@ namespace BloodborneLauncher.Core
             InputMap.Controls.ToDictionary(c => c.Name, c => InputMap.Join(Get(ini, c)));
     }
 
-    /// <summary>
-    /// The controllers plugged in or paired right now: PlayStation and Switch pads from the HID
-    /// device list (the game reads them through SDL, no DS4Windows needed), Xbox pads via XInput.
-    /// </summary>
     public static class Gamepads
     {
         public sealed record Pad(string Name, bool Bluetooth);
@@ -304,15 +277,9 @@ namespace BloodborneLauncher.Core
                 var match = VidPid.Match(path);
                 if (!match.Success) continue;
                 var key = (Convert.ToInt32(match.Groups[1].Value, 16), Convert.ToInt32(match.Groups[2].Value, 16));
-                // XInput pads (IG_ in the path) are counted through XInput below.
                 if (path.Contains("ig_", StringComparison.OrdinalIgnoreCase)) continue;
-                // Any other HID joystick or gamepad (generic, DirectInput pads: Betop, PS3 clones…)
-                // by its own product name.
                 if (!Known.TryGetValue(key, out var name) && (name = GenericGamepadName(path)) == null) continue;
-                // A pad exposes several HID collections; one entry per physical instance.
                 var instance = path.Split('#').ElementAtOrDefault(2) ?? path;
-                // Sony and Nintendo pads: one per instance; other pads often expose one HID
-                // interface per mode or slot, so they show once per model.
                 var id = key.Item1 == 0x054C || key.Item1 == 0x057E
                     ? instance.Split('&').Take(2).Aggregate(name, (a, b) => a + b)
                     : $"{key.Item1:x4}:{key.Item2:x4}";
@@ -325,8 +292,6 @@ namespace BloodborneLauncher.Core
         }
 
 #if AVALONIA
-        /// <summary>Linux: the input devices with a joystick handler (js0…) in /proc/bus/input/devices,
-        /// named by their known model or their own name; bus 0005 is Bluetooth.</summary>
         private static List<Pad> DetectLinux()
         {
             var pads = new List<Pad>();
@@ -346,13 +311,11 @@ namespace BloodborneLauncher.Core
             }
             catch
             {
-                // No /proc: nothing to show.
             }
             return pads;
         }
 
 #endif
-        // ---------------------------------------------------------------- HID
 
         [StructLayout(LayoutKind.Sequential)]
         private struct HidCaps
@@ -375,12 +338,10 @@ namespace BloodborneLauncher.Core
         [DllImport("hid.dll", CharSet = CharSet.Unicode)]
         private static extern bool HidD_GetProductString(Microsoft.Win32.SafeHandles.SafeFileHandle device, char[] buffer, int length);
 
-        /// <summary>The product name of a HID joystick or gamepad (usage page 1, usage 4 or 5); null for anything else.</summary>
         private static string? GenericGamepadName(string path)
         {
             try
             {
-                // No access rights needed to read the descriptor, so pads other programs hold open work too.
                 using var device = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
                 if (device.IsInvalid || !HidD_GetPreparsedData(device, out var data)) return null;
                 try
@@ -402,7 +363,6 @@ namespace BloodborneLauncher.Core
             }
         }
 
-        // ---------------------------------------------------------------- SetupAPI
 
         private static Guid HidInterface = new("4D1E55B2-F16F-11CF-88CB-001111000030");
         private const int DIGCF_PRESENT = 0x2, DIGCF_DEVICEINTERFACE = 0x10;
@@ -440,7 +400,6 @@ namespace BloodborneLauncher.Core
                     var buffer = Marshal.AllocHGlobal(required);
                     try
                     {
-                        // SP_DEVICE_INTERFACE_DETAIL_DATA_W: cbSize is 8 on x64, then the path.
                         Marshal.WriteInt32(buffer, IntPtr.Size == 8 ? 8 : 6);
                         if (SetupDiGetDeviceInterfaceDetailW(set, ref data, buffer, required, out _, IntPtr.Zero))
                             paths.Add(Marshal.PtrToStringUni(buffer + 4) ?? "");
@@ -453,7 +412,6 @@ namespace BloodborneLauncher.Core
             }
             catch
             {
-                // No SetupAPI access: only XInput pads show.
             }
             finally
             {
@@ -463,7 +421,6 @@ namespace BloodborneLauncher.Core
         }
     }
 
-    /// <summary>XInput: enough to show which Xbox-compatible pads are connected.</summary>
     public static class XInput
     {
         [StructLayout(LayoutKind.Sequential)]
@@ -478,7 +435,6 @@ namespace BloodborneLauncher.Core
         [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
         private static extern uint GetState(uint user, out State state);
 
-        /// <summary>Slots 1-4 with a pad connected.</summary>
         public static List<int> Connected()
         {
             var slots = new List<int>();
@@ -490,7 +446,6 @@ namespace BloodborneLauncher.Core
             }
             catch
             {
-                // No XInput on this system.
             }
             return slots;
         }

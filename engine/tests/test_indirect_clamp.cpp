@@ -1,11 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// Runs indirect_clamp.comp as Rasterizer::ClampDispatchArgs records it (vk_rasterizer.cpp): push
-// descriptors, the source range from an aligned offset with the counts a few dwords into it, the
-// clamped counts into a buffer that then feeds vkCmdDispatchIndirect after a compute-write to
-// indirect-read barrier. Counts left wrong by the game's GPU work (3063677180 groups, beta 7) come
-// out as the device's limits, sane ones unchanged; the indirect dispatch runs the clamped count.
-// Plain Vulkan 1.3 compute with VK_KHR_push_descriptor; Lavapipe works (run it under the
-// validation layer: VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation).
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
@@ -152,12 +145,10 @@ Vk Init() {
     return vk;
 }
 
-} // namespace
+}
 
 int main() {
     Vk vk = Init();
-    // The pipeline as ClampDispatchArgs makes it: two storage buffers by push descriptors, 16
-    // bytes of push constants (the limits and the counts' first dword).
     std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
     for (uint32_t i = 0; i < 2; ++i) {
         bindings[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
@@ -194,9 +185,6 @@ int main() {
     vkDestroyShaderModule(vk.device, module, nullptr);
 
     const uint64_t align = vk.limits.minStorageBufferOffsetAlignment;
-    // The game's buffer: two argument sets, the first at a dword offset no storage alignment
-    // allows (as the game's are), the second sane. The stream buffer: the clamped counts of each,
-    // and a buffer the indirect dispatches write into.
     Buffer game = MakeBuffer(vk, 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     Buffer stream = MakeBuffer(vk, 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
     Buffer scratch = MakeBuffer(vk, 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -241,8 +229,6 @@ int main() {
                                           .memoryBarrierCount = 1,
                                           .pMemoryBarriers = &clamped};
         vkCmdPipelineBarrier2(vk.cmd, &dependency);
-        // The game's dispatch, from the clamped counts (the clamp shader stands in for it: one
-        // invocation per group, writing the same three dwords into the scratch buffer).
         const std::array<VkDescriptorBufferInfo, 2> again{{{game.buffer, src_offset, src_size},
                                                            {scratch.buffer, slots[n], 16}}};
         for (uint32_t i = 0; i < 2; ++i) {
@@ -279,7 +265,6 @@ int main() {
                                         std::min(wrong[2], vk.limits.maxComputeWorkGroupCount[2])};
     expect("wrong counts clamped", stream.mapped + slots[0] / 4, limit);
     expect("sane counts kept", stream.mapped + slots[1] / 4, sane);
-    // The indirect dispatches ran (from the clamped counts) and wrote what the clamp reads.
     expect("indirect dispatch of the clamped counts", scratch.mapped + slots[0] / 4, limit);
     expect("indirect dispatch of the sane counts", scratch.mapped + slots[1] / 4, sane);
     std::printf("Indirect clamp: %s\n", failures ? "FAILED" : "all ok");

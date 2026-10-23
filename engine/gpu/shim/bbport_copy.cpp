@@ -26,8 +26,6 @@ std::atomic<bool (*)()> gpu_side_query{nullptr};
 class Pool {
 public:
     Pool() {
-        // Copies are on the critical path (fences wait for them): normal priority, a quarter
-        // of the hardware threads available to the process (Steam Deck 2).
         unsigned count = std::clamp(BbThreads::Available() / 4, 1u, 4u);
         if (const char* env = std::getenv("BB_COPY_THREADS")) {
             count = static_cast<unsigned>(std::clamp(std::atoi(env), 0, 16));
@@ -67,7 +65,6 @@ public:
         {
             std::unique_lock lk{mutex};
             if (epochs.size() > 1 || epochs.back().pending != 0 || draining) {
-                // Runs once every copy issued so far is done, in order with earlier ones.
                 epochs.back().callbacks.push_back(std::move(callback));
                 epochs.emplace_back();
                 return;
@@ -77,7 +74,6 @@ public:
     }
 
     void WaitAll() {
-        // The waiting thread helps instead of only spinning.
         while (true) {
             Task task;
             {
@@ -124,7 +120,6 @@ public:
         }
         cv.notify_all();
         Work(*job);
-        // Workers only call the task for indices below count, all done before this returns.
         while (job->done.load(std::memory_order_acquire) < count) {
             std::this_thread::yield();
         }
@@ -140,7 +135,6 @@ private:
         std::function<void()> run;
         u64 epoch{};
     };
-    /// Copies issued between two AfterCopies() calls, and the callbacks waiting for them.
     struct Epoch {
         std::size_t pending = 0;
         std::vector<std::function<void()>> callbacks;
@@ -161,8 +155,6 @@ private:
         Complete(task.epoch);
     }
 
-    /// Retires a task and runs the callbacks of epochs with nothing left, oldest first. One
-    /// thread drains at a time so the callbacks keep their order.
     void Complete(u64 epoch) {
         std::unique_lock lk{mutex};
         --epochs[epoch - epoch_base].pending;
@@ -206,9 +198,7 @@ private:
 
     void Loop(unsigned index) {
         Common::SetCurrentThreadName(("bb:Copy" + std::to_string(index)).c_str());
-        // The GPU command thread waits for these copies (WaitHostCopies, WaitAsync); raised
-        // only with cores to spare (bulk uploads while streaming, see MakeCritical).
-        BbThreads::MakeCritical(/*bulk=*/true);
+        BbThreads::MakeCritical( true);
         u64 seen = 0;
         std::unique_lock lk{mutex};
         while (true) {
@@ -241,8 +231,8 @@ private:
     u64 generation = 0;
     bool stop = false;
     std::deque<Task> async_tasks;
-    std::deque<Epoch> epochs; ///< back() is open for new copies
-    u64 epoch_base = 0;       ///< epoch number of epochs.front()
+    std::deque<Epoch> epochs;
+    u64 epoch_base = 0;
     std::size_t pending = 0;
     bool draining = false;
 };
@@ -258,7 +248,7 @@ struct Batch {
 };
 thread_local Batch batch;
 
-} // namespace
+}
 
 bool Enabled() {
     return GetPool().Enabled() && !BbToggle::Disabled(BbToggle::ParallelCopies);
@@ -292,7 +282,6 @@ void QueueCopy(const Item& item) {
         item.run(item);
         return;
     }
-    // Smaller batches (32 items / 64 KiB, done before the next fence) measured slower.
     batch.items.push_back(item);
     batch.bytes += item.size;
     if (batch.bytes >= 512 * 1024 || batch.items.size() >= 256) {
@@ -306,7 +295,6 @@ void AfterCopies(std::function<void()> callback) {
 }
 
 void WaitAsync() {
-    // The caller's own batch runs here: handing it over only to wait for it costs a wakeup.
     if (!batch.items.empty()) {
         for (const auto& item : batch.items) {
             item.run(item);
@@ -340,4 +328,4 @@ bool ForGpuSide() {
     return for_gpu_side;
 }
 
-} // namespace BbCopy
+}

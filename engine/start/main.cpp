@@ -1,12 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bb-start.exe: starts Bloodborne PC natively (was scripts/run_windows.py and the scripts it ran).
-//
-//     bb-start.exe [--game-dir DIR] [bb-probe options...]
-//
-// The game folder: --game-dir, else BB_GAME_DIR, else the last one used (out/game_dir.txt).
-// Then: the online profile, the GPU caches of another shader compiler cleared, mods, the boot
-// image (prepared again only when the game or this program changes), the engine's assets, the
-// patches, and bb-probe with the session log as its output. Its exit code is this program's.
 #include "assets.h"
 #include "common.h"
 #include "elf.h"
@@ -36,9 +28,9 @@ fs::path SelfPath() {
 }
 
 struct Folders {
-    fs::path engine;   // engine\ (out\, patches\, data\)
-    fs::path package;  // the package: package.json, lantern.ini, user, mods, logs
-    fs::path out;      // engine\out: the programs and what each start generates
+    fs::path engine;
+    fs::path package;
+    fs::path out;
 };
 
 Folders Locate() {
@@ -56,10 +48,6 @@ std::optional<std::string> SettingValue(const fs::path& config, const std::strin
     return Setting(ReadSettings(config), key);
 }
 
-// bbport: a new shader compiler: each cache folder (one per game, CUSA03173...) is recompiled by
-// bb-shader-lab from the shader states kept beside its shaders (--recompile-cache), so its
-// pipelines are built at the start instead of every shader compiling again in play. A folder it
-// cannot recompile is removed, as every folder was before 0.9.34 beta 6. BB_SHADER_STATES=0: removed.
 bool RecompileGpuCache(const fs::path& cache, const fs::path& recompiler) {
     std::error_code error;
     if (Env("BB_SHADER_STATES", "1") == "0" || !fs::is_regular_file(recompiler, error)) return false;
@@ -85,12 +73,6 @@ bool RecompileGpuCache(const fs::path& cache, const fs::path& recompiler) {
     return all;
 }
 
-// bbport: the shader catalog shipped in engine\shader-catalog\<game> (specializations, pipeline keys
-// and draw states, no code): once per catalog, into a cache made on a GPU with the catalog's
-// profile (its first start makes it), the code taken from this PC's game files. Its shaders are
-// then compiled before the start instead of in play. BB_SHADER_CATALOG=0: not used.
-// bbport: the GPU vendor in a catalog's gpu.txt ("vendor 10DE device 2D05", written by
-// bb-shader-lab --export-catalog); 0 without one.
 unsigned CatalogGpuVendor(const fs::path& catalog) {
     std::string text;
     try {
@@ -102,7 +84,6 @@ unsigned CatalogGpuVendor(const fs::path& catalog) {
     return std::sscanf(text.c_str(), "vendor %x", &vendor) == 1 ? vendor : 0;
 }
 
-// bbport: whether a display adapter of this PC is of `vendor`.
 bool HasGpuVendor(unsigned vendor) {
     char wanted[16];
     std::snprintf(wanted, sizeof(wanted), "VEN_%04X", vendor);
@@ -114,8 +95,6 @@ bool HasGpuVendor(unsigned vendor) {
     return false;
 }
 
-// bbport: the vendor of the GPU the engine last ran a cache on: the header of the driver cache it
-// keeps beside the cache folder ("BPBC", the vendor at 8); 0 before its first start.
 unsigned CacheGpuVendor(const fs::path& cache_folder) {
     fs::path driver_cache = cache_folder;
     driver_cache += ".vkcache";
@@ -131,11 +110,6 @@ void SeedGpuCache(const fs::path& cache, const fs::path& catalogs, const fs::pat
                   const fs::path& recompiler) {
     std::error_code error;
     if (Env("BB_SHADER_CATALOG", "1") == "0" || !fs::is_regular_file(recompiler, error)) return;
-    // bbport (0.9.37 beta 9): a game's catalog per GPU vendor: engine\shader-catalog\<game> (made on
-    // NVIDIA) and engine\shader-catalog\<vendor>\<game> (amd). One per game is seeded, of the vendor
-    // the engine last ran this cache on, else (a first start) of this PC's adapters NVIDIA first,
-    // then AMD, then Intel, as the engine picks the faster GPU: a Ryzen APU beside an RTX card must
-    // not get the AMD one's profile, which would leave the NVIDIA one applied to nothing.
     std::map<fs::path, std::vector<fs::path>> by_game;
     for (const auto& entry : fs::directory_iterator(catalogs, error)) {
         std::error_code e;
@@ -162,13 +136,8 @@ void SeedGpuCache(const fs::path& cache, const fs::path& catalogs, const fs::pat
         }
         const auto chosen = std::find_if(candidates.begin(), candidates.end(),
                                          [&](const fs::path& c) { return vendor && CatalogGpuVendor(c) == vendor; });
-        if (chosen == candidates.end()) continue; // none for this GPU's vendor
+        if (chosen == candidates.end()) continue;
         const fs::path& catalog = *chosen;
-        // bbport (docs/pipeline_compiles.md): the first start has no cache yet, so no profile of
-        // this GPU (the engine writes it): the catalog's own is put there, so the first session has
-        // the catalog's pipelines too. Another kind of GPU of that vendor gets its cache started
-        // again by the engine (PipelineCache::WarmUp: another profile), which costs only this
-        // seeding's time.
         if (!fs::exists(target, e)) {
             fs::create_directories(target, e);
             fs::copy_file(catalog / "profile.bin", target / "profile.bin", e);
@@ -176,7 +145,6 @@ void SeedGpuCache(const fs::path& cache, const fs::path& catalogs, const fs::pat
                 Utf8(game_name).c_str());
         }
         if (!fs::is_regular_file(target / "profile.bin", e)) continue;
-        // The catalog's identity: its files' count and size, as shipped.
         std::uint64_t files = 0, bytes = 0;
         for (const auto& file : fs::directory_iterator(catalog, e)) {
             ++files;
@@ -197,7 +165,6 @@ void SeedGpuCache(const fs::path& cache, const fs::path& catalogs, const fs::pat
         if (code == 0 && last != std::string::npos)
             Log("GPU cache %s: %s (%.1f s)", Utf8(game_name).c_str(),
                 Trim(output.substr(last + 14, output.find('\n', last) - last - 14)).c_str(), seconds);
-        // Once per catalog, whatever came of it (another GPU's catalog stays unused).
         WriteText(marker, std::to_string(code) + "\n");
     }
 }
@@ -209,7 +176,6 @@ void ResetStaleGpuCache(const fs::path& cache, const std::string& identity, cons
     try {
         const std::string stamped = Trim(ReadText(stamp));
         if (identity.empty() || stamped == identity) return;
-        // Made by an earlier engine from these same sources (its identity hashed whole files).
         if (!legacy.empty() && stamped == legacy) {
             WriteText(stamp, identity + "\n");
             return;
@@ -251,9 +217,6 @@ std::string ConfigureFrameRate() {
     }
     const bool digits = !fps.empty() && fps.find_first_not_of("0123456789") == std::string::npos && fps.size() < 6;
     if (fps == "uncap" || (digits && std::stoi(fps) > 90)) {
-        // bbport: Uncapped stops at 240 FPS unless BB_FPS_LIMIT says otherwise (0: none). With no
-        // limit on a 480 Hz screen the Uncap FPS++ patch froze Ludwig's second phase (its boss
-        // intros are known to freeze at extreme frame rates); past 240 nothing is gained.
         std::string limit = digits ? fps : Env("BB_FPS_LIMIT", "240");
         if (limit.empty() || limit.find_first_not_of("0123456789") != std::string::npos) limit = "0";
         SetEnv("BB_FPS", "uncap");
@@ -280,8 +243,6 @@ std::optional<Size> DisplaySize() {
 
 int RunProbe(const fs::path& probe, const std::vector<std::wstring>& arguments, const fs::path& cwd) {
     HANDLE log = static_cast<HANDLE>(LogHandle());
-    // The session log when the launcher names one, else this program's own output (the launcher
-    // reads it from a pipe): bb-probe writes where this program does.
     STARTUPINFOW startup{sizeof startup};
     startup.dwFlags = STARTF_USESTDHANDLES;
     startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
@@ -313,14 +274,10 @@ int Main(std::vector<std::wstring> arguments) {
     }
     const fs::path data = Path(Env("BB_DATA_DIR", Utf8(folders.package)));
     const fs::path& out = folders.out;
-    // bb-probe takes its shader cache's folder from this at its start, before it reads its
-    // arguments; without it the folder was %APPDATA%\shadPS4 (bb-probe runs in engine\,
-    // which has no user folder): shared with the shadPS4 emulator, never reset with an
-    // engine update nor by the launcher's Clear, so a damaged or outdated shader stayed.
     if (Env("BB_GPU_USER_DIR", "").empty()) SetEnv("BB_GPU_USER_DIR", Utf8(folders.package / "user"));
     {
         std::error_code error;
-        fs::create_directories(Path(Env("BB_GPU_USER_DIR", "")), error); // bb-probe falls back without it
+        fs::create_directories(Path(Env("BB_GPU_USER_DIR", "")), error);
     }
     try {
         const auto package = nlohmann::json::parse(ReadText(folders.package / "package.json"));
@@ -337,20 +294,10 @@ int Main(std::vector<std::wstring> arguments) {
     } catch (const std::exception&) {
     }
     fs::create_directories(out);
-    // bbport: a package in a OneDrive folder (the Desktop and Documents usually are) has every log,
-    // shader cache and capture file the game writes synced while it plays: CPU and disk the game's
-    // threads then miss (seen with 0.9.37 beta 3 on a Desktop in OneDrive: the CPU busier and
-    // draw preparation falling behind more often than in a session from E:\, not proven to be it).
     if (Lower(Utf8(folders.package)).find("onedrive") != std::string::npos)
         Log("Performance: this Lantern Engine folder is synced by OneDrive (%s); OneDrive uploads its logs and "
             "shader cache while you play. A folder outside OneDrive (C:\\Games, for example) avoids that",
             Utf8(folders.package).c_str());
-    // Settings were bbport.ini before 0.9.37 beta 2: copied once (the old file stays for an older
-    // launcher pointed at this folder). Without either, lantern.ini starts as the shipped settings
-    // (engine\lantern.default.ini). The 0.9.37 beta 2 package carried a lantern.ini with the shipped
-    // settings, and launchers before it keep only bbport.ini when they update: the player's settings
-    // looked reset. A lantern.ini that still holds exactly the shipped settings while bbport.ini
-    // holds others is replaced by bbport.ini (the launcher does the same, Core/Paths.cs).
     {
         std::error_code ec;
         const fs::path ini = data / "lantern.ini", old = data / "bbport.ini";
@@ -391,7 +338,6 @@ int Main(std::vector<std::wstring> arguments) {
     const fs::path original = fs::canonical(game_dir);
     WriteText(remembered, Utf8(original));
     SetEnv("BB_GAME_DIR", Utf8(original));
-    // The in-game menu's "Apply and restart" runs this program again (probe.c runtime_restart).
     {
         std::vector<std::wstring> all(arguments);
         all.insert(all.begin(), {L"--game-dir", original.native()});
@@ -434,7 +380,6 @@ int Main(std::vector<std::wstring> arguments) {
             Utf8(original).c_str(), missing.c_str());
         return 1;
     }
-    // The game as the engine sees it, mods over it: the PC menus are built from these files.
     SetEnv("BB_GAME_MERGED", Utf8(merged));
 
     try {
@@ -448,9 +393,6 @@ int Main(std::vector<std::wstring> arguments) {
     }
     for (const char* key : {"BB_DREAM_MIRROR_ASSET", "BB_ENGINE_IMAGE_SHA256", "BB_PC_MENU_ASSETS", "BB_REBIRTH_ASSET"})
         UnsetEnv(key);
-    // Another executable than the 1.09 code (prepare.cpp CheckGame: the verified image or a patched
-    // one; CUSA00900 1.09 is that same code): the patches write fixed addresses of that code, so
-    // none are applied (CompilePatches); hooks check the code they replace and leave themselves out.
     bool other_edition = false;
     try {
         (void)VerifyExecutable(out / "eboot.elf");
@@ -465,7 +407,6 @@ int Main(std::vector<std::wstring> arguments) {
             title = SfoText(ParseSfo(ReadFile(merged / "sce_sys" / "param.sfo")), "TITLE_ID");
         } catch (const std::exception&) {
         }
-        // BB_SKIP_GAME_CHECK=1 left the code unchecked: the title decides, as before.
         other_edition = code == "unchecked" ? title != "CUSA03173" : code != "1.09";
     }
     if (other_edition) SetEnv("BB_OTHER_EDITION", "1");
@@ -474,7 +415,6 @@ int Main(std::vector<std::wstring> arguments) {
     try {
         SetEnv("BB_ENGINE_IMAGE_SHA256", VerifyExecutable(out / "eboot.elf"));
         if (is_on("change_appearance")) {
-            // A modded Hunter's Dream layout only costs the mirror, not the PC menus below.
             try {
                 const fs::path asset = PrepareMirror(merged, out / "eboot.elf", data / "engine-assets");
                 SetEnv("BB_DREAM_MIRROR_ASSET", Utf8(asset));
@@ -499,8 +439,6 @@ int Main(std::vector<std::wstring> arguments) {
     } catch (const std::exception& e) {
         Log("Engine: enhancement preparation skipped: %s", e.what());
     }
-    // Ebrietas' trail effect replaced as Nexus mod 41 does, from the game as mods leave it
-    // (assets.cpp PrepareEffectFixes); the runtime mounts the files (BB_FILE_FIXES).
     UnsetEnv("BB_FILE_FIXES");
     if (Env("BB_EFFECT_FIXES", "") != "0") {
         try {
@@ -597,14 +535,10 @@ int Main(std::vector<std::wstring> arguments) {
         Log("Patches: the game's heaps are enlarged; direct memory 9152 MiB");
     }
     if (const auto dmem = Env("BB_DMEM_MB"); dmem && *dmem == "9152") {
-        // Made now if no check made it yet; on a refusal the engine tries again on its own.
         if (const unsigned long error = PoolRefused(9152))
             Log("Memory: Windows refused the 9152 MiB pool before the start (error %lu)", error);
         PoolHandOff(9152);
     } else if (!dmem) {
-        // bbport: the default pool too: its commit charged here, before bb-probe and the graphics
-        // driver take theirs. Made by the engine only, it was refused a moment after a start whose
-        // PC had enough (RTX 5060, about 7 GB of commit free, error 1455, 2026-10-22).
         if (const unsigned long error = PoolRefused(5056))
             Log("Memory: Windows refused the 5056 MiB pool before the start (error %lu)", error);
         PoolHandOff(5056);
@@ -625,16 +559,13 @@ int Main(std::vector<std::wstring> arguments) {
     return RunProbe(probe, command, folders.engine);
 }
 
-} // namespace
-} // namespace start
+}
+}
 
 int wmain(int argc, wchar_t** argv) {
     start::InitLog();
     std::vector<std::wstring> arguments(argv + 1, argv + argc);
     try {
-        // Tests (engine/tests/test_start.py): one stage into a chosen folder, against the scripts'.
-        //   --test-prepare GAME OUT ENGINE
-        //   --test-patches OUT ENGINE SETTINGS GAME FPS RENDER_RES OUTPUT_RES PATCHES_DIR PATCHES_CONFIG
         if (arguments.size() == 4 && arguments[0] == L"--test-prepare") {
             start::PrepareImage(arguments[1], arguments[2], arguments[3]);
             return 0;

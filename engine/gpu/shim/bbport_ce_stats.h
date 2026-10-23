@@ -1,7 +1,3 @@
-// bbport: BB_CE_STATS=1 — what the constant engine's dumps feed (GPU command thread only):
-// how many DumpConstRam a second, how many bytes and pages, and how often the translator then
-// reads memory a dump wrote in the last 100 ms, by kind. Measures what a translation of the
-// constant engine has to keep visible to the translator (docs/EMULATION_REMOVAL_PLAN.md).
 #pragma once
 #include <array>
 #include <chrono>
@@ -13,12 +9,12 @@
 namespace BbCeStats {
 
 enum Kind : unsigned {
-    UserDataPointer, ///< a 64-bit user data value pointing into dumped pages (SRT/descriptor tables)
-    RingConstants,   ///< constant buffer copied into the constant ring
-    LargeBuffer,     ///< buffer bound on the recording thread (not copied)
-    Vertex,          ///< vertex stream range
-    Index,           ///< index buffer range
-    DmaStage,        ///< a shader stage that reads memory itself (uses_dma)
+    UserDataPointer,
+    RingConstants,
+    LargeBuffer,
+    Vertex,
+    Index,
+    DmaStage,
     NumKinds,
 };
 
@@ -33,7 +29,6 @@ inline bool Enabled() {
 enum Writer : unsigned { ConstantEngine, WriteData, Dma, NumWriters };
 
 struct State {
-    /// 4 KiB page -> last write time, per writer.
     std::array<std::unordered_map<std::uint64_t, std::uint64_t>, NumWriters> page_ns;
     std::array<std::uint64_t, NumWriters> writes{}, bytes{};
     std::array<std::array<std::uint64_t, NumKinds>, NumWriters> hits{};
@@ -91,7 +86,6 @@ inline void NoteDump(std::uint64_t address, std::uint64_t size) {
     NoteWrite(ConstantEngine, address, size);
 }
 
-/// Whether [address, address+size) touches a page `writer` wrote in the last 100 ms.
 inline bool Recent(Writer writer, std::uint64_t address, std::uint64_t size) {
     auto& s = Get();
     if (size == 0 || s.page_ns[writer].empty()) {
@@ -118,4 +112,4 @@ inline void Check(Kind kind, std::uint64_t address, std::uint64_t size) {
     }
 }
 
-} // namespace BbCeStats
+}

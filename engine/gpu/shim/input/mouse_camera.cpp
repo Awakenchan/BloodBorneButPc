@@ -1,327 +1,352 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from bbhost db5457cbd447f4ef129b58df0a78e0a8819c7033.
-#include "compat.h"
-#include "mouse_camera_step.h"
-#include "mouse_camera_stubs.h"
-
-// What DS3 does, read from its executable (the 1.15 in-game dump; the Steam
-// build keeps these functions encrypted on disk):
-//
-// - DLUID::MouseDevice polls DirectInput (GetDeviceState into DIMOUSESTATE2)
-//   and converts lX/lY to float unscaled: the camera works in raw counts.
-// - The game's pad object reads them as two logical axes, signs them by the
-//   PC key config's mouse invert bytes (-1 when not inverted), and scales
-//   them by ((sensitivity * 0.1) * 1.5 + 0.5) * 0.2, the sensitivity a float
-//   0..10 defaulting to 5 (CSPcKeyConfig +0x710, +0x715, +0x716). They are 0
-//   while the mouse is a pointer (a menu up).
-// - PadManipulator keeps them beside the stick, not in it (+0xb0 against the
-//   stick's +0x80).
-// - ChrExFollowCam's update, after the stick has turned the camera:
-//       if (stick moved this frame) skip;             // the stick has priority
-//       pitch -= mouse.pitch * (pi / 180);
-//       yaw   -= mouse.yaw   * (pi / 180);
-//       clamp pitch to the stick path's limits; camera input present
-//   and that is all - the angle is per count, whatever the frame time.
-// - Locked on, a frame whose movement is over 50 counts switches the target
-//   in that direction, then waits 0.5 s unless the movement drops under 25
-//   counts first (the lock-on manager, sub_14085eac0 in the dump).
-//
-// Bloodborne's ChrExFollowCam::Update (sub_183ac60) is the same function
-// without the mouse. Its free camera turns by the stick in the block at
-// 0x183cd75 - angles += dt * stick * speed, both wrapped, pitch clamped to
-// [+0x1f0, +0x1ec] - and stores them at 0x183ce54; the next block, 0x183ce67,
-// restarts the camera's return to centre when the frame had input
-// ([rbp-0x3c4]). DS3's step goes between the two. Lock-on and the scripted
-// camera turns reach 0x183ce67 by other paths and never through the store, so
-// the store is also how the step knows the free camera ran.
-//
-// Where the step runs (engine/mouse_camera_step.h holds it):
-// - Our source of the update in place (the decomp list, decomp/camera/
-//   follow_camera.cpp): ours takes the counts first thing and turns after the
-//   stick, where DS3 does. No hooks.
-// - The game's update in place: hooks on its prologue, the free camera's
-//   store and the fast turn's two exits, as below.
-// - A compare run (BBHOST_DECOMP_COMPARE=1): the stand-in runs the game's
-//   update and ours on the same input, so the game's gets the store hooks and
-//   the stand-in takes the counts for both (mouse_camera_compare_begin).
-//
-// Auto-rotation: as the character moves, the game turns the camera by itself
-// - it reads the yaw back from where the lagging camera is, the pitch return's
-// weight ramps down, and the new camera turns away from walls. Those are three
-// of kHoldSites, the community patch's four stores; its fourth, the auto
-// turn's step, only R3's recentre reaches, and the mouse leaves it be. While
-// the keyboard and mouse were used last and the mouse turns the camera, the
-// three are held (unless the setting says otherwise): ours skips them, and
-// where the game's update runs they are swapped for nops - the patch's bytes -
-// and back when a controller is picked up.
-
-
+#include "mouse_camera.h"
+#include "input.h"
+#include "mouse_turn.h"
+#include "../engine/engine_hooks.h"
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <mutex>
 
-namespace {
+#ifdef _WIN32
+#define LANTERN_STUB_SYMBOL
+#else
+#define LANTERN_STUB_SYMBOL __attribute__((visibility("hidden")))
+#endif
 
-using ull = unsigned long long;
+extern "C" {
+LANTERN_STUB_SYMBOL std::uint64_t lantern_free_camera_resume = 0;
+LANTERN_STUB_SYMBOL std::uint8_t lantern_free_camera_ran = 0;
+LANTERN_STUB_SYMBOL __attribute__((sysv_abi)) void lantern_free_camera_turn(std::uint8_t* camera,
+                                                                             std::uint8_t* had_input,
+                                                                             float stick_pitch, float stick_yaw);
+void lantern_free_camera_site();
+void lantern_fast_turn_exit();
+}
+
+asm(R"(
+    .text
+    .p2align 4
+    .globl lantern_free_camera_site
+lantern_free_camera_site:
+    vmovss      %xmm0, 0x140(%r13)
+    vextractps  $1, %xmm1, 0x144(%r13)
+    push        %rbx
+    push        %rax
+    push        %rcx
+    push        %rdx
+    push        %rsi
+    push        %rdi
+    push        %r8
+    push        %r9
+    push        %r10
+    push        %r11
+    mov         %rsp, %rbx
+    and         $-32, %rsp
+    sub         $512, %rsp
+    vmovdqu     %ymm0, 0x000(%rsp)
+    vmovdqu     %ymm1, 0x020(%rsp)
+    vmovdqu     %ymm2, 0x040(%rsp)
+    vmovdqu     %ymm3, 0x060(%rsp)
+    vmovdqu     %ymm4, 0x080(%rsp)
+    vmovdqu     %ymm5, 0x0a0(%rsp)
+    vmovdqu     %ymm6, 0x0c0(%rsp)
+    vmovdqu     %ymm7, 0x0e0(%rsp)
+    vmovdqu     %ymm8, 0x100(%rsp)
+    vmovdqu     %ymm9, 0x120(%rsp)
+    vmovdqu     %ymm10, 0x140(%rsp)
+    vmovdqu     %ymm11, 0x160(%rsp)
+    vmovdqu     %ymm12, 0x180(%rsp)
+    vmovdqu     %ymm13, 0x1a0(%rsp)
+    vmovdqu     %ymm14, 0x1c0(%rsp)
+    vmovdqu     %ymm15, 0x1e0(%rsp)
+    mov         %r13, %rdi
+    lea         -0x3c4(%rbp), %rsi
+    vmovaps     %xmm10, %xmm0
+    vmovshdup   %xmm10, %xmm1
+    vzeroupper
+    call        lantern_free_camera_turn
+    vmovdqu     0x000(%rsp), %ymm0
+    vmovdqu     0x020(%rsp), %ymm1
+    vmovdqu     0x040(%rsp), %ymm2
+    vmovdqu     0x060(%rsp), %ymm3
+    vmovdqu     0x080(%rsp), %ymm4
+    vmovdqu     0x0a0(%rsp), %ymm5
+    vmovdqu     0x0c0(%rsp), %ymm6
+    vmovdqu     0x0e0(%rsp), %ymm7
+    vmovdqu     0x100(%rsp), %ymm8
+    vmovdqu     0x120(%rsp), %ymm9
+    vmovdqu     0x140(%rsp), %ymm10
+    vmovdqu     0x160(%rsp), %ymm11
+    vmovdqu     0x180(%rsp), %ymm12
+    vmovdqu     0x1a0(%rsp), %ymm13
+    vmovdqu     0x1c0(%rsp), %ymm14
+    vmovdqu     0x1e0(%rsp), %ymm15
+    mov         %rbx, %rsp
+    pop         %r11
+    pop         %r10
+    pop         %r9
+    pop         %r8
+    pop         %rdi
+    pop         %rsi
+    pop         %rdx
+    pop         %rcx
+    pop         %rax
+    pop         %rbx
+    vmovss      0x140(%r13), %xmm0
+    jmp         *lantern_free_camera_resume(%rip)
+
+    .p2align 4
+    .globl lantern_fast_turn_exit
+lantern_fast_turn_exit:
+    vmovss      %xmm0, 0x140(%r13)
+    movb        $1, lantern_free_camera_ran(%rip)
+    jmp         *lantern_free_camera_resume(%rip)
+)");
+
+namespace MouseCamera {
+namespace {
 using Clock = std::chrono::steady_clock;
 
-// NS_SPRJ::ChrExFollowCam::Update, the player's camera in play: push rbp;
-// mov rbp, rsp; push r15..rbx; sub rsp, 0x3d8 (20 bytes).
-constexpr std::uint64_t kUpdate = 0x183ac60;
-constexpr std::uint8_t kUpdatePrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
-                                            0x41, 0x54, 0x53, 0x48, 0x81, 0xec, 0xd8, 0x03, 0x00, 0x00};
-// Its free camera's store: vmovss [r13+0x140], xmm0; vextractps [r13+0x144],
-// xmm1, 1 (19 bytes), reached only from the stick step before it.
-constexpr std::uint64_t kTurnStore = 0x183ce54;
-constexpr std::uint8_t kTurnStoreBytes[] = {0xc4, 0xc1, 0x7a, 0x11, 0x85, 0x40, 0x01, 0x00, 0x00, 0xc4,
-                                            0xc3, 0x79, 0x17, 0x8d, 0x44, 0x01, 0x00, 0x00, 0x01};
-constexpr std::uint64_t kTurnResume = 0x183ce67;
-// The fast turn's two exits: vmovss [r13+0x140], xmm0; jmp 0x183ce67.
-constexpr std::uint64_t kRampExits[] = {0x183f9bc, 0x183fabf};
-constexpr std::uint8_t kRampExitBytes[2][14] = {
-    {0xc4, 0xc1, 0x7a, 0x11, 0x85, 0x40, 0x01, 0x00, 0x00, 0xe9, 0x9d, 0xd4, 0xff, 0xff},
-    {0xc4, 0xc1, 0x7a, 0x11, 0x85, 0x40, 0x01, 0x00, 0x00, 0xe9, 0x9a, 0xd3, 0xff, 0xff}};
-constexpr std::size_t kPitch = 0x140, kYaw = 0x144;
+constexpr std::size_t kUpdate = 0x143ac60;
 
-// The lock-on switch, in counts per frame at the 60 fps DS3 runs at; here as
-// rates, so Bloodborne's 30 fps asks for the same movement.
-constexpr float kFlickSwitch = 50.0f * 60.0f, kFlickRearm = 25.0f * 60.0f;
-constexpr float kFlickCooldown = 0.5f;  // seconds, as DS3 sets it after a switch
-// How long the stick shows a flick: two frames at 30 fps, enough for the game
-// to see a push and a release.
-constexpr auto kFlickHold = std::chrono::milliseconds(80);
+constexpr std::uint8_t kUpdateEntry[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
+                                         0x41, 0x54, 0x53, 0x48, 0x81, 0xec, 0xd8, 0x03, 0x00, 0x00};
+constexpr std::size_t kFreeStore = 0x143ce54, kAfterStore = 0x143ce67;
 
-enum class Mode { None, Ours, Hooks, Compare };
-Mode g_mode = Mode::None;
-const char* mode_name() {
-    return g_mode == Mode::Ours ? "ours" : g_mode == Mode::Compare ? "a compare run" : "hooks";
-}
+constexpr std::uint8_t kFreeStoreCode[] = {0xc4, 0xc1, 0x7a, 0x11, 0x85, 0x40, 0x01, 0x00, 0x00, 0xc4,
+                                           0xc3, 0x79, 0x17, 0x8d, 0x44, 0x01, 0x00, 0x00, 0x01};
+struct FastTurnExit {
+    std::size_t at;
+    std::uint8_t code[14];
+};
+constexpr FastTurnExit kFastTurnExits[] = {
+    {0x143f9bc, {0xc4, 0xc1, 0x7a, 0x11, 0x85, 0x40, 0x01, 0x00, 0x00, 0xe9, 0x9d, 0xd4, 0xff, 0xff}},
+    {0x143fabf, {0xc4, 0xc1, 0x7a, 0x11, 0x85, 0x40, 0x01, 0x00, 0x00, 0xe9, 0x9a, 0xd3, 0xff, 0xff}},
+};
+constexpr std::size_t kPitch = 0x140, kYaw = 0x144, kHighest = 0x1ec, kLowest = 0x1f0;
 
-const bool g_log = [] {
-    const char* e = std::getenv("BBHOST_MOUSE_CAMERA_LOG");
-    return e && e[0] == '1';
-}();
+struct AutoRotationStore {
+    std::size_t at;
+    std::uint8_t code[9];
+    bool held_by_mouse;
+};
+constexpr AutoRotationStore kAutoRotation[] = {
+    {0x143c6e8, {0xc4, 0xc1, 0x7a, 0x11, 0x85, 0x44, 0x01, 0x00, 0x00}, true},
+    {0x143c870, {0xc4, 0xc1, 0x7a, 0x11, 0xad, 0x44, 0x01, 0x00, 0x00}, false},
+    {0x143c984, {0xc4, 0xc1, 0x7a, 0x11, 0x8d, 0x30, 0x01, 0x00, 0x00}, true},
+    {0x143dde6, {0xc4, 0xc1, 0x7a, 0x11, 0x85, 0x94, 0x02, 0x00, 0x00}, true},
+};
+constexpr std::uint8_t kNops[9] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
 
-// The lock-on flick, decided on the pad read.
-std::mutex g_mu;
-Clock::time_point g_last_read;
-float g_cooldown = 0.0f;
-float g_flick_x = 0.0f, g_flick_y = 0.0f;
-Clock::time_point g_flick_until;
-std::atomic<std::uint64_t> g_flicks{0};
-std::atomic<int> g_hold_logged{-1};
+constexpr float kFlickRate = 3000.0f, kFlickRearmRate = 1500.0f, kFlickCooldown = 0.5f;
+constexpr auto kFlickShown = std::chrono::milliseconds(80);
 
-// The hold sites in the game's update, where it runs: their code, whether the
-// nops are in, and whether a patch had already made them nops (then they stay).
-std::uint8_t* g_hold_code[4] = {};
-GuestMemory* g_hold_mem = nullptr;
-bool g_hold_nopped = false, g_hold_fixed = false;
+std::uint8_t* g_image = nullptr;
+bool g_installed = false;
 
-void write_code(std::uint8_t* at, const std::uint8_t* bytes, std::size_t n) {
-    const std::uint64_t va = reinterpret_cast<std::uint64_t>(at);
-    const std::uint64_t lo = va & ~0xfffull, hi = (va + n + 0xfff) & ~0xfffull;
-    (void)lo; (void)hi; BbEngine::WriteCode(at, bytes, n);
-}
+std::mutex g_counts_lock;
+float g_count_x = 0, g_count_y = 0;
 
-// The game's update holding auto-rotation when ours would: the four stores
-// as nops, or as the game's. On the camera's thread, before the update runs.
-void sync_hold(bool hold) {
-    if (!g_hold_mem || g_hold_fixed || hold == g_hold_nopped) return;
-    for (int i = 0; i < 4; ++i) {
-        if (g_hold_code[i] && (mouse_camera::kHeldWithMouse >> i & 1))
-            write_code(g_hold_code[i], hold ? mouse_camera::kNop9 : mouse_camera::kHoldSites[i].game, 9);
+std::atomic<float> g_degrees_per_count{MouseTurn::DegreesPerCount(5)};
+std::atomic<bool> g_invert_x{false}, g_invert_y{false}, g_hold{false};
+
+float g_update_x = 0, g_update_y = 0;
+bool g_auto_rotation_nops = false;
+bool g_patched_out = false;
+bool g_store_is_games[std::size(kAutoRotation)] = {};
+bool g_free_last_update = true;
+
+std::mutex g_flick_lock;
+float g_flick_x = 0, g_flick_y = 0;
+unsigned g_flick_updates = 0;
+
+Clock::time_point g_last_read{};
+float g_cooldown = 0;
+float g_shown_x = 0, g_shown_y = 0;
+Clock::time_point g_shown_until{};
+
+std::atomic<unsigned> g_turns{0}, g_flicks{0}, g_free_changes{0};
+
+std::uint8_t* At(std::size_t offset) { return g_image + offset; }
+
+void HoldAutoRotation(bool hold) {
+    if (g_patched_out || hold == g_auto_rotation_nops) return;
+    for (std::size_t i = 0; i < std::size(kAutoRotation); ++i) {
+        const AutoRotationStore& s = kAutoRotation[i];
+        if (s.held_by_mouse && g_store_is_games[i]) BbEngine::WriteCode(At(s.at), hold ? kNops : s.code, sizeof s.code);
     }
-    g_hold_nopped = hold;
+    g_auto_rotation_nops = hold;
 }
 
-// Every camera update of the game's, first (the prologue hook): this update's
-// counts, and the game's code holding auto-rotation or not.
-GUEST_ABI std::int64_t update_hook(std::uint64_t, const std::uint64_t*) {
-    mouse_camera::begin_update();
-    sync_hold(mouse_camera::held());
-    // When the free camera stops (lock-on, a scripted turn) and comes back.
-    static bool was_turning = false;
-    static int switches = 0;
-    const bool turned_before = mouse_camera::g_frame.free_before;
-    if (mouse_camera::g_updates.load(std::memory_order_relaxed) > 2 && turned_before != was_turning &&
-        (g_log || switches < 8)) {
-        ++switches;
-        host_log("mouse camera: the free camera %s", turned_before ? "is back" : "stopped (locked on, or the game turns it)");
+std::int64_t __attribute__((sysv_abi)) OnCameraUpdate(std::uint64_t, const std::uint64_t*) {
+    {
+        std::scoped_lock lock(g_counts_lock);
+        g_update_x = g_count_x;
+        g_update_y = g_count_y;
+        g_count_x = g_count_y = 0;
     }
-    was_turning = turned_before;
+    HoldAutoRotation(g_hold.load(std::memory_order_relaxed));
+    const bool free = __atomic_exchange_n(&lantern_free_camera_ran, 0, __ATOMIC_RELAXED) != 0;
+    if (!free) {
+        std::scoped_lock lock(g_flick_lock);
+        g_flick_x += g_update_x;
+        g_flick_y += g_update_y;
+        ++g_flick_updates;
+    }
+
+    static unsigned updates = 0;
+    if (++updates > 2 && free != g_free_last_update && g_free_changes.fetch_add(1, std::memory_order_relaxed) < 8)
+        host_log("mouse camera: the free camera %s", free ? "is back" : "stopped (locked on, or the game turns it)");
+    g_free_last_update = free;
     return 0;
 }
 
-// The free camera of the game's update, after the stick has turned it: DS3's
-// mouse step.
-GUEST_ABI void free_camera_hook(std::uint8_t* cam, std::uint8_t* input, float stick_pitch, float stick_yaw) {
-    float was_pitch = 0.0f, was_yaw = 0.0f;
-    std::memcpy(&was_pitch, cam + kPitch, 4);
-    std::memcpy(&was_yaw, cam + kYaw, 4);
-    if (!mouse_camera::turn_camera(cam, input, stick_pitch, stick_yaw)) return;
-    const std::uint64_t n = mouse_camera::g_turns.load(std::memory_order_relaxed);
-    if (n == 1 || (g_log && n < 400)) {
-        float pitch = 0.0f, yaw = 0.0f;
-        std::memcpy(&pitch, cam + kPitch, 4);
-        std::memcpy(&yaw, cam + kYaw, 4);
-        host_log("mouse camera: %+.0f,%+.0f counts: pitch %.4f -> %.4f, yaw %.4f -> %.4f", mouse_camera::g_frame.dx,
-                 mouse_camera::g_frame.dy, was_pitch, pitch, was_yaw, yaw);
-    }
-}
-
-// A jmp [rip+0] to `dest` over the first bytes of `at`, the rest int3.
-bool redirect(ElfImage* image, std::uint64_t va, std::size_t n, const void* dest) {
-    auto* code = static_cast<std::uint8_t*>(guest_ptr(image->mem, va));
-    const std::uint64_t lo = va & ~0xfffull, hi = (va + n + 0xfff) & ~0xfffull;
-    if (!code || !guest_protect_rwx(&image->mem, lo, hi - lo)) return false;
-    const std::uint64_t to = reinterpret_cast<std::uint64_t>(dest);
+bool JumpFrom(std::uint8_t* site, std::size_t size, void (*to)()) {
+    std::uint8_t code[32];
+    std::memset(code, 0xcc, sizeof code);
+    const auto target = reinterpret_cast<std::uint64_t>(to);
     code[0] = 0xff;
-    code[1] = 0x25;  // jmp [rip+0]
+    code[1] = 0x25;
     std::memset(code + 2, 0, 4);
-    std::memcpy(code + 6, &to, 8);
-    std::memset(code + 14, 0xcc, n - 14);
-    guest_protect_rx(&image->mem, lo, hi - lo);
+    std::memcpy(code + 6, &target, 8);
+    return size >= 14 && size <= sizeof code && BbEngine::WriteCode(site, code, size);
+}
+}
+
+bool Install(std::uint8_t* image, std::size_t size) {
+    g_image = image;
+    const auto matches = [&](std::size_t at, const std::uint8_t* code, std::size_t n) {
+        return at + n <= size && std::memcmp(image + at, code, n) == 0;
+    };
+    if (!matches(kFreeStore, kFreeStoreCode, sizeof kFreeStoreCode)) {
+        host_log("mouse camera: off, the follow camera's store is not 1.09's");
+        return false;
+    }
+    for (const FastTurnExit& exit : kFastTurnExits) {
+        if (!matches(exit.at, exit.code, sizeof exit.code)) {
+            host_log("mouse camera: off, the follow camera's fast turn is not 1.09's");
+            return false;
+        }
+    }
+
+    bool patched = false;
+    for (std::size_t i = 0; i < std::size(kAutoRotation); ++i) {
+        const AutoRotationStore& s = kAutoRotation[i];
+        g_store_is_games[i] = matches(s.at, s.code, sizeof s.code);
+        patched = patched || matches(s.at, kNops, sizeof kNops);
+    }
+    BbEngine::Hook entry;
+    if (!BbEngine::Prepare(entry, image, size, kUpdate, kUpdateEntry, OnCameraUpdate)) {
+        host_log("mouse camera: off, the follow camera's update is not 1.09's");
+        return false;
+    }
+    g_patched_out = patched;
+    lantern_free_camera_resume = reinterpret_cast<std::uint64_t>(At(kAfterStore));
+    bool placed = JumpFrom(At(kFreeStore), sizeof kFreeStoreCode, lantern_free_camera_site);
+    for (const FastTurnExit& exit : kFastTurnExits) placed = placed && JumpFrom(At(exit.at), sizeof exit.code, lantern_fast_turn_exit);
+    if (!placed) {
+
+        BbEngine::WriteCode(At(kFreeStore), kFreeStoreCode, sizeof kFreeStoreCode);
+        for (const FastTurnExit& exit : kFastTurnExits) BbEngine::WriteCode(At(exit.at), exit.code, sizeof exit.code);
+        BbEngine::Discard(entry);
+        host_log("mouse camera: off, the follow camera's code could not be written");
+        return false;
+    }
+    BbEngine::Commit(std::span(&entry, 1));
+    g_installed = true;
+    host_log("mouse camera: %.3f degrees a count at sensitivity 5, after the stick and only without it; a flick "
+             "switches the lock-on target%s",
+             MouseTurn::DegreesPerCount(5), g_patched_out ? "; a patch holds the camera's auto-rotation already" : "");
     return true;
 }
 
-}  // namespace
+bool Installed() { return g_installed; }
 
-float mouse_camera_degrees_per_count(int sensitivity) { return mouse_camera::degrees_per_count(sensitivity); }
-
-bool mouse_camera_installed() { return g_mode != Mode::None; }
-
-void mouse_camera_install(ElfImage* image) {
-    if (!image || image->sha256 != kEboot109Sha256) return;
-    const auto at = [&](std::uint64_t bn) { return image->mem.slide + (bn - kPreferredGuestSlide); };
-    const int placed = 0; // This runtime executes the validated game camera.
-    if (placed == 1) {
-        g_mode = Mode::Ours;
-        host_log("mouse camera: as Dark Souls III turns it - %.3f degrees a count at sensitivity 5, after the stick and "
-                 "only without it; a flick switches the lock-on target - in our follow camera",
-                 mouse_camera_degrees_per_count(5));
-        return;
-    }
-    // The game's update runs, alone or beside ours: its free camera's store.
-    auto* store = static_cast<std::uint8_t*>(guest_ptr(image->mem, at(kTurnStore)));
-    if (!store || std::memcmp(store, kTurnStoreBytes, sizeof(kTurnStoreBytes)) != 0) {
-        host_log("mouse camera: refused, 0x%llx is not the follow camera's store; the mouse turns it through the stick",
-                 static_cast<ull>(kTurnStore));
-        return;
-    }
-    // Its prologue takes the counts, unless ours is a compare run's stand-in
-    // there, which takes them for both.
-    // Check every displaced block before committing any camera hook.
-    for(int i=0;i<2;i++) {
-        const auto* exit=static_cast<const std::uint8_t*>(guest_ptr(image->mem,at(kRampExits[i])));
-        if(!exit || std::memcmp(exit,kRampExitBytes[i],14)) {
-            host_log("mouse camera: refused, fast-turn bytes differ; camera left untouched");return;
-        }
-    }
-    if (placed == 0 && !input_prologue_hook(image, at(kUpdate), kUpdatePrologue, sizeof(kUpdatePrologue), update_hook)) {
-        host_log("mouse camera: refused, 0x%llx is not the follow camera's update; the mouse turns it through the stick",
-                 static_cast<ull>(kUpdate));
-        return;
-    }
-    g_mouse_camera_host = reinterpret_cast<void*>(&free_camera_hook);
-    g_mouse_camera_resume = at(kTurnResume);
-    if (!redirect(image, at(kTurnStore), sizeof(kTurnStoreBytes), reinterpret_cast<const void*>(&bb_mouse_camera_stub))) {
-        host_log("mouse camera: cannot write the follow camera's code; the mouse turns it through the stick");
-        return;
-    }
-    // The fast turn's exits, so that "the free camera did not run" is lock-on
-    // or the game turning the camera, never the stick held over.
-    for (int i = 0; i < 2; ++i) {
-        auto* exit = static_cast<std::uint8_t*>(guest_ptr(image->mem, at(kRampExits[i])));
-        if (!exit || std::memcmp(exit, kRampExitBytes[i], 14) != 0 ||
-            !redirect(image, at(kRampExits[i]), 14, reinterpret_cast<const void*>(&bb_mouse_camera_ramp_stub))) {
-            host_log("mouse camera: 0x%llx is not the fast turn's exit; a lock-on flick may also show while the stick is held "
-                     "over", static_cast<ull>(kRampExits[i]));
-        }
-    }
-    // The hold sites, to swap. A patch that made them nops already keeps them.
-    g_hold_mem = &image->mem;
-    for (int i = 0; i < 4; ++i) {
-        auto* code = static_cast<std::uint8_t*>(guest_ptr(image->mem, at(mouse_camera::kHoldSites[i].bn)));
-        if (code && std::memcmp(code, mouse_camera::kHoldSites[i].game, 9) == 0) {
-            g_hold_code[i] = code;
-        } else if (code && std::memcmp(code, mouse_camera::kNop9, 9) == 0) {
-            g_hold_fixed = true;
-        }
-    }
-    if (g_hold_fixed) host_log("mouse camera: a patch holds the camera's auto-rotation already, with any device");
-    g_mode = placed == 2 ? Mode::Compare : Mode::Hooks;
-    host_log("mouse camera: as Dark Souls III turns it - %.3f degrees a count at sensitivity 5, after the stick and only "
-             "without it; a flick switches the lock-on target - by hooks on the game's follow camera%s",
-             mouse_camera_degrees_per_count(5), placed == 2 ? " (beside ours, compared)" : "");
+void AddCounts(float dx, float dy) {
+    std::scoped_lock lock(g_counts_lock);
+    g_count_x += dx;
+    g_count_y += dy;
 }
 
-void mouse_camera_publish(int sensitivity, bool invert_x, bool invert_y, bool hold_auto_rotation) {
-    const float per_count = mouse_camera_degrees_per_count(sensitivity);
-    std::uint32_t bits;
-    std::memcpy(&bits, &per_count, 4);
-    mouse_camera::g_degrees_per_count.store(bits, std::memory_order_relaxed);
-    mouse_camera::g_flags.store((invert_x ? mouse_camera::kInvertX : 0u) | (invert_y ? mouse_camera::kInvertY : 0u) |
-                                    (hold_auto_rotation ? mouse_camera::kHoldAutoRotation : 0u),
-                                std::memory_order_relaxed);
-    // On a change: the device switches with every key or stick the player
-    // reaches for, so only the first few.
-    static int changes = 0;
-    if (g_hold_logged.exchange(hold_auto_rotation ? 1 : 0) != (hold_auto_rotation ? 1 : 0) && (g_log || changes < 6)) {
-        ++changes;
-        host_log("mouse camera: auto-rotation %s", hold_auto_rotation ? "held (the keyboard and mouse were used last)"
-                                                                      : "the game's own");
+void Reset() {
+    {
+        std::scoped_lock lock(g_counts_lock);
+        g_count_x = g_count_y = 0;
     }
+    std::scoped_lock lock(g_flick_lock);
+    g_flick_x = g_flick_y = 0;
+    g_flick_updates = 0;
 }
 
-bool mouse_camera_flick(float& x, float& y) {
-    std::lock_guard<std::mutex> lock(g_mu);
+void Publish(int sensitivity, bool invert_x, bool invert_y, bool hold_auto_rotation) {
+    g_degrees_per_count.store(MouseTurn::DegreesPerCount(sensitivity), std::memory_order_relaxed);
+    g_invert_x.store(invert_x, std::memory_order_relaxed);
+    g_invert_y.store(invert_y, std::memory_order_relaxed);
+
+    static unsigned changes = 0;
+    if (g_hold.exchange(hold_auto_rotation, std::memory_order_relaxed) != hold_auto_rotation && changes++ < 6)
+        host_log("mouse camera: auto-rotation %s",
+                 hold_auto_rotation ? "held (the keyboard and mouse in use)" : "the game's own");
+}
+
+bool Flick(float& x, float& y) {
     const Clock::time_point now = Clock::now();
-    float dt = g_last_read != Clock::time_point{} ? std::chrono::duration<float>(now - g_last_read).count() : 0.0f;
-    if (dt > 0.25f) dt = 0.25f;  // a load or a pause is not a fast mouse
+    float dt = g_last_read == Clock::time_point{} ? 0.0f : std::chrono::duration<float>(now - g_last_read).count();
+    dt = std::min(dt, 0.25f);
     g_last_read = now;
-    // The counts of the camera updates since the last read that came after
-    // one without the free camera - lock-on, or the game turning it.
-    float dx = 0.0f, dy = 0.0f;
-    mouse_camera::unpack(mouse_camera::g_flick_counts.exchange(0, std::memory_order_acq_rel), dx, dy);
-    if (mouse_camera::g_flick_updates.exchange(0, std::memory_order_acq_rel) != 0 && dt > 0.0f) {
-        const float m = std::sqrt(dx * dx + dy * dy);
-        const float rate = m / dt;
-        if (rate < kFlickRearm) {
-            g_cooldown = 0.0f;
-        } else {
-            g_cooldown = g_cooldown - dt < 0.0f ? 0.0f : g_cooldown - dt;
-        }
-        if (g_cooldown <= 0.0f && rate > kFlickSwitch) {
-            g_flick_x = dx / m;
-            g_flick_y = dy / m;
-            g_flick_until = now + kFlickHold;
+    float dx, dy;
+    unsigned updates;
+    {
+        std::scoped_lock lock(g_flick_lock);
+        dx = g_flick_x;
+        dy = g_flick_y;
+        updates = g_flick_updates;
+        g_flick_x = g_flick_y = 0;
+        g_flick_updates = 0;
+    }
+    if (updates && dt > 0) {
+        const float distance = std::hypot(dx, dy);
+        const float rate = distance / dt;
+        g_cooldown = rate < kFlickRearmRate ? 0.0f : std::max(0.0f, g_cooldown - dt);
+        if (g_cooldown <= 0 && rate > kFlickRate) {
+            g_shown_x = dx / distance;
+            g_shown_y = dy / distance;
+            g_shown_until = now + kFlickShown;
             g_cooldown = kFlickCooldown;
-            const std::uint64_t n = g_flicks.fetch_add(1, std::memory_order_relaxed);
-            if (g_log || n < 4) {
-                host_log("mouse camera: a flick of %.0f counts (%.0f a second) switches the lock-on target, toward %+.2f,%+.2f",
-                         m, rate, g_flick_x, g_flick_y);
-            }
+            if (g_flicks.fetch_add(1, std::memory_order_relaxed) < 4)
+                host_log("mouse camera: a flick of %.0f counts (%.0f a second) switches the lock-on target toward "
+                         "%+.2f,%+.2f", distance, rate, g_shown_x, g_shown_y);
         }
     }
-    if (now >= g_flick_until) return false;
-    x = g_flick_x;
-    y = g_flick_y;
+    if (now >= g_shown_until) return false;
+    x = g_shown_x;
+    y = g_shown_y;
     return true;
 }
-
-void mouse_camera_compare_begin() {
-    mouse_camera::begin_update();
-    sync_hold(mouse_camera::held());
 }
 
-void mouse_camera_report() {
-    if (g_mode == Mode::None) return;
-    host_log("mouse camera (%s): %llu camera updates, %llu turned by the mouse, %llu where the stick had the camera, %llu "
-             "lock-on flicks; auto-rotation held in %llu",
-             mode_name(), static_cast<ull>(mouse_camera::g_updates.load()), static_cast<ull>(mouse_camera::g_turns.load()),
-             static_cast<ull>(mouse_camera::g_stick_frames.load()), static_cast<ull>(g_flicks.load()),
-             static_cast<ull>(mouse_camera::g_held.load()));
+extern "C" __attribute__((sysv_abi)) void lantern_free_camera_turn(std::uint8_t* camera, std::uint8_t* had_input,
+                                                                    float stick_pitch, float stick_yaw) {
+    using namespace MouseCamera;
+    __atomic_store_n(&lantern_free_camera_ran, 1, __ATOMIC_RELAXED);
+    if (g_update_x == 0 && g_update_y == 0) return;
+    if (stick_pitch != 0 || stick_yaw != 0) return;
+    float pitch, yaw, highest, lowest;
+    std::memcpy(&pitch, camera + kPitch, 4);
+    std::memcpy(&yaw, camera + kYaw, 4);
+    std::memcpy(&highest, camera + kHighest, 4);
+    std::memcpy(&lowest, camera + kLowest, 4);
+    const float was_pitch = pitch, was_yaw = yaw;
+    const MouseTurn::Settings s{g_degrees_per_count.load(std::memory_order_relaxed),
+                                g_invert_x.load(std::memory_order_relaxed), g_invert_y.load(std::memory_order_relaxed)};
+    if (!MouseTurn::Turn(g_update_x, g_update_y, s, pitch, yaw, lowest, highest)) return;
+    std::memcpy(camera + kPitch, &pitch, 4);
+    std::memcpy(camera + kYaw, &yaw, 4);
+    *had_input = 1;
+    if (g_turns.fetch_add(1, std::memory_order_relaxed) == 0)
+        host_log("mouse camera: first turn, %+.0f,%+.0f counts: pitch %.4f -> %.4f, yaw %.4f -> %.4f", g_update_x,
+                 g_update_y, was_pitch, pitch, was_yaw, yaw);
 }

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Compile selected shadPS4/GoldHEN XML patches into out/patches.bin for the loader.
 
 Patch addresses are PS4 virtual addresses (eboot base 0x400000); the loader's
@@ -14,19 +15,8 @@ import zlib
 from pathlib import Path
 
 EBOOT_BASE=0x400000
-# BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
-# Above 60 FPS the sprint fix always goes with the frame rate patch: without it sprinting drops to
-# half speed (the game's wall detector measured distance per frame, a 30 FPS rule).
 FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++','Sprint Fix (High FPS)'],
              'uncap':['Uncap FPS++','Sprint Fix (High FPS)']}
-# 120 and 144: the 90 FPS++ patch with its frame-rate values for that rate. The uncapped patch (a
-# different design) deadlocked the game's model jobs at the end of Vicar Amelia's intro at any
-# frame rate, 60 included; 60 and 90 FPS++ (one design) did not. Their values follow the rate
-# from the game's own 30: frame times 1/fps, frame counts fps/6 and fps/3, timings 3/fps, a
-# thread's sleep 990000/fps us, the limiter's longest sleep just under a frame, and the frame
-# time the character update steps its stamina by and hands on, 1.125/fps (the patch fixes it at
-# 0.0125 for 90: kept at that at 120 and 144, the character ran 1.5 and 1.8 times as fast there and
-# fell that much faster).
 SCALED_FPS={'120':120,'144':144}
 SCALED_BASE='90 FPS++'
 
@@ -34,11 +24,11 @@ SCALED_BASE='90 FPS++'
 def scaled_rate_values(fps):
     """Patch address -> bytes: the 90 FPS++ values that depend on the frame rate, for `fps`."""
     f=lambda *v: b''.join(struct.pack('<f',x) for x in v)
-    frame=bytes.fromhex('41c7442418')+f(1/fps)  # mov dword [r12+0x18], the frame time
+    frame=bytes.fromhex('41c7442418')+f(1/fps)
     cap=struct.pack('<I',{90:10000,120:8000,144:6500}[fps])
     return {
         0x0F383CA: f(1/fps),
-        0x1CBDB42: bytes.fromhex('c7857cffffff')+f(0.0125*90/fps)+bytes.fromhex('909090909090'),  # mov dword [rbp-0x84]
+        0x1CBDB42: bytes.fromhex('c7857cffffff')+f(0.0125*90/fps)+bytes.fromhex('909090909090'),
         0x1929676: struct.pack('<i',fps//6),
         0x192C405: struct.pack('<i',fps//3),
         0x2434840: frame, 0x243485A: frame, 0x243487E: frame, 0x24348B3: frame,
@@ -66,102 +56,67 @@ def rate_scaled(writes, fps):
     return out
 
 
-# Corrections to the community frame-rate patches (Kyo's 1.0 lists), after bbhost's
-# (droogie/bbhost, src/engine/frame_rate.cpp and decomp/camera/follow_camera.cpp; Kyo's 1.3 lists
-# and yogesh1239's AI/Camera fix do the same), each site checked against the 1.09 eboot:
-#
-# Effects keep the data's rate. The effect manager's 30.0 (0x26FB39F) and the GPU particle
-# update's (0x4CAD7FC) turn effect data, written in 30 fps frames, into seconds; every list sets
-# both to 60, which halved each emitter's interval and lifetime and ran GPU particles twice as
-# fast (the motes rising from a lamp's travel and a boss's blood rain went missing).
-EFFECT_RATE_SITES=(0x26FB39F,0x4CAD7FC)
-# The cloth above 60, as Kyo's 1.3: one substep a frame (0xB6E67A) runs the solver at the frame
-# rate against the 60 its part files are tuned for, and the six constraint caves scale its
-# stiffness by the scalars at 0x4D3BD00: (60/fps)^2. The 1.0 lists scale it by 60/fps and also
-# point the damping exponent's load (0xB6FBD4) at it and scale the integrator's dt*dt (a hook at
-# 0xB73F84, its cave at 0xB73FA8, the factor at 0x4D3BD10), which 1.3 leaves as the game has
-# them: the cloth jumped and ran fast at 90 and above.
-CLOTH_STIFFNESS=0x4D3BD00
-CLOTH_LEFT_OUT=((0xB6FBD4,0xB6FBD8),(0xB73F84,0xB73F8D),(0xB73FA8,0xB73FC1),(0x4D3BD10,0x4D3BD20))
-# The follow camera (ChrExFollowCam) eases by weights a frame. The lists store Kyo's 60 fps values
-# for them at every rate - its constructor's immediates (field by address below) and two runs of
-# stores that replace its parameter reads (mov dword [r13+field], value) - so at 90, 120 and 144
-# it chased, turned and settled 1.5, 2 and 2.4 times as fast. They are converted from a 60 fps
-# frame: a weight w to 1-(1-w)^(60/fps), the pitch return's kept share k (+0x1a8) to k^(60/fps);
-# the direct pitch angle (+0x238) is an angle. Three weights no list tunes are the game's own for
-# a 30 fps frame, converted from it at every rate: the LockCamParam blend (+0x330, an immediate
-# no list writes), the distance ease (0x4D25E68, 0.1; the lists' 0.025 eased at half speed at 60)
-# and the chase-rate ease (0x4D25E94, 1/30).
-CAMERA_FIELDS={0x183a4c3:0x19c,0x183a4cd:0x1a0,0x183a4d7:0x1a4,0x183a4e1:0x1a8,0x183a4f5:0x1b0,
-               0x183a4ff:0x1b4,0x183a509:0x1b8,0x183a527:0x1c4,0x183a531:0x1c8,0x183a53b:0x1cc,
-               0x183a649:0x238,0x183a653:0x23c,0x183a65d:0x240,0x183a8c1:0x19c,0x183a8cb:0x1a0,
-               0x183a8d5:0x1a4,0x183a8df:0x1a8,0x183a8f3:0x1b0,0x183a8fd:0x1b4,0x183a907:0x1b8,
-               0x183a925:0x1c4,0x183a92f:0x1c8,0x183a939:0x1cc,0x183aa47:0x238,0x183aa51:0x23c,
-               0x183aa5b:0x240}
-CAMERA_STORES=((0x183FF29,0x183FF6B),(0x1840799,0x18407E6))
-CAMERA_ANGLE,CAMERA_KEPT=0x238,0x1a8
-CAMERA_EASES={0x4D25E68:0.1,0x4D25E94:1/30}
-CAMERA_PARAM_EASE=(0x183A7DE,bytes.fromhex('cdcc4c3d'))  # mov dword [rbx+0x330], 0.05
-# Status effects (GitHub issue 15). A character's effects advance twice a frame: 0x1cbc470 passes
-# its step (the load at 0x1cbc4f7) to the effect update, then calls vtable +0x150 (0x1cc9d90), which
-# advances them again by the step it is given at 0x1cbc50d. The game gives both 1/30 (0x4D27C4C).
-# Every list points the first load at the frame's time (0x575A908, kept by the 60 FPS++ cave) and
-# sets the constant the second reads to 1/60: right at 60 only, so at 90, 120 and 144 effects ran
-# 1.33, 1.5 and 1.6 times as fast (poison ticks, build-up and its decay, buff durations). The
-# second load reads the frame's time too, wherever a list repoints the first.
-EFFECT_STEP_FIRST=0x1CBC4FB
-EFFECT_STEP_SECOND=(0x1CBC511,bytes.fromhex('37b70603'),bytes.fromhex('f3e3a903'))  # vmovss xmm0, [rip+disp]
+
+EFFECT_DATA_RATE=(0x26FB39F,0x4CAD7FC)
+CAMERA_DEFAULTS={0x183a4c3:0x19c,0x183a4cd:0x1a0,0x183a4d7:0x1a4,0x183a4e1:0x1a8,0x183a4f5:0x1b0,
+                 0x183a4ff:0x1b4,0x183a509:0x1b8,0x183a527:0x1c4,0x183a531:0x1c8,0x183a53b:0x1cc,
+                 0x183a649:0x238,0x183a653:0x23c,0x183a65d:0x240,0x183a8c1:0x19c,0x183a8cb:0x1a0,
+                 0x183a8d5:0x1a4,0x183a8df:0x1a8,0x183a8f3:0x1b0,0x183a8fd:0x1b4,0x183a907:0x1b8,
+                 0x183a925:0x1c4,0x183a92f:0x1c8,0x183a939:0x1cc,0x183aa47:0x238,0x183aa51:0x23c,
+                 0x183aa5b:0x240}
+CAMERA_PARAMETER_BLOCKS=((0x183FF29,0x183FF70),(0x1840799,0x18407EB))
+CAMERA_FIXED_STORE=bytes.fromhex('41c785')
+CAMERA_PITCH_ANGLE,CAMERA_PITCH_KEPT=0x238,0x1a8
+CAMERA_GAME_EASES={0x4D25E68:0.1,0x4D25E94:1/30}
+CAMERA_LOCK_BLEND=(0x183A7DE,bytes.fromhex('cdcc4c3d'))
+STATUS_STEP_FIRST=0x1CBC4FB
+STATUS_STEP_SECOND=(0x1CBC511,bytes.fromhex('37b70603'),bytes.fromhex('f3e3a903'))
 
 
-def camera_value(field, value, frames):
-    """A camera field's value for a frame `frames` of the frames it was tuned for."""
-    if field==CAMERA_ANGLE or not 0<value<1: return value
-    return value**frames if field==CAMERA_KEPT else 1-(1-value)**frames
+def per_frame(weight, frames, field=None):
+    """A weight tuned for one frame, for a frame `frames` times as long: the share moved, 1-(1-w)^n,
+    or for the pitch return the share kept, w^n. The pitch angle and values outside (0, 1) stay."""
+    if field==CAMERA_PITCH_ANGLE or not 0<weight<1: return weight
+    if field==CAMERA_PITCH_KEPT: return weight**frames
+    return 1-(1-weight)**frames
 
 
-def frame_rate_fixes(writes, fps, elf=None):
-    """The frame-rate preset's writes with the corrections above, for `fps` (None: uncapped,
-    whose rate is not known here; only the effects' rate is put back)."""
-    f=lambda v: struct.pack('<f',v)
-    # BB_CAMERA_FIX=1 (the launcher's Extra variables): the camera eases as far in a second as the
-    # game does at 30. Off by default: players found it trailing too far behind when running (#32);
-    # the camera keeps the FPS++ list's values, as up to 0.9.24.
-    camera=os.environ.get('BB_CAMERA_FIX','0')=='1'
+def follow_camera_write(at, data, fps):
+    """A list's camera write with its weights converted to a frame of 1/fps: the 60 list's, the
+    game's own from 30."""
+    if at in CAMERA_DEFAULTS:
+        return struct.pack('<f',per_frame(struct.unpack('<f',data)[0],60/fps,CAMERA_DEFAULTS[at]))
+    if len(data)==11 and data[:3]==CAMERA_FIXED_STORE and any(lo<=at<hi for lo,hi in CAMERA_PARAMETER_BLOCKS):
+        field,weight=struct.unpack('<If',data[3:])
+        return data[:7]+struct.pack('<f',per_frame(weight,60/fps,field))
+    if at in CAMERA_GAME_EASES:
+        return struct.pack('<f',per_frame(CAMERA_GAME_EASES[at],30/fps))
+    return data
+
+
+def corrected_frame_rate(writes, fps, elf=None):
+    """The frame-rate preset's writes with the corrections above, for `fps` (None: uncapped, whose
+    rate is unknown here: only the effects' rate and the status effects are put right). `elf`, when
+    given, must have the game's bytes where a correction adds a write."""
+    camera=bool(fps) and os.environ.get('BB_CAMERA_FIX','0')=='1'
     out=[]
     for offset,data in writes:
-        a=offset+EBOOT_BASE
-        if a in EFFECT_RATE_SITES:
-            continue
-        if fps and fps>60:
-            left=next(((lo,hi) for lo,hi in CLOTH_LEFT_OUT if lo<=a<hi),None)
-            if left:
-                if a+len(data)>left[1]: raise ValueError(f'frame-rate patch: {a:#x} reaches past {left[1]:#x}')
-                continue
-            if a==CLOTH_STIFFNESS: data=f((60/fps)**2)*4
-        if fps and camera:
-            if a in CAMERA_FIELDS:
-                data=f(camera_value(CAMERA_FIELDS[a],struct.unpack('<f',data)[0],60/fps))
-            elif any(lo<=a<hi for lo,hi in CAMERA_STORES) and len(data)==11 and data[:3]==bytes.fromhex('41c785'):
-                field,value=struct.unpack('<If',data[3:])
-                data=data[:7]+f(camera_value(field,value,60/fps))
-            elif a in CAMERA_EASES:
-                data=f(camera_value(None,CAMERA_EASES[a],30/fps))
+        at=offset+EBOOT_BASE
+        if at in EFFECT_DATA_RATE: continue
+        if camera: data=follow_camera_write(at,data,fps)
         out.append((offset,data))
-    at,was,now=EFFECT_STEP_SECOND
-    if any(offset+EBOOT_BASE==EFFECT_STEP_FIRST for offset,_ in out) and             (elf is None or original_bytes(elf,at-EBOOT_BASE,len(was))==was):
+    unchanged=lambda at,was: elf is None or original_bytes(elf,at-EBOOT_BASE,len(was))==was
+    at,was,now=STATUS_STEP_SECOND
+    if any(offset+EBOOT_BASE==STATUS_STEP_FIRST for offset,_ in out) and unchanged(at,was):
         out.append((at-EBOOT_BASE,now))
-    if fps and camera:
-        at,was=CAMERA_PARAM_EASE
-        if elf is None or original_bytes(elf,at-EBOOT_BASE,len(was))==was:
-            out.append((at-EBOOT_BASE,f(camera_value(None,struct.unpack('<f',was)[0],30/fps))))
+    at,was=CAMERA_LOCK_BLEND
+    if camera and unchanged(at,was):
+        out.append((at-EBOOT_BASE,struct.pack('<f',per_frame(struct.unpack('<f',was)[0],30/fps))))
     return out
 
 
-# Upscaler presets (lantern.ini "preset", the in-game menu): output / render size ratio. The game
-# then renders at 1920x1080 / ratio and the port's temporal upscaler restores the output size.
 OUTPUT_SIZE=(1920,1080)
 PRESET_SCALES=[1.0,1.5,1.7,2.0,3.0]
-# Preset 5 (Custom): lantern.ini render_scale, 1.0-3.0.
 PRESET_CUSTOM=len(PRESET_SCALES)
 
 
@@ -173,12 +128,7 @@ def preset_scale(settings):
         except ValueError:
             return 1.3
     return PRESET_SCALES[max(0,min(preset,len(PRESET_SCALES)-1))]
-# The community patch changes two independent consumers: the game render/window setup
-# and the UI movie viewport. Keep the latter at native size so glyph rasterisation and
-# vector tessellation do not inherit the scene's FSR resolution.
 RESOLUTION_TEMPLATE='Resolution Patch 1280x720 (16:9)'
-# Effect switches (lantern.ini, in-game menu, launcher): key -> (patch when the key is 0, patch
-# when it is 1). The game reads these at start; a change applies after a restart.
 EFFECTS={
     'effect_chromatic_aberration':('Disable Chromatic Aberration',None),
     'effect_dof':('Disable DoF',None),
@@ -191,37 +141,16 @@ EFFECTS={
     'debug_camera':(None,'Restore Debug Camera'),
     'debug_menu':(None,'Restore Debug Menu (READ NOTES)'),
 }
-# Intel CPUs: the game's tone mapping turns black (DLC areas most; reported as darker than on the
-# PS4): the game code runs natively, and Intel's approximate float instructions differ from the
-# PS4's AMD CPU, so a block the game gates on a computed flag never runs. The community fix runs
-# it always; on by default on Intel. BB_INTEL_TONEMAP_FIX=0/1 forces it off or on.
 INTEL_TONEMAP='Intel Black Tonemap Fix'
-# The effect ribbon writers (0x28ce7b0, 0x28ceec0) still lost their red-zone locals on a 14th gen
-# Intel CPU (GXWorker, guest+0x28cf0d6, Witch of Hemwick) with the stores protected
-# (link_modules.protect_red_zones). BB_SFX_WORKAROUND=1 (the launcher's Extra variables) applies
-# emoose's patch instead: a return at that ribbon type's draw, which then draws no ribbon.
 SFX_WORKAROUND='Intel 12th Gen+ SFX workaround'
 HEAP_PATCH='Increased Graphics Heap Sizes'
-# The game's two per-frame render pools: it makes them at start, 256 KiB each, from its graphics
-# heap (mov edx,0x40000 at these image offsets), and its GX worker threads take each frame's draw
-# data from them in 2 KiB chunks. A busy frame ran one out and the game copied into the null
-# pointer it got (GXWorker crash, the same spot every time: a boss intro with Model LOD -2 at
-# 2560x1440). Built in: 1 MiB each, 1.5 MiB more in all; BB_RENDER_POOLS=0 keeps the game's size.
 RENDER_POOL_SITES=(0x2195c09,0x2195c46)
 RENDER_POOL_CODE=bytes.fromhex('ba00000400')
 RENDER_POOL_SIZE=0x100000
-# The game's GX range allocator: GPU memory for buffers the CPU updates (per-draw shader parameters,
-# CPU-deformed vertices; mode 3 of the GX buffer map 0x2169c30). Its region is the GX manager's
-# default 128 MiB (mov dword [rbx+0x88], 0x8000000 at 0x1d9933d) plus 32 MiB, carved at start from
-# GFX_GraphicsPrivateMix (the two graphics heaps). Ebrietas' trail effect (f001251720 in m24_02)
-# drove it to 0.5 MB free right before her device losses, and two per-frame passes (0xeb75e0,
-# 0x21d921d) write through stale pointers when it is full. BB_GX_REGION_MB=<MiB> sizes it (160-416,
-# default 288; 0 keeps the game's 160); with the heaps at the PS4 size GFX_GraphicsPrivate grows
-# by as much, which the 5056 MiB pool holds (the game's direct memory ends near 4.6 GB).
 GX_REGION_SITE=0x1d9933d
 GX_REGION_CODE=bytes.fromhex('c78388000000')+struct.pack('<I',0x8000000)
 GX_REGION_GAME,GX_REGION_DEFAULT,GX_REGION_MAX=160,288,416
-GX_HEAP_SITE=0x4736dd8  # GFX_GraphicsPrivate's size in the heap table (kHeapSizes in start/patches.cpp)
+GX_HEAP_SITE=0x4736dd8
 GX_HEAP_PS4=0x8ef00000
 
 
@@ -237,7 +166,6 @@ def intel_tonemap_fix(env=os.environ, cpuinfo='/proc/cpuinfo'):
     forced=env.get('BB_INTEL_TONEMAP_FIX')
     return forced=='1' if forced in ('0','1') else intel_cpu(cpuinfo)
 
-# model_lod: -2 highest, 0 the game's, 1 lower, 2 lowest.
 MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}
 
 
@@ -249,8 +177,6 @@ def validate_patch_requirements(names, game):
         missing = [name for name in ('DbgFont14h.ccm', 'DbgFont14h.tpf')
                    if not (font / name).is_file() or (font / name).stat().st_size == 0]
         if missing:
-            # The game folder here is the merged mod view (a new folder each start): the message
-            # names where the player puts the files. A font unpacked by WitchyBND does not count.
             unpacked = (font / 'DbgFont14h-tpf-dcx').is_dir() or (font / 'DbgFont14h-tpf').is_dir()
             raise ValueError('Debug menu needs the font files '
                              f'{", ".join(missing)} in dvdroot_ps4/font, in the game folder or in an '
@@ -261,7 +187,6 @@ def validate_patch_requirements(names, game):
                              'debug menu off (debug_menu in lantern.ini)')
 
 
-# A key lantern.ini doesn't have takes the engine's default (bbport_settings.h Effects): these start off.
 DEFAULT_OFF=('effect_chromatic_aberration','effect_dof','effect_motion_blur','effect_game_aa')
 def effect_patches(settings):
     names=[]
@@ -297,7 +222,6 @@ def render_size(settings,override=''):
     if settings.get('upscaler','fsr3')=='off': return None
     scale=preset_scale(settings)
     if scale==1.0: return None
-    # Even sizes (the game has half-resolution buffers).
     return tuple(max(2,round(v/scale/2)*2) for v in OUTPUT_SIZE)
 
 
@@ -323,15 +247,8 @@ def scaled_sizes(settings):
     scale=1.0
     if settings.get('upscaler','fsr3')!='off':
         scale=preset_scale(settings)
-    # A scene of at least 640x360 (start/patches.cpp ScaledSizes): 428x240 (Ultra Performance at a
-    # 720p output) showed the world in half the picture on a ROG Ally.
     scale=max(1.0,min(scale,out[0]/640,out[1]/360))
-    # Multiples of 4: the game's render targets are padded to them, and a scene of 854 got a
-    # 856-wide target whose last columns it never drew - a shimmering line at the right and
-    # bottom edges once upscaled (1708x960, 856x536 at 1440p and 1600p).
     render=tuple(max(4,round(v/scale/4)*4) for v in out)
-    # A scene of exactly 1920x1080 (4K Performance) is indistinguishable from the game's UI
-    # coordinate space, which the port's UI composition recognizes by that size.
     if render==OUTPUT_SIZE: render=(1916,1076)
     return render,out
 
@@ -340,7 +257,7 @@ def ui_size(settings, out):
     """The game's UI movie viewport for an output of `out`: 1920x1080, or with Widescreen on
     (lantern.ini widescreen, on by default) a screen of another shape, that shape around it -
     2520x1080 at 21:9, 3840x1080 at 32:9, 1920x1200 at 16:10. Scaleform shows its 1920x1080
-    stage whole and centred in it (the HUD stays 16:9 in the middle, as in bbhost), and what the
+    stage whole and centred in it (the HUD stays 16:9 in the middle), and what the
     game places past the stage - enemy gauges, co-op names, the lock-on marker at the screen's
     sides (engine/widescreen.cpp) - is drawn there instead of being cut off at the 16:9 box."""
     w,h=out
@@ -412,10 +329,6 @@ def compile_patches(xml, names, app_version, segments):
     return writes
 
 
-# bbport: the standard 1.09 executable's bytes at each built-in patch's write sites, as CRC-32s
-# (patches/Bloodborne-1.09-sites.json, made by --write-site-table from a verified eboot.elf). On an
-# executable that differs at its sites a patch writes into other code (60/90 FPS++ crashed at start
-# on one, GitHub issue 3), so such a patch is left out and the log names where it differs.
 def site_table_path(xml):
     return Path(xml).with_name('Bloodborne-1.09-sites.json')
 
@@ -498,23 +411,18 @@ def gx_region_writes(elf, heaps_written, env=os.environ):
 
 
 
-# The Old Hunters edition (Kyo's "bb 00900" patch, after droogie/bbhost patches/old-hunters.toml):
-# the locale setup stores the package edition from a call (BN 0x23b6d20, sub_23b8ee0: the tens digit
-# of USER_DEFINED_PARAM_1, 1 on the Game of the Year edition, 0 on the base game). `mov eax, 1` makes
-# the base game the edition that includes the DLC: its title screen, and the DLC's event flag (6899)
-# CSDlc sets from it. With the launcher's DLC switch on (BB_DLC=1, GitHub issue 44).
-EDITION_SITE=(0x1fb6d20,bytes.fromhex('e8bb210000'),bytes.fromhex('b801000000'))
+EDITION_CALL=(0x1fb6d20,bytes.fromhex('e8bb210000'),bytes.fromhex('b801000000'))
 
 
 def old_hunters_writes(elf):
-    """The edition write, when the DLC switch is on and the executable has the 1.09 call there."""
+    """The edition write when the DLC switch is on and the executable has 1.09's call there."""
     if os.environ.get('BB_DLC')!='1':
         return []
-    site,was,now=EDITION_SITE
-    if original_bytes(elf,site,len(was))!=was:
+    offset,call,edition_one=EDITION_CALL
+    if original_bytes(elf,offset,len(call))!=call:
         print('Patches: The Old Hunters edition left alone: this executable differs there',flush=True)
         return []
-    return [(site,now)]
+    return [(offset,edition_one)]
 
 
 def write_site_table(xml, app_version, elf_path):
@@ -535,8 +443,6 @@ def write_site_table(xml, app_version, elf_path):
     return table
 
 
-# Third-party patch files (shadPS4/GoldHEN XML) in the data directory's patches/ folder.
-# Every retail serial: all run the same 1.09 game (the launcher's GameCheck.SupportedTitles).
 BLOODBORNE_IDS={'CUSA00207','CUSA00208','CUSA00299','CUSA00900','CUSA01363','CUSA03014',
                 'CUSA03023','CUSA03173','CUSA03179'}
 
@@ -555,8 +461,6 @@ def external_patches(directory, app_version='01.09', exclude=Path(__file__).reso
     found=[]
     directory=Path(directory)
     for path in sorted(directory.glob('*.xml')) if directory.is_dir() else []:
-        # The built-in file, and copies of it in another patches folder (an older package's): those
-        # apply its frame-rate patches over the port's own (Uncap FPS++ on top of 90 FPS++).
         if path.resolve()==Path(exclude).resolve() or path.name.lower()==Path(exclude).name.lower(): continue
         try:
             root=ET.parse(path).getroot()
@@ -571,10 +475,6 @@ def external_patches(directory, app_version='01.09', exclude=Path(__file__).reso
     return found
 
 
-# Built-in patches (patches/Bloodborne.xml) the port already sets from its own settings (frame
-# rate, effects, model detail, output resolution) or no longer needs (the Intel SFX
-# workaround: link_modules.py protects the red zone): not offered as switches, never applied
-# from patches.json. The launcher hides the same ones (Core/Mods.cs ManagedBuiltIn).
 def managed_builtin(name):
     return (name in {n for names in FPS_PRESETS.values() for n in names} or name in (SCALED_BASE, '30 FPS++',
             '60FPS (no deltatime)', INTEL_TONEMAP, SFX_WORKAROUND) or
@@ -618,10 +518,6 @@ def external_selection(found, config):
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
 
 
-# The game's region function (image 0x1fb9190..0x1fb91e3). "Unlock Game Region" makes it return
-# region 5 for that region's language list, and the game has no server for region 5 (its ss.info
-# URL is empty): Play online fails with "Failure to acquire information from the Bloodborne
-# server". A patch that writes into it is left out while online is on, whatever its name or file.
 REGION_FUNCTION=(0x1fb9190,0x1fb91e3)
 
 
@@ -716,7 +612,6 @@ def main():
         size=render_size(settings)
         if size: print(f'{size[0]}x{size[1]}')
         return
-    # 30's preset is empty (the game's own): only 120 and 144 take the scaled 90 FPS++.
     preset=FPS_PRESETS[a.fps] if a.fps in FPS_PRESETS else [SCALED_BASE,'Sprint Fix (High FPS)']
     names=preset+[n.strip() for n in a.extra.split(';') if n.strip()]
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]
@@ -739,17 +634,13 @@ def main():
         writes=rate_scaled(writes,SCALED_FPS[a.fps])
         print(f'Patches: {a.fps} FPS: {SCALED_BASE} with its frame-rate values for {a.fps}')
     if preset and preset[0] in names:
-        writes=frame_rate_fixes(writes,{'60':60,'90':90,**SCALED_FPS}.get(a.fps),elf)
+        writes=corrected_frame_rate(writes,{'60':60,'90':90,**SCALED_FPS}.get(a.fps),elf)
     writes+=old_hunters_writes(elf)
     pools=render_pool_writes(elf)
     if pools:
         writes+=pools
         print(f'Patches: render pools {RENDER_POOL_SIZE>>10} KiB each (the game\'s 256)')
     size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
-    # The UI keeps the game's 1920x1080 stage even for a larger output: the port draws it into
-    # the output-size image with a viewport scaled by output / 1920 (UiComposition), so it is
-    # rasterized at the output resolution. With Widescreen on another screen shape its movie
-    # viewport takes that shape around the stage (ui_size).
     out=output_size(read_settings(a.settings))
     if a.output_res:
         out=tuple(int(v) for v in a.output_res.lower().split('x'))
@@ -762,21 +653,15 @@ def main():
             names.append(heap)
         print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
     if a.patches_dir:
-        # After the built-in ones: an external patch of the same bytes wins.
         resolution=(resolution_footprint(a.xml,a.app_version,segments),out) if out!=OUTPUT_SIZE else None
         writes+=compile_external(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
                                                     a.patches_config),segments,resolution)
-    # Whether a patch enlarges the game's heaps (the built-in one, or a resolution patch above
-    # 1080p from a patches/ file): run_windows.py then gives the game the larger memory pool.
     heap_bytes={offset+i for offset,data in compile_patches(a.xml,[HEAP_PATCH],a.app_version,segments)
                 for i in range(len(data))}
     heaps=any(offset+i in heap_bytes for offset,data in writes for i in range(len(data)))
-    # After that test: the GX region's own 128 MiB on GFX_GraphicsPrivate fits the usual pool.
     writes+=gx_region_writes(elf,any(offset<GX_HEAP_SITE+16 and offset+len(data)>GX_HEAP_SITE
                                      for offset,data in writes))
     (a.out/'patches-info.json').write_text(json.dumps({'heap_patch':heaps,'ui_size':f'{ui[0]}x{ui[1]}'})+'\n',encoding='utf-8')
-    # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
-    # relocated slots (60/90 FPS++ replace function pointers).
     blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))
     for offset,data in writes: blob+=struct.pack('<QQ',offset,len(data))+data
     (a.out/'patches.bin').write_bytes(blob)

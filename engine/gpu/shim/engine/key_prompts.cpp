@@ -17,9 +17,10 @@
 #include <SDL3/SDL.h>
 
 #include "bbport_settings.h"
+#include "engine/change_appearance.h"
 #include "engine/keycap_art.h"
 #include "input/bindings.h"
-#include "input/compat.h"
+#include "input/menu_pointer.h"
 #include "input/input.h"
 
 namespace KeyPrompts {
@@ -27,34 +28,32 @@ namespace {
 
 static_assert(kIconBytes == Keycap::kBytes);
 
-// The game's icons, as on the US disc: FNV-1a 64 of each one's 0x400 bytes. The names follow the
-// Japanese convention: KG_OK draws Circle and KG_Cancel Cross.
 enum Icon : int {
     kCross, kL1, kL2, kL3, kLeftStick, kDpadDown, kDpadLeftRight, kDpadUp, kDpadUpDown, kDpad,
     kCircle, kR1, kR2, kR3, kRightStick, kSquare, kTriangle, kOptions, kTouchLeft, kTouchRight,
     kIconCount,
 };
 constexpr std::uint64_t kHashes[kIconCount] = {
-    0x2310f7c71b939e0bull,  // KG_Cancel
-    0xdf0f0104031e5f67ull,  // KG_L1
-    0xfadfdba7de6c76b0ull,  // KG_L2
-    0xd210779fe3f51673ull,  // KG_L3
-    0xcc75c8c3bfbf5b35ull,  // KG_LS
-    0xce0de7ced6567e92ull,  // KG_L_D
-    0x294394b7ad99f129ull,  // KG_L_LR
-    0xaa338448add2c9f0ull,  // KG_L_U
-    0xad221c010b1f4101ull,  // KG_L_UD
-    0x57d112cbe3da49b1ull,  // KG_L_UDLR
-    0xed95e3b0221d51d1ull,  // KG_OK
-    0x665da1b194608b8aull,  // KG_R1
-    0x73f2b5572f49f886ull,  // KG_R2
-    0xe0848ecdcdd5582dull,  // KG_R3
-    0x03b41e07b779abf7ull,  // KG_RS
-    0x51f55dd737e72648ull,  // KG_R_L
-    0xeb8fef4557aea451ull,  // KG_R_U
-    0xadd716f21d77cfdfull,  // KG_Start
-    0xce3869fe20faa939ull,  // KG_TP_L
-    0x9376eea6c514d1fbull,  // KG_TP_R
+    0x2310f7c71b939e0bull,
+    0xdf0f0104031e5f67ull,
+    0xfadfdba7de6c76b0ull,
+    0xd210779fe3f51673ull,
+    0xcc75c8c3bfbf5b35ull,
+    0xce0de7ced6567e92ull,
+    0x294394b7ad99f129ull,
+    0xaa338448add2c9f0ull,
+    0xad221c010b1f4101ull,
+    0x57d112cbe3da49b1ull,
+    0xed95e3b0221d51d1ull,
+    0x665da1b194608b8aull,
+    0x73f2b5572f49f886ull,
+    0xe0848ecdcdd5582dull,
+    0x03b41e07b779abf7ull,
+    0x51f55dd737e72648ull,
+    0xeb8fef4557aea451ull,
+    0xadd716f21d77cfdfull,
+    0xce3869fe20faa939ull,
+    0x9376eea6c514d1fbull,
 };
 
 constexpr std::uint32_t kPadCross = 0x4000, kPadCircle = 0x2000;
@@ -68,18 +67,16 @@ std::uint64_t Fnv(const void* data, std::size_t size) {
 }
 
 struct State {
-    bool keys = false;          // keycaps shown
-    bool menu = false;          // a menu owns the screen (menu_pointer_in_menu)
-    std::uint32_t confirm = 0;  // the pad button that confirms there
+    bool keys = false;
+    bool menu = false;
+    bool preview = false;
+    std::uint32_t confirm = 0;
     bool mouse_camera = false;
-    std::uint64_t serial = 0;   // host_bindings_serial
-    bool xbox = false;          // the controller icons as an Xbox controller's buttons
+    std::uint64_t serial = 0;
+    bool xbox = false;
     bool operator==(const State&) const = default;
 };
 
-// Chosen, or (auto) while the gamepad in use is not a PlayStation one: a controller in DirectInput
-// mode (an 8BitDo in D-input) reports as a generic gamepad, not as an Xbox one, and kept the
-// PlayStation icons. No gamepad: the game's own.
 bool XboxIcons() {
     switch (BbSettings::Get().pad_icons.load(std::memory_order_relaxed)) {
     case BbSettings::PadIconsXbox: return true;
@@ -101,6 +98,7 @@ State Current() {
                                        host_input_device() == InputDevice::KeyboardMouse));
     if (s.keys) {
         s.menu = menu_pointer_in_menu();
+        s.preview = s.menu && BbEngine::ChangeAppearance::PreviewShown();
         s.confirm = menu_confirm_button();
         s.mouse_camera = settings.mouse_camera;
         s.serial = host_bindings_serial();
@@ -110,7 +108,6 @@ State Current() {
     return s;
 }
 
-// What a cap says for a key: short, since it is at most five letters on a 32-pixel icon.
 std::string KeyLabel(int scancode) {
     const char* name = SDL_GetScancodeName(static_cast<SDL_Scancode>(scancode));
     if (!name || !*name) {
@@ -122,7 +119,7 @@ std::string KeyLabel(int scancode) {
         {"Return", "Enter"},     {"Keypad Enter", "Enter"}, {"Escape", "Esc"},    {"Backspace", "Bksp"},
         {"CapsLock", "Caps"},    {"Delete", "Del"},        {"Insert", "Ins"},     {"PageUp", "PgUp"},
         {"PageDown", "PgDn"},    {"PrintScreen", "PrtSc"}, {"ScrollLock", "ScrLk"}, {"Numlock", "NumLk"},
-        {"`", "~"},  // a lone backtick is a speck
+        {"`", "~"},
     };
     for (const auto& [from, to] : kShort) {
         if (from == name) {
@@ -136,7 +133,6 @@ std::string KeyLabel(int scancode) {
     return label.size() > 5 ? label.substr(0, 5) : label;
 }
 
-// One cap of several.
 std::string ActionLabel(int action) {
     if (const int key = host_binding_key(action)) {
         return KeyLabel(key);
@@ -146,8 +142,6 @@ std::string ActionLabel(int action) {
     return kMouse[m >= 0 && m <= 7 ? m : 0];
 }
 
-// The key bound to an action, else its mouse button; nothing when it has neither (the game's
-// own icon stays).
 std::optional<Keycap::Spec> ActionSpec(int action) {
     using Keycap::Spec;
     if (const int key = host_binding_key(action)) {
@@ -171,13 +165,11 @@ Keycap::Spec Caps(std::initializer_list<int> actions) {
     return spec;
 }
 
-// The gamepad button bound to the icon's PS4 button (runtime_pad.c), as an Xbox controller's.
-// The d-pad and the sticks keep the game's icons, which fit any controller.
 std::optional<Keycap::Spec> PadSpec(int icon) {
     using namespace Keycap;
     static constexpr struct {
         Icon icon;
-        std::uint32_t bit;  // scePad's
+        std::uint32_t bit;
     } kButtons[] = {
         {kCross, kPadCross}, {kCircle, kPadCircle}, {kSquare, 0x8000}, {kTriangle, 0x1000},
         {kL1, 0x400},        {kR1, 0x800},          {kL2, 0x100},      {kR2, 0x200},
@@ -213,7 +205,7 @@ std::optional<Keycap::Spec> PadSpec(int icon) {
     case SDL_GAMEPAD_BUTTON_LEFT_PADDLE2: button = PadP4; break;
     case SDL_GAMEPAD_BUTTON_TOUCHPAD: button = PadTouchpad; break;
     case SDL_GAMEPAD_BUTTON_GUIDE: button = PadGuide; break;
-    default: return std::nullopt;  // unbound
+    default: return std::nullopt;
     }
     return Spec{Spec::Pad, {}, button};
 }
@@ -223,8 +215,9 @@ std::optional<Keycap::Spec> IconSpec(int icon, const State& s) {
     if (!s.keys) {
         return s.xbox ? PadSpec(icon) : std::nullopt;
     }
-    // In a menu the face buttons that confirm and go back are Menu Confirm's and Menu Back's
-    // keys, and the d-pad is the arrow keys (input.cpp).
+    if (s.preview && (icon == kL1 || icon == kR1)) {
+        return Spec{Spec::Mouse, {}, icon == kR1 ? 6 : 7};
+    }
     if (s.menu) {
         switch (icon) {
         case kCross: return ActionSpec(s.confirm == kPadCross ? kBindConfirm : kBindBack);
@@ -271,9 +264,8 @@ State g_state;
 bool g_have_state = false;
 std::atomic<bool> g_logged{false};
 
-// With g_mutex held.
 void SetState(const State& now) {
-    static int shown = -1;  // the controller icons last logged: 0 the game's, 1 Xbox
+    static int shown = -1;
     if (!now.keys && shown != int(now.xbox)) {
         shown = int(now.xbox);
         host_log("button prompts: %s controller icons", now.xbox ? "Xbox" : "the game's (PlayStation)");
@@ -281,27 +273,19 @@ void SetState(const State& now) {
     g_state = now;
     g_have_state = true;
 }
-// Drawn keycaps by what they are for and Spec::Id(), kept for the session (a few dozen at most).
-// Never destroyed, so no late upload outlives it.
 auto& g_drawn = *new std::unordered_map<std::string, std::vector<std::uint8_t>>;
 
-// The HUD sheet (MENU_Common_00091, 1024x512 BC7, one mip, PS4 thin tiled): its Circle, Cross
-// and L3, 26 pixels each with transparent blocks between them. Each is redrawn over its own
-// 7x8 blocks; the sheet is recognised by those blocks alone (FNV-1a 64 of them in this order),
-// so a mod's changes elsewhere on it stay.
 constexpr int kHud = kIconCount;
 constexpr std::uint64_t kHudHash = 0x08d886c6323fa447ull;
 constexpr std::uint32_t kHudWidth = 1024, kHudHeight = 512;
-constexpr int kHudBlockY = 30, kHudBlocksX = 7, kHudBlocksY = 8;  // y 120..151
+constexpr int kHudBlockY = 30, kHudBlocksX = 7, kHudBlocksY = 8;
 constexpr struct {
     Icon icon;
-    int block_x;  // the first block column
-    int left;     // the button's left edge in it
+    int block_x;
+    int left;
 } kHudButtons[] = {{kCircle, 165, 1}, {kCross, 173, 2}, {kL3, 181, 2}};
-constexpr int kHudTop = 3;  // the buttons' top edge in the first block row
+constexpr int kHudTop = 3;
 
-// Where block (bx, by) of the sheet is: tiles of 8x8 blocks, a row of them after another, each
-// in Morton order (x in the even bits).
 std::size_t HudBlock(int bx, int by) {
     const int tile = (by >> 3) * int(kHudWidth / 32) + (bx >> 3);
     int morton = 0;
@@ -326,7 +310,6 @@ std::uint64_t HudHash(const std::uint8_t* data) {
     return h;
 }
 
-// With g_mutex held. A KG_* icon (kIconBytes, tiled) or a HUD button's blocks (row by row).
 const std::vector<std::uint8_t>& Drawn(const Keycap::Spec& spec, int hud_left) {
     const std::string id = (hud_left < 0 ? std::string("kg|") : "hud" + std::to_string(hud_left) + '|') + spec.Id();
     auto it = g_drawn.find(id);
@@ -362,7 +345,7 @@ void LogFound() {
     }
 }
 
-} // namespace
+}
 
 int Identify(const void* data, std::size_t size, std::uint32_t width, std::uint32_t height) {
     if (!data) {
@@ -435,4 +418,4 @@ bool Changed() {
     return true;
 }
 
-} // namespace KeyPrompts
+}

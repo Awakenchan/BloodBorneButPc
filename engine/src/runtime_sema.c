@@ -1,5 +1,3 @@
-/* Kernel semaphores: 32-bit IDs, counted tokens and FIFO waiters.
- * Priority-ordered semaphores are approximated by FIFO order. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -19,7 +17,7 @@ typedef struct Sema {
     int32_t count, initial, maximum;
     unsigned active;
     int deleted;
-    char name[32]; /* the guest's, for the freeze report */
+    char name[32];
     Waiter *first;
     struct Sema *next;
 } Sema;
@@ -27,12 +25,7 @@ static HostMutex lock=HOST_MUTEX_INIT;
 static Sema *registry;
 static uint32_t next_id=1;
 static size_t created, deleted, acquired, signaled, timed_out;
-/* bbport: list entries walked by find (the 60 s "Load:" line: steps per lookup). */
 static uint64_t lookups, lookup_steps;
-/* bbport: a found semaphore moves to the front. New ones went in front, so the ones made at boot
- * sat behind every one made since, each wait and signal walking past them under the one lock.
- * Not for the freeze report's lookups (describe), which leave the order alone.
- * BB_SEMA_FRONT=0: the list keeps its order, as before. */
 static Sema *find_ordered(uint32_t id,int reorder) {
     static int front=-1;
     if (front<0) { const char *e=getenv("BB_SEMA_FRONT"); front=!(e && e[0]=='0'); }
@@ -76,9 +69,7 @@ static int32_t wait_count(uint32_t id,int32_t need,uint32_t *timeout,int block) 
     else if (!block) result=ERR(16);
     else if (timeout && !*timeout) { result=ERR(60); ++timed_out; }
     else {
-        /* Priority-ordered semaphores (attr 2) are served FIFO: there is no
-           PS4 priority scheduler, host threads run at equal priority. */
-        if (getenv("BB_TRACE_SEMA")) fprintf(stderr,"Runtime: blocking wait on semaphore %u (need %d, count %d)\n",id,need,s->count); /* deadlock diagnosis */
+        if (getenv("BB_TRACE_SEMA")) fprintf(stderr,"Runtime: blocking wait on semaphore %u (need %d, count %d)\n",id,need,s->count);
         Waiter w={.need=need};
 #ifdef _WIN32
         host_cond_init(&w.event);
@@ -97,7 +88,6 @@ static int32_t wait_count(uint32_t id,int32_t need,uint32_t *timeout,int block) 
         uint64_t deadline=timeout ? now_ns()+(uint64_t)*timeout*1000 : 0;
         while (!w.done) {
 #ifdef _WIN32
-            /* Windows condition variables take a relative timeout: the monotonic remainder. */
             int e=0;
             if (timeout) {
                 uint64_t now=now_ns();
@@ -184,7 +174,6 @@ static ABI int32_t sem_delete(uint32_t id) {
     host_unlock(&lock);
     return 0;
 }
-/* The freeze report: the semaphore's name, count and waiters in order (host thread ids). */
 void runtime_sema_describe(uint32_t id,char *out,size_t size) {
     host_lock(&lock);
     Sema *s=find_ordered(id,0);
@@ -195,7 +184,6 @@ void runtime_sema_describe(uint32_t id,char *out,size_t size) {
     }
     host_unlock(&lock);
 }
-/* Read-only test/diagnostic snapshot, not exposed to guest code. */
 unsigned runtime_sema_waiters(uint32_t id) {
     host_lock(&lock);
     Sema *s=find_ordered(id,0); unsigned n=0;
@@ -212,7 +200,6 @@ uintptr_t runtime_sema_resolve(const char *name) {
     if (!strcmp(name,"R1Jvn8bSCW8#p#J")) return (uintptr_t)sem_delete;
     return 0;
 }
-/* bbport: semaphores alive now, and lookups and the list entries they walked so far. */
 void runtime_sema_census(uint64_t *live, uint64_t *found, uint64_t *steps) {
     host_lock(&lock);
     *live=created-deleted; *found=lookups; *steps=lookup_steps;

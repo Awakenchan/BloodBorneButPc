@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: frame generation's composition (vk_frame_generation.h). The generated frame was
 // interpolated from frames without the UI; the UI is taken from the real frame where it is drawn:
 // where the final frame differs from its HUD-less copy. The test looks at the 3x3 neighbourhood

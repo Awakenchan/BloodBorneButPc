@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "elf.h"
 
 #include <algorithm>
@@ -60,7 +60,7 @@ Executable ParseElf(const Bytes& data) {
     }
     return out;
 }
-} // namespace
+}
 
 Executable ParseSelf(const Bytes& data) {
     if (std::memcmp(Span(data, 0, 4), "\x7f" "ELF", 4) == 0) return ParseElf(data);
@@ -171,4 +171,4 @@ std::optional<Bytes> OriginalBytes(const Bytes& elf, std::uint64_t offset, std::
     return std::nullopt;
 }
 
-} // namespace start
+}

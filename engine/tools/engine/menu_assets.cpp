@@ -1,1187 +1,810 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from bbhost engine/menu_assets.cpp at 7c790536. Serialization only.
-#include <zlib.h>
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "menu_assets.h"
 #include "rebirth_script.h"
-
+#include <zlib.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
-#include <cstdint>
-#include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <map>
-#include <optional>
 #include <set>
-#include <string>
-#include <vector>
 
-// Two edits. The movie: each PC section is a clone of the dump's
-// ControllSetting sprite under a new instance name and character id, with its
-// title retitled to the port's message id, its static text dropped, its
-// widget rows kept, dropped or added to fit the section, and its placement
-// put on the main timeline hidden (the game shows the section it opens); then
-// the System list gets the movie's own ScrollBarV, since nine rows scroll in
-// five lines. The messages: the port's ids added to the menu text (group 200)
-// and line help (201) FMGs of the dump's DCX-compressed BND4.
-
+namespace menu_assets {
 namespace {
+std::uint64_t Le(const Bytes& b, std::size_t at, int n) {
+    if (at > b.size() || std::size_t(n) > b.size() - at) throw Error("a file ends early");
+    std::uint64_t v = 0;
+    for (int i = n - 1; i >= 0; --i) v = v << 8 | b[at + i];
+    return v;
+}
+std::uint16_t U16(const Bytes& b, std::size_t at) { return std::uint16_t(Le(b, at, 2)); }
+std::uint32_t U32(const Bytes& b, std::size_t at) { return std::uint32_t(Le(b, at, 4)); }
+std::uint64_t U64(const Bytes& b, std::size_t at) { return Le(b, at, 8); }
+std::uint32_t Be32(const Bytes& b, std::size_t at) {
+    const std::uint32_t v = U32(b, at);
+    return (v >> 24) | (v >> 8 & 0xff00) | (v << 8 & 0xff0000) | (v << 24);
+}
+void SetLe(Bytes& b, std::size_t at, std::uint64_t v, int n) {
+    for (int i = 0; i < n; ++i) b[at + i] = std::uint8_t(v >> (8 * i));
+}
+void SetBe32(Bytes& b, std::size_t at, std::uint32_t v) {
+    for (int i = 0; i < 4; ++i) b[at + i] = std::uint8_t(v >> (24 - 8 * i));
+}
+void PutLe(Bytes& b, std::uint64_t v, int n) {
+    b.resize(b.size() + n);
+    SetLe(b, b.size() - n, v, n);
+}
+void Append(Bytes& b, const Bytes& more) { b.insert(b.end(), more.begin(), more.end()); }
+bool Has(const Bytes& b, std::size_t at, const char* magic, std::size_t n) {
+    return at <= b.size() && n <= b.size() - at && std::memcmp(b.data() + at, magic, n) == 0;
+}
+std::size_t WideEnd(const Bytes& b, std::size_t from) {
+    for (std::size_t at = from; at + 1 < b.size(); at += 2)
+        if (!b[at] && !b[at + 1]) return at;
+    throw Error("a string runs past the end");
+}
 
-using Bytes = std::vector<std::uint8_t>;
-
-// Bumped whenever a generator or the recipe changes, so installs remake their
-// assets instead of keeping the last generation.
-constexpr int kGeneratorVersion = 9;  // 9: PC Colour, Fog on PC Graphics; 8: 8: PC Enhancements' three rows; 7: the PC Enhancements section; 6: event text (group 30) for the altar's rebirth
-
-const char kMessagesTsv[] =
-#include "pc_option_messages.inc"
-    ;
-
-struct Fail {
-    std::string why;
-};
-
-std::uint16_t u16(const Bytes& b, std::size_t i) {
-    if (i + 2 > b.size()) throw Fail{"truncated"};
-    return static_cast<std::uint16_t>(b[i] | (b[i + 1] << 8));
-}
-std::uint32_t u32(const Bytes& b, std::size_t i) {
-    if (i + 4 > b.size()) throw Fail{"truncated"};
-    return static_cast<std::uint32_t>(b[i]) | (static_cast<std::uint32_t>(b[i + 1]) << 8) |
-           (static_cast<std::uint32_t>(b[i + 2]) << 16) | (static_cast<std::uint32_t>(b[i + 3]) << 24);
-}
-std::uint64_t u64(const Bytes& b, std::size_t i) { return u32(b, i) | (static_cast<std::uint64_t>(u32(b, i + 4)) << 32); }
-std::uint32_t be32(const Bytes& b, std::size_t i) {
-    if (i + 4 > b.size()) throw Fail{"truncated"};
-    return (static_cast<std::uint32_t>(b[i]) << 24) | (static_cast<std::uint32_t>(b[i + 1]) << 16) |
-           (static_cast<std::uint32_t>(b[i + 2]) << 8) | b[i + 3];
-}
-void put16(Bytes& b, std::size_t i, std::uint32_t v) {
-    b[i] = static_cast<std::uint8_t>(v);
-    b[i + 1] = static_cast<std::uint8_t>(v >> 8);
-}
-void put32(Bytes& b, std::size_t i, std::uint32_t v) {
-    for (int k = 0; k < 4; ++k) b[i + k] = static_cast<std::uint8_t>(v >> (8 * k));
-}
-void put64(Bytes& b, std::size_t i, std::uint64_t v) {
-    put32(b, i, static_cast<std::uint32_t>(v));
-    put32(b, i + 4, static_cast<std::uint32_t>(v >> 32));
-}
-void putbe32(Bytes& b, std::size_t i, std::uint32_t v) {
-    for (int k = 0; k < 4; ++k) b[i + k] = static_cast<std::uint8_t>(v >> (24 - 8 * k));
-}
-void app16(Bytes& b, std::uint32_t v) {
-    b.push_back(static_cast<std::uint8_t>(v));
-    b.push_back(static_cast<std::uint8_t>(v >> 8));
-}
-void app(Bytes& b, const Bytes& src, std::size_t from, std::size_t to) { b.insert(b.end(), src.begin() + from, src.begin() + to); }
-void app(Bytes& b, const Bytes& src) { b.insert(b.end(), src.begin(), src.end()); }
-void app(Bytes& b, const std::string& s) { b.insert(b.end(), s.begin(), s.end()); }
-
-// ---------------------------------------------------------------- the movie
-
-constexpr int kEnd = 0, kShowFrame = 1, kPlace2 = 26, kDefineSprite = 39, kPlace3 = 70, kSymbolClass = 76;
+enum Code { kEnd = 0, kShowFrame = 1, kPlace2 = 26, kSprite = 39, kPlace3 = 70, kSymbolClass = 76 };
+const std::set<int> kDefines = {2, 6, 7, 10, 11, 14, 20, 21, 22, 32, 33, 34, 35, 36, 37, 39,
+                                46, 48, 60, 75, 83, 84, 90, 91, 1001, 1003, 1005, 1006, 1007, 1008, 1009, 1010};
 
 struct Tag {
-    int code;
-    std::size_t head, s, e;
+    int code = 0;
+    Bytes body;
+    Bytes raw;
 };
 
-std::vector<Tag> tags(const Bytes& b, std::size_t i, std::size_t end) {
+std::vector<Tag> ReadTags(const Bytes& b, std::size_t at, std::size_t end) {
     std::vector<Tag> out;
-    while (i < end) {
-        const std::uint16_t th = u16(b, i);
-        const std::size_t head = i;
-        i += 2;
-        const int code = th >> 6;
-        std::size_t length = th & 0x3f;
+    while (at < end) {
+        const std::size_t head = at;
+        const std::uint16_t code_length = U16(b, at);
+        at += 2;
+        std::size_t length = code_length & 0x3f;
         if (length == 0x3f) {
-            length = u32(b, i);
-            i += 4;
+            length = U32(b, at);
+            at += 4;
         }
-        if (i + length > b.size()) throw Fail{"a tag runs past the end"};
-        out.push_back({code, head, i, i + length});
-        if (code == kEnd) break;
-        i += length;
+        if (length > end - std::min(at, end)) throw Error("a movie tag runs past its end");
+        Tag t;
+        t.code = code_length >> 6;
+        t.body.assign(b.begin() + at, b.begin() + at + length);
+        t.raw.assign(b.begin() + head, b.begin() + at + length);
+        at += length;
+        out.push_back(std::move(t));
+        if (out.back().code == kEnd) break;
     }
     return out;
 }
 
-std::size_t body_start(const Bytes& b) {
-    const int nbits = b.at(8) >> 3;
-    return 8 + (5 + 4 * nbits + 7) / 8 + 4;
-}
-
-Bytes tag_bytes(int code, const Bytes& body) {
-    Bytes out;
-    if (body.size() < 0x3f) {
-        app16(out, static_cast<std::uint32_t>((code << 6) | body.size()));
+void WriteTag(Bytes& out, const Tag& t) {
+    if (!t.raw.empty()) return Append(out, t.raw);
+    if (t.body.size() < 0x3f) {
+        PutLe(out, std::uint32_t(t.code << 6 | t.body.size()), 2);
     } else {
-        app16(out, static_cast<std::uint32_t>((code << 6) | 0x3f));
-        out.resize(out.size() + 4);
-        put32(out, out.size() - 4, static_cast<std::uint32_t>(body.size()));
+        PutLe(out, std::uint32_t(t.code << 6 | 0x3f), 2);
+        PutLe(out, t.body.size(), 4);
     }
-    app(out, body);
-    return out;
+    Append(out, t.body);
 }
+Tag Changed(int code, Bytes body) { return Tag{code, std::move(body), {}}; }
 
-std::string cstr(const Bytes& b, std::size_t i, std::size_t* next) {
-    std::size_t j = i;
-    while (j < b.size() && b[j]) ++j;
-    if (j >= b.size()) throw Fail{"an unterminated name"};
-    *next = j + 1;
-    return std::string(b.begin() + i, b.begin() + j);
-}
-
-struct BitR {
+struct BitReader {
     const Bytes& b;
-    std::size_t i;
+    std::size_t at;
     int bit = 0;
-    std::uint32_t u(int n) {
+    std::uint32_t Unsigned(int n) {
         std::uint32_t v = 0;
-        for (int k = 0; k < n; ++k) {
-            v = (v << 1) | ((b.at(i) >> (7 - bit)) & 1);
-            if (++bit == 8) {
-                bit = 0;
-                ++i;
-            }
+        for (int i = 0; i < n; ++i) {
+            if (at >= b.size()) throw Error("a bit field runs past the end");
+            v = v << 1 | (b[at] >> (7 - bit) & 1);
+            if (++bit == 8) bit = 0, ++at;
         }
         return v;
     }
-    std::int32_t s(int n) {
-        const std::uint32_t v = u(n);
-        if (n && ((v >> (n - 1)) & 1)) return static_cast<std::int32_t>(static_cast<std::int64_t>(v) - (std::int64_t{1} << n));
-        return static_cast<std::int32_t>(v);
+    std::int64_t Signed(int n) {
+        const std::uint32_t v = Unsigned(n);
+        return n && (v >> (n - 1) & 1) ? std::int64_t(v) - (std::int64_t(1) << n) : std::int64_t(v);
     }
-    std::size_t align() {
-        if (bit) {
-            bit = 0;
-            ++i;
+    std::size_t End() { return bit ? at + 1 : at; }
+};
+struct BitWriter {
+    Bytes out;
+    int bit = 0;
+    void Put(std::uint64_t v, int n) {
+        for (int i = n - 1; i >= 0; --i) {
+            if (!bit) out.push_back(0);
+            out.back() |= std::uint8_t((v >> i & 1) << (7 - bit));
+            bit = (bit + 1) % 8;
         }
-        return i;
     }
 };
-
-struct BitW {
-    std::vector<int> bits;
-    void u(std::uint32_t v, int n) {
-        for (int k = n - 1; k >= 0; --k) bits.push_back((v >> k) & 1);
-    }
-    Bytes out() {
-        while (bits.size() % 8) bits.push_back(0);
-        Bytes r;
-        for (std::size_t i = 0; i < bits.size(); i += 8) {
-            int v = 0;
-            for (int k = 0; k < 8; ++k) v = (v << 1) | bits[i + k];
-            r.push_back(static_cast<std::uint8_t>(v));
-        }
-        return r;
-    }
-};
-
-int sbits(std::int64_t v) {
+int BitsFor(std::int64_t v) {
     int n = 1;
-    while (!(-(std::int64_t{1} << (n - 1)) <= v && v < (std::int64_t{1} << (n - 1)))) ++n;
+    while (v < -(std::int64_t(1) << (n - 1)) || v >= (std::int64_t(1) << (n - 1))) ++n;
     return n;
 }
 
-// A matrix as the section clone keeps it: the scale and rotation
-// fields exactly as read, the translation as numbers.
 struct Matrix {
-    bool has_scale = false, has_rot = false;
-    int sn = 0, rn = 0;
-    std::uint32_t sa = 0, sc = 0, ra = 0, rc = 0;
+    bool scaled = false, rotated = false;
+    int scale_bits = 0, rotate_bits = 0;
+    std::uint32_t sx = 0, sy = 0, r0 = 0, r1 = 0;
     std::int64_t tx = 0, ty = 0;
 };
-
-Matrix read_matrix(const Bytes& b, std::size_t i, std::size_t* end) {
-    BitR r{b, i};
+Matrix ReadMatrix(BitReader& r) {
     Matrix m;
-    if (r.u(1)) {
-        m.has_scale = true;
-        m.sn = static_cast<int>(r.u(5));
-        m.sa = r.u(m.sn);
-        m.sc = r.u(m.sn);
+    if ((m.scaled = r.Unsigned(1))) {
+        m.scale_bits = int(r.Unsigned(5));
+        m.sx = r.Unsigned(m.scale_bits);
+        m.sy = r.Unsigned(m.scale_bits);
     }
-    if (r.u(1)) {
-        m.has_rot = true;
-        m.rn = static_cast<int>(r.u(5));
-        m.ra = r.u(m.rn);
-        m.rc = r.u(m.rn);
+    if ((m.rotated = r.Unsigned(1))) {
+        m.rotate_bits = int(r.Unsigned(5));
+        m.r0 = r.Unsigned(m.rotate_bits);
+        m.r1 = r.Unsigned(m.rotate_bits);
     }
-    const int n = static_cast<int>(r.u(5));
-    m.tx = r.s(n);
-    m.ty = r.s(n);
-    *end = r.align();
+    const int n = int(r.Unsigned(5));
+    m.tx = r.Signed(n);
+    m.ty = r.Signed(n);
     return m;
 }
-
-Bytes write_matrix(const Matrix& m) {
-    BitW w;
-    if (m.has_scale) {
-        w.u(1, 1);
-        w.u(static_cast<std::uint32_t>(m.sn), 5);
-        w.u(m.sa, m.sn);
-        w.u(m.sc, m.sn);
-    } else {
-        w.u(0, 1);
-    }
-    if (m.has_rot) {
-        w.u(1, 1);
-        w.u(static_cast<std::uint32_t>(m.rn), 5);
-        w.u(m.ra, m.rn);
-        w.u(m.rc, m.rn);
-    } else {
-        w.u(0, 1);
-    }
-    const int n = std::max(sbits(m.tx), sbits(m.ty));
-    const std::uint64_t mask = (std::uint64_t{1} << n) - 1;
-    w.u(static_cast<std::uint32_t>(n), 5);
-    w.u(static_cast<std::uint32_t>(static_cast<std::uint64_t>(m.tx) & mask), n);
-    w.u(static_cast<std::uint32_t>(static_cast<std::uint64_t>(m.ty) & mask), n);
-    return w.out();
+Bytes WriteMatrix(const Matrix& m) {
+    BitWriter w;
+    w.Put(m.scaled, 1);
+    if (m.scaled) w.Put(m.scale_bits, 5), w.Put(m.sx, m.scale_bits), w.Put(m.sy, m.scale_bits);
+    w.Put(m.rotated, 1);
+    if (m.rotated) w.Put(m.rotate_bits, 5), w.Put(m.r0, m.rotate_bits), w.Put(m.r1, m.rotate_bits);
+    const int n = std::max(BitsFor(m.tx), BitsFor(m.ty));
+    w.Put(n, 5);
+    w.Put(std::uint64_t(m.tx) & ((std::uint64_t(1) << n) - 1), n);
+    w.Put(std::uint64_t(m.ty) & ((std::uint64_t(1) << n) - 1), n);
+    return w.out;
+}
+double Fixed(std::uint32_t v, int bits) {
+    return double(bits && (v >> (bits - 1) & 1) ? std::int64_t(v) - (std::int64_t(1) << bits) : std::int64_t(v)) / 65536.0;
 }
 
-std::size_t skip_cxform(const Bytes& b, std::size_t i) {
-    BitR r{b, i};
-    const std::uint32_t has_add = r.u(1), has_mul = r.u(1);
-    const int n = static_cast<int>(r.u(4));
-    if (has_mul) r.u(n * 4);
-    if (has_add) r.u(n * 4);
-    return r.align();
-}
-
-struct Place2 {
+struct Place {
+    int code = 0;
     std::uint8_t flags = 0;
     std::uint16_t depth = 0;
-    std::optional<std::uint16_t> cid;
-    std::optional<Matrix> mat;
+    std::size_t character_at = 0, matrix_at = 0, matrix_end = 0, name_at = 0, name_end = 0;
+    std::optional<std::uint16_t> character;
+    std::optional<Matrix> matrix;
     std::optional<std::string> name;
-    Bytes mid, tail;
 };
-
-Place2 parse_place2(const Bytes& b, std::size_t s, std::size_t e) {
-    Place2 p;
-    std::size_t i = s;
-    p.flags = b.at(i);
-    p.depth = u16(b, i + 1);
-    i += 3;
+bool IsPlace(const Tag& t) { return t.code == kPlace2 || t.code == kPlace3; }
+Place ReadPlace(const Tag& t) {
+    const Bytes& b = t.body;
+    Place p;
+    p.code = t.code;
+    p.flags = std::uint8_t(Le(b, 0, 1));
+    std::size_t at = 1;
+    std::uint8_t more = 0;
+    if (t.code == kPlace3) more = std::uint8_t(Le(b, at++, 1));
+    p.depth = U16(b, at);
+    at += 2;
+    if (t.code == kPlace3 && ((more & 0x08) || ((more & 0x10) && (p.flags & 0x02)))) {
+        while (at < b.size() && b[at]) ++at;
+        ++at;
+    }
+    p.character_at = at;
     if (p.flags & 0x02) {
-        p.cid = u16(b, i);
-        i += 2;
+        p.character = U16(b, at);
+        at += 2;
     }
-    std::size_t mat_end = i;
+    p.matrix_at = p.matrix_end = at;
     if (p.flags & 0x04) {
-        p.mat = read_matrix(b, i, &mat_end);
-        i = mat_end;
+        BitReader r{b, at};
+        p.matrix = ReadMatrix(r);
+        at = p.matrix_end = r.End();
     }
-    if (p.flags & 0x08) i = skip_cxform(b, i);
-    if (p.flags & 0x10) i += 2;
-    const std::size_t name_start = i;
-    if (p.flags & 0x20) p.name = cstr(b, i, &i);
-    p.mid.assign(b.begin() + mat_end, b.begin() + name_start);
-    p.tail.assign(b.begin() + i, b.begin() + e);
+    if (p.flags & 0x08) {
+        BitReader r{b, at};
+        const bool add = r.Unsigned(1), mult = r.Unsigned(1);
+        const int n = int(r.Unsigned(4));
+        if (mult) r.Unsigned(4 * n);
+        if (add) r.Unsigned(4 * n);
+        at = r.End();
+    }
+    if (p.flags & 0x10) at += 2;
+    p.name_at = p.name_end = at;
+    if (p.flags & 0x20) {
+        std::size_t end = at;
+        while (end < b.size() && b[end]) ++end;
+        if (end >= b.size()) throw Error("an unterminated instance name");
+        p.name.emplace(b.begin() + at, b.begin() + end);
+        p.name_end = end + 1;
+    }
     return p;
 }
-
-Bytes build_place2(const Place2& p, std::uint16_t depth, const std::optional<Matrix>& mat, const std::optional<std::string>& name) {
-    std::uint8_t flags = p.flags;
-    if (!name) flags &= static_cast<std::uint8_t>(~0x20);
-    else flags |= 0x20;
-    Bytes out;
-    out.push_back(flags);
-    app16(out, depth);
-    if (flags & 0x02) app16(out, p.cid.value_or(0));
-    if (flags & 0x04) {
-        if (!mat) throw Fail{"a placement with a matrix flag and no matrix"};
-        app(out, write_matrix(*mat));
-    }
-    app(out, p.mid);
-    if (flags & 0x20) {
-        app(out, *name);
+Bytes Rewrite(const Tag& t, const Place& p, std::optional<std::uint16_t> depth, std::optional<std::uint16_t> character,
+              const std::optional<Matrix>& matrix, const std::optional<std::string>& name) {
+    const Bytes& b = t.body;
+    Bytes out(b.begin(), b.begin() + p.character_at);
+    if (depth) SetLe(out, t.code == kPlace3 ? 2 : 1, *depth, 2);
+    if (p.character) PutLe(out, character.value_or(*p.character), 2);
+    if (p.matrix) Append(out, matrix ? WriteMatrix(*matrix) : Bytes(b.begin() + p.matrix_at, b.begin() + p.matrix_end));
+    out.insert(out.end(), b.begin() + p.matrix_end, b.begin() + p.name_at);
+    if (p.name) {
+        const std::string& n = name.value_or(*p.name);
+        out.insert(out.end(), n.begin(), n.end());
         out.push_back(0);
     }
-    app(out, p.tail);
+    out.insert(out.end(), b.begin() + p.name_end, b.end());
     return out;
 }
 
-Bytes build_place3_hidden(std::uint16_t cid, std::uint16_t depth, const Matrix& mat, const std::string& name) {
-    Bytes out;
-    out.push_back(0x02 | 0x04 | 0x20);
-    out.push_back(0x20);
-    app16(out, depth);
-    app16(out, cid);
-    app(out, write_matrix(mat));
-    app(out, name);
-    out.push_back(0);
-    out.push_back(0);  // visible = false
+struct Movie {
+    Bytes header;
+    std::vector<Tag> tags;
+};
+Movie ReadMovie(const Bytes& b) {
+    if (!Has(b, 0, "GFX", 3) || b.size() < 9) throw Error("optionsetting.gfx is not an uncompressed GFX movie");
+    const std::size_t start = 8 + (5 + 4 * (b[8] >> 3) + 7) / 8 + 4;
+    if (start > b.size()) throw Error("optionsetting.gfx ends in its header");
+    return Movie{Bytes(b.begin(), b.begin() + start), ReadTags(b, start, b.size())};
+}
+Bytes WriteMovie(const Movie& m) {
+    Bytes out = m.header;
+    for (const Tag& t : m.tags) WriteTag(out, t);
+    SetLe(out, 4, out.size(), 4);
     return out;
-}
-
-std::map<std::uint16_t, std::string> symbol_classes(const Bytes& b) {
-    std::map<std::uint16_t, std::string> out;
-    for (const Tag& t : tags(b, body_start(b), b.size())) {
-        if (t.code != kSymbolClass) continue;
-        const std::uint16_t n = u16(b, t.s);
-        std::size_t i = t.s + 2;
-        for (int k = 0; k < n; ++k) {
-            const std::uint16_t cid = u16(b, i);
-            out[cid] = cstr(b, i + 2, &i);
-        }
-    }
-    return out;
-}
-
-std::optional<Bytes> add_symbol_class(const Bytes& b, std::uint16_t cid, const std::string& name) {
-    for (const Tag& t : tags(b, body_start(b), b.size())) {
-        if (t.code != kSymbolClass) continue;
-        const std::uint16_t n = u16(b, t.s);
-        Bytes body(b.begin() + t.s, b.begin() + t.e);
-        put16(body, 0, n + 1u);
-        app16(body, cid);
-        app(body, name);
-        body.push_back(0);
-        Bytes out(b.begin(), b.begin() + t.head);
-        app(out, tag_bytes(kSymbolClass, body));
-        app(out, b, t.e, b.size());
-        return out;
-    }
-    return std::nullopt;
-}
-
-std::optional<std::uint16_t> place_char(const Bytes& b, std::size_t ts, int code) {
-    if (code != kPlace2 && code != kPlace3) return std::nullopt;
-    const std::size_t off = code == kPlace3 ? 4 : 3;
-    if (!(b.at(ts) & 0x02)) return std::nullopt;
-    return u16(b, ts + off);
 }
 
 struct Sprite {
-    std::size_t head, s, e;
+    std::uint16_t id = 0, frames = 0;
+    std::vector<Tag> tags;
 };
+Sprite ReadSprite(const Tag& t) { return Sprite{U16(t.body, 0), U16(t.body, 2), ReadTags(t.body, 4, t.body.size())}; }
+Tag WriteSprite(const Sprite& s) {
+    Bytes body;
+    PutLe(body, s.id, 2);
+    PutLe(body, s.frames, 2);
+    for (const Tag& t : s.tags) WriteTag(body, t);
+    return Changed(kSprite, std::move(body));
+}
 
-std::optional<Sprite> find_sprite(const Bytes& b, std::uint16_t cid) {
-    for (const Tag& t : tags(b, body_start(b), b.size())) {
-        if (t.code == kDefineSprite && u16(b, t.s) == cid) return Sprite{t.head, t.s, t.e};
-    }
+std::size_t FindSprite(const Movie& m, std::uint16_t id) {
+    for (std::size_t i = 0; i < m.tags.size(); ++i)
+        if (m.tags[i].code == kSprite && U16(m.tags[i].body, 0) == id) return i;
+    throw Error("no sprite " + std::to_string(id) + " in the movie");
+}
+std::optional<std::size_t> Placed(const Movie& m, const std::string& name) {
+    for (std::size_t i = 0; i < m.tags.size(); ++i)
+        if (IsPlace(m.tags[i]) && ReadPlace(m.tags[i]).name == name) return i;
     return std::nullopt;
 }
+std::size_t FindPlaced(const Movie& m, const std::string& name) {
+    if (const auto at = Placed(m, name)) return *at;
+    throw Error("the movie places no " + name);
+}
+std::uint16_t HighestCharacter(const Movie& m) {
+    std::uint16_t most = 0;
+    for (const Tag& t : m.tags)
+        if (kDefines.count(t.code) && t.body.size() >= 2) most = std::max(most, U16(t.body, 0));
+    return most;
+}
+int RowIndex(const std::string& name) {
+    if (name.size() < 8 || name.compare(0, 5, "Item_") || name.compare(name.size() - 2, 2, "_0")) return -1;
+    const std::string n = name.substr(5, name.size() - 7);
+    if (n.empty() || n.size() > 2 || !std::all_of(n.begin(), n.end(), ::isdigit)) return -1;
+    return std::stoi(n);
+}
+std::string RowName(int index) { return "Item_" + std::to_string(index) + "_0"; }
 
-std::set<std::string> names_in_sprite(const Bytes& b, std::size_t cs, std::size_t ce) {
-    std::set<std::string> out;
-    for (const Tag& t : tags(b, cs + 4, ce)) {
-        if (t.code == kPlace2) {
-            const Place2 p = parse_place2(b, t.s, t.e);
-            if (p.name && !p.name->empty()) out.insert(*p.name);
+struct Section {
+    const char* name;
+    std::int32_t title;
+    int rows;
+    bool defaults;
+};
+constexpr Section kSections[] = {
+    {"PCGraphics", 117020, 6, true}, {"PCControls", 118020, 8, false}, {"PCKeys", 119020, 8, false},
+    {"PCEffects", 120020, 5, true},  {"PCCamera", 121020, 3, true},    {"PCEnhance", 124020, 3, true},
+    {"PCColour", 125020, 5, true},
+};
+constexpr int kDonorRows = 6, kDonorDefaults = 6;
+constexpr std::uint16_t kFirstSectionDepth = 383;
+
+struct Donor {
+    std::size_t tag = 0;
+    Sprite sprite;
+    Matrix placed;
+    std::optional<std::string> class_name;
+    std::uint16_t title = 0;
+    Sprite title_sprite;
+    std::string title_field;
+    std::uint16_t row_depth[kDonorRows] = {}, defaults_depth = 0;
+    std::int64_t pitch = 0;
+    std::set<std::uint16_t> depths;
+};
+
+std::map<std::uint16_t, std::string> SymbolClasses(const Movie& m) {
+    std::map<std::uint16_t, std::string> out;
+    for (const Tag& t : m.tags) {
+        if (t.code != kSymbolClass) continue;
+        std::size_t at = 2;
+        for (std::uint16_t n = U16(t.body, 0); n; --n) {
+            const std::uint16_t id = U16(t.body, at);
+            std::size_t end = at + 2;
+            while (end < t.body.size() && t.body[end]) ++end;
+            if (end >= t.body.size()) throw Error("an unterminated class name");
+            out[id].assign(t.body.begin() + at + 2, t.body.begin() + end);
+            at = end + 1;
         }
     }
     return out;
 }
 
-std::uint16_t max_character_id(const Bytes& b) {
-    static const std::set<int> kDefines = {2,  6,  20, 21, 22, 32, 33, 34, 36, 37, 39, 46, 48, 60, 75, 83, 84,
-                                           1001, 1003, 1005, 1006, 1007, 1008, 1009, 1010};
-    std::uint16_t best = 0;
-    for (const Tag& t : tags(b, body_start(b), b.size())) {
-        if (kDefines.count(t.code) && t.e - t.s >= 2) best = std::max(best, u16(b, t.s));
-    }
-    return best;
-}
-
-struct SectionArgs {
-    std::string clone = "ControllSetting", name, top = "Top";
-    int section_depth = 383;
-    std::optional<int> title_id;
-    std::vector<std::string> drop = {"Item_6_0"};
-    std::optional<int> defaults_slot;
-    int add_rows = 0;
-};
-
-bool starts_with(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
-bool ends_with(const std::string& s, const char* p) {
-    const std::size_t n = std::strlen(p);
-    return s.size() >= n && s.compare(s.size() - n, n, p) == 0;
-}
-
-// One PC section cloned from a donor section into the movie.
-Bytes add_option_section(const Bytes& b, const SectionArgs& a) {
-    if (b.size() < 16 || std::memcmp(b.data(), "GFX", 3) != 0) throw Fail{"optionsetting.gfx is not an uncompressed GFX"};
-    const auto names = symbol_classes(b);
-    struct Main {
-        Place2 p;
-        std::size_t head, s, e;
-    };
-    std::map<std::string, Main> places;
-    for (const Tag& t : tags(b, body_start(b), b.size())) {
-        if (t.code != kPlace2) continue;
-        Place2 p = parse_place2(b, t.s, t.e);
-        if (p.name && !p.name->empty()) places[*p.name] = Main{p, t.head, t.s, t.e};
-    }
-    for (const std::string& want : {a.clone, a.top}) {
-        if (!places.count(want)) throw Fail{"no main-timeline instance named " + want};
-    }
-    if (places.count(a.name)) throw Fail{"already has an instance named " + a.name};
-
-    const Place2& clone_p = places[a.clone].p;
-    const std::uint16_t new_cid = static_cast<std::uint16_t>(max_character_id(b) + 1);
-    const auto clone_sprite = find_sprite(b, clone_p.cid.value_or(0));
-    if (!clone_sprite) throw Fail{"no DefineSprite for " + a.clone};
-    const std::size_t cs = clone_sprite->s, ce = clone_sprite->e;
-
-    std::optional<std::uint16_t> title_cid, title_old;
-    Bytes title_sprite_body;
-    if (a.title_id) {
-        for (const Tag& t : tags(b, cs + 4, ce)) {
-            const auto cid = place_char(b, t.s, t.code);
-            if (!cid) continue;
-            const auto child = find_sprite(b, *cid);
-            if (!child) continue;
-            for (const Tag& t2 : tags(b, child->s + 4, child->e)) {
-                if (t2.code != kPlace2) continue;
-                const Place2 q = parse_place2(b, t2.s, t2.e);
-                if (!q.name || !starts_with(*q.name, "StaticText_")) continue;
-                const std::string old_name = *q.name;
-                const std::string new_name = "StaticText_" + std::to_string(*a.title_id);
-                if (new_name.size() != old_name.size()) throw Fail{"the title id is not the same length as " + old_name};
-                Bytes body(b.begin() + child->s, b.begin() + child->e);
-                put16(body, 0, new_cid + 1u);
-                auto hit = std::search(body.begin(), body.end(), old_name.begin(), old_name.end());
-                if (hit == body.end()) throw Fail{"cannot find " + old_name + " in the title sprite"};
-                std::copy(new_name.begin(), new_name.end(), hit);
-                title_cid = static_cast<std::uint16_t>(new_cid + 1);
-                title_sprite_body = std::move(body);
-                title_old = *cid;
-                break;
+Donor ReadDonor(const Movie& m) {
+    Donor d;
+    const Place placed = ReadPlace(m.tags[FindPlaced(m, "ControllSetting")]);
+    if (!placed.character || !placed.matrix) throw Error("ControllSetting is placed without a character or position");
+    d.placed = *placed.matrix;
+    d.tag = FindSprite(m, *placed.character);
+    d.sprite = ReadSprite(m.tags[d.tag]);
+    if (auto c = SymbolClasses(m); c.count(d.sprite.id)) d.class_name = c[d.sprite.id];
+    bool rows[kDonorRows] = {}, defaults = false;
+    std::int64_t row0 = 0, row1 = 0;
+    for (const Tag& t : d.sprite.tags) {
+        if (!IsPlace(t)) continue;
+        const Place p = ReadPlace(t);
+        d.depths.insert(p.depth);
+        if (p.name && p.matrix) {
+            const int row = RowIndex(*p.name);
+            if (row >= 0 && row < kDonorRows) {
+                rows[row] = true;
+                d.row_depth[row] = p.depth;
+                if (row == 0) row0 = p.matrix->ty;
+                if (row == 1) row1 = p.matrix->ty;
+            } else if (row == kDonorDefaults) {
+                defaults = true;
+                d.defaults_depth = p.depth;
             }
-            if (title_cid) break;
         }
-        if (!title_cid) throw Fail{"no title StaticText found in the clone"};
-    }
-
-    std::set<std::string> drop_names(a.drop.begin(), a.drop.end());
-
-    std::optional<std::uint16_t> label_depth;
-    std::int64_t label_dy = 0;
-    std::optional<std::string> label_name;
-    if (a.defaults_slot) {
-        drop_names.erase("Item_6_0");
-        std::map<std::string, std::int64_t> ys;
-        for (const Tag& t : tags(b, cs + 4, ce)) {
-            if (t.code != kPlace2) continue;
-            const Place2 p2 = parse_place2(b, t.s, t.e);
-            if (p2.name && (*p2.name == "Item_0_0" || *p2.name == "Item_1_0") && p2.mat) ys[*p2.name] = p2.mat->ty;
-            if (p2.name && *p2.name == "Item_6_0") label_depth = p2.depth;
-        }
-        if (!label_depth || ys.size() != 2) throw Fail{"the donor has no Item_6_0 label slot, or no two rows"};
-        label_dy = (ys["Item_1_0"] - ys["Item_0_0"]) * (*a.defaults_slot - 6);
-        label_name = "Item_" + std::to_string(*a.defaults_slot) + "_0";
-        std::set<std::string> rows = names_in_sprite(b, cs, ce);
-        rows.erase("Item_6_0");
-        if (rows.count(*label_name) && !drop_names.count(*label_name)) throw Fail{*label_name + " is a row; drop it"};
-    }
-
-    struct Added {
-        std::uint16_t depth;
-        std::string name;
-        std::int64_t dy;
-    };
-    std::vector<Added> add;
-    std::optional<std::uint16_t> last_depth;
-    if (a.add_rows) {
-        std::map<int, Place2> rows;
-        std::set<int> depths;
-        for (const Tag& t : tags(b, cs + 4, ce)) {
-            if (t.code == kPlace2) {
-                Place2 p2 = parse_place2(b, t.s, t.e);
-                depths.insert(p2.depth);
-                if (p2.name && starts_with(*p2.name, "Item_") && ends_with(*p2.name, "_0") && p2.mat) {
-                    rows[std::atoi(p2.name->substr(5, p2.name->size() - 7).c_str())] = p2;
+        if (p.character && !d.title) {
+            for (std::size_t i = 0; i < m.tags.size(); ++i) {
+                if (m.tags[i].code != kSprite || U16(m.tags[i].body, 0) != *p.character) continue;
+                const Sprite child = ReadSprite(m.tags[i]);
+                for (const Tag& c : child.tags) {
+                    if (c.code != kPlace2) continue;
+                    const Place field = ReadPlace(c);
+                    if (field.name && field.name->rfind("StaticText_", 0) == 0) {
+                        d.title = child.id;
+                        d.title_sprite = child;
+                        d.title_field = *field.name;
+                    }
                 }
-            } else if (t.code == kPlace3) {
-                depths.insert(u16(b, t.s + 2));
             }
-        }
-        if (!rows.count(0)) throw Fail{"--add-rows: no Item_0_0"};
-        std::vector<int> kept;
-        for (const auto& [k, p2] : rows) {
-            if (!drop_names.count(*p2.name) && p2.cid == rows[0].cid) kept.push_back(k);
-        }
-        if (kept.size() < 2) throw Fail{"--add-rows needs two widget rows to take a pitch from"};
-        const Place2& last = rows[kept.back()];
-        const Place2& prev = rows[kept[kept.size() - 2]];
-        const std::int64_t pitch = last.mat->ty - prev.mat->ty;
-        last_depth = last.depth;
-        int d = last.depth + 1;
-        for (int k = 1; k <= a.add_rows; ++k) {
-            while (depths.count(d)) ++d;
-            const std::string name = "Item_" + std::to_string(kept.back() + k) + "_0";
-            add.push_back({static_cast<std::uint16_t>(d), name, pitch * k});
-            depths.insert(d);
         }
     }
+    if (!std::all_of(rows, rows + kDonorRows, [](bool r) { return r; }) || !defaults || !d.title)
+        throw Error("ControllSetting is not laid out as 1.09's (six rows, Defaults, a title)");
+    d.pitch = row1 - row0;
+    return d;
+}
 
-    auto added_rows = [&](const Place2& p2) {
-        Bytes out;
-        for (const Added& r : add) {
-            std::optional<Matrix> m = p2.mat;
-            if (m) m->ty += r.dy;
-            app(out, tag_bytes(kPlace2, build_place2(p2, r.depth, m, p2.name ? std::optional<std::string>(r.name) : std::nullopt)));
-        }
-        return out;
-    };
+Sprite SectionSprite(const Donor& d, const Section& s, std::uint16_t id, std::uint16_t title) {
+    const int kept = std::min(s.rows, kDonorRows);
+    std::set<std::uint16_t> dropped;
+    for (int r = kept; r < kDonorRows; ++r) dropped.insert(d.row_depth[r]);
+    if (!s.defaults) dropped.insert(d.defaults_depth);
+    std::vector<std::uint16_t> added;
+    for (std::uint16_t depth = d.row_depth[kDonorRows - 1] + 1; int(added.size()) < s.rows - kDonorRows; ++depth)
+        if (!d.depths.count(depth)) added.push_back(depth);
+    const std::int64_t defaults_dy = d.pitch * (s.rows - kDonorDefaults);
 
-    Bytes new_body;
-    app16(new_body, new_cid);
-    app(new_body, b, cs + 2, cs + 4);
-    for (const Tag& t : tags(b, cs + 4, ce)) {
-        if (t.code == kPlace2) {
-            const Place2 p2 = parse_place2(b, t.s, t.e);
-            const bool named = p2.name && !p2.name->empty();
-            if (named && starts_with(*p2.name, "StaticText")) continue;
-            if (named && drop_names.count(*p2.name)) continue;
-            if (!add.empty() && last_depth && p2.depth == *last_depth) {
-                app(new_body, b, t.head, t.e);
-                app(new_body, added_rows(p2));
-                continue;
-            }
-            if (label_depth && p2.depth == *label_depth && (label_dy || named)) {
-                std::optional<Matrix> m = p2.mat;
-                if (m) m->ty += label_dy;
-                app(new_body, tag_bytes(kPlace2, build_place2(p2, p2.depth, m, named ? label_name : std::nullopt)));
-                continue;
-            }
-        }
-        if (title_cid && place_char(b, t.s, t.code) == title_old) {
-            Bytes body(b.begin() + t.s, b.begin() + t.e);
-            put16(body, t.code == kPlace3 ? 4 : 3, *title_cid);
-            app(new_body, tag_bytes(t.code, body));
+    Sprite out{id, d.sprite.frames, {}};
+    for (const Tag& t : d.sprite.tags) {
+        if (!IsPlace(t)) {
+            out.tags.push_back(t);
             continue;
         }
-        app(new_body, b, t.head, t.e);
-    }
-
-    if (!clone_p.mat) throw Fail{a.clone + " is placed without a matrix"};
-    const Bytes new_section = tag_bytes(kPlace3, build_place3_hidden(new_cid, static_cast<std::uint16_t>(a.section_depth), *clone_p.mat, a.name));
-
-    const std::size_t top_s = places[a.top].s;
-    Bytes out(b.begin(), b.begin() + body_start(b));
-    for (const Tag& t : tags(b, body_start(b), b.size())) {
-        app(out, b, t.head, t.e);
-        if (t.code == kDefineSprite && t.s == cs) {
-            if (title_cid) app(out, tag_bytes(kDefineSprite, title_sprite_body));
-            app(out, tag_bytes(kDefineSprite, new_body));
-        } else if (t.code == kPlace2 && t.s == top_s) {
-            app(out, new_section);
+        const Place p = ReadPlace(t);
+        if (dropped.count(p.depth)) continue;
+        if (p.character == d.title) {
+            out.tags.push_back(Changed(t.code, Rewrite(t, p, {}, title, {}, {})));
+        } else if (p.depth == d.defaults_depth && defaults_dy) {
+            std::optional<Matrix> m = p.matrix;
+            if (m) m->ty += defaults_dy;
+            const auto name = p.name ? std::optional<std::string>(RowName(s.rows)) : std::nullopt;
+            out.tags.push_back(Changed(t.code, Rewrite(t, p, {}, {}, m, name)));
+        } else {
+            out.tags.push_back(t);
         }
-    }
-    if (auto it = names.find(clone_p.cid.value_or(0)); it != names.end()) {
-        if (auto with_class = add_symbol_class(out, new_cid, it->second)) out = std::move(*with_class);
-    }
-    put32(out, 4, static_cast<std::uint32_t>(out.size()));
-    return out;
-}
-
-// The scroll bar: a placement's (depth, character, matrix, name) with
-// PlaceObject3's class name skipped.
-struct Placement {
-    std::uint16_t depth = 0;
-    std::optional<std::uint16_t> cid;
-    bool has_mat = false;
-    double sx = 1.0, sy = 1.0, r0 = 0.0, r1 = 0.0;
-    std::int64_t tx = 0, ty = 0;
-    std::optional<std::string> name;
-};
-
-Placement placement(const Bytes& b, int code, std::size_t s) {
-    Placement p;
-    const std::uint8_t flags = b.at(s);
-    std::size_t i = s + 1;
-    std::uint8_t flags3 = 0;
-    if (code == kPlace3) flags3 = b.at(i++);
-    p.depth = u16(b, i);
-    i += 2;
-    if (code == kPlace3 && ((flags3 & 0x08) || ((flags3 & 0x10) && (flags & 0x02)))) cstr(b, i, &i);
-    if (flags & 0x02) {
-        p.cid = u16(b, i);
-        i += 2;
-    }
-    if (flags & 0x04) {
-        BitR r{b, i};
-        p.has_mat = true;
-        if (r.u(1)) {
-            const int n = static_cast<int>(r.u(5));
-            p.sx = r.s(n) / 65536.0;
-            p.sy = r.s(n) / 65536.0;
-        }
-        if (r.u(1)) {
-            const int n = static_cast<int>(r.u(5));
-            p.r0 = r.s(n) / 65536.0;
-            p.r1 = r.s(n) / 65536.0;
-        }
-        const int n = static_cast<int>(r.u(5));
-        p.tx = r.s(n);
-        p.ty = r.s(n);
-        i = r.align();
-    }
-    if (flags & 0x08) i = skip_cxform(b, i);
-    if (flags & 0x10) i += 2;
-    if (flags & 0x20) p.name = cstr(b, i, &i);
-    return p;
-}
-
-Bytes translate_matrix(std::int64_t tx, std::int64_t ty) {
-    BitW w;
-    const int n = std::max(sbits(tx), sbits(ty));
-    w.u(0, 2);
-    w.u(static_cast<std::uint32_t>(n), 5);
-    const std::uint64_t mask = (std::uint64_t{1} << n) - 1;
-    w.u(static_cast<std::uint32_t>(static_cast<std::uint64_t>(tx) & mask), n);
-    w.u(static_cast<std::uint32_t>(static_cast<std::uint64_t>(ty) & mask), n);
-    return w.out();
-}
-
-Bytes add_scrollbar(const Bytes& b, const std::string& list, double ax, double ay, const std::string& name = "ScrollBarV") {
-    std::map<std::uint16_t, Sprite> sp;
-    std::vector<std::uint16_t> order;  // Python's dict keeps the file's order for the donor search
-    for (const Tag& t : tags(b, body_start(b), b.size())) {
-        if (t.code != kDefineSprite) continue;
-        const std::uint16_t cid = u16(b, t.s);
-        if (!sp.count(cid)) order.push_back(cid);
-        sp[cid] = Sprite{t.head, t.s, t.e};
-    }
-    std::optional<Placement> target;
-    for (const Tag& t : tags(b, body_start(b), b.size())) {
-        if (t.code != kPlace2 && t.code != kPlace3) continue;
-        Placement p = placement(b, t.code, t.s);
-        if (p.name && *p.name == list) {
-            target = p;
-            break;
-        }
-    }
-    if (!target || !target->cid || !sp.count(*target->cid)) throw Fail{"no main-timeline sprite named " + list};
-    if (target->r0 != 0.0 || target->r1 != 0.0) throw Fail{list + " is rotated"};
-    const double sx = target->has_mat ? target->sx : 1.0, sy = target->has_mat ? target->sy : 1.0;
-    const double ltx = target->has_mat ? static_cast<double>(target->tx) : 0.0;
-    const double lty = target->has_mat ? static_cast<double>(target->ty) : 0.0;
-
-    std::optional<std::uint16_t> donor;
-    for (std::uint16_t cid : order) {
-        const Sprite& s = sp[cid];
-        for (const Tag& t : tags(b, s.s + 4, s.e)) {
-            if (t.code != kPlace2 && t.code != kPlace3) continue;
-            const Placement p = placement(b, t.code, t.s);
-            if (p.name && *p.name == name && p.cid) {
-                donor = p.cid;
-                break;
+        if (p.depth == d.row_depth[kDonorRows - 1] && t.code == kPlace2) {
+            for (std::size_t k = 0; k < added.size(); ++k) {
+                std::optional<Matrix> m = p.matrix;
+                if (m) m->ty += d.pitch * std::int64_t(k + 1);
+                const auto name = p.name ? std::optional<std::string>(RowName(kDonorRows + int(k))) : std::nullopt;
+                out.tags.push_back(Changed(kPlace2, Rewrite(t, p, added[k], {}, m, name)));
             }
         }
-        if (donor) break;
     }
-    if (!donor) throw Fail{"no " + name + " anywhere to reuse"};
-
-    const Sprite& ls = sp[*target->cid];
-    std::vector<int> depths;
-    std::optional<std::size_t> first_show;
-    for (const Tag& t : tags(b, ls.s + 4, ls.e)) {
-        if (t.code == kPlace2 || t.code == kPlace3) {
-            const Placement p = placement(b, t.code, t.s);
-            depths.push_back(p.depth);
-            if (p.name && *p.name == name) throw Fail{list + " already has a " + name};
-        }
-        if (t.code == kShowFrame && !first_show) first_show = t.head;
-    }
-    if (!first_show) throw Fail{list + " has no frames"};
-    int depth = 0;
-    for (int d : depths) depth = std::max(depth, d);
-    depth += 1;
-    // Python's round() rounds half to even, as nearbyint does in the default mode.
-    const auto tx = static_cast<std::int64_t>(std::nearbyint((ax * 20 - ltx) / sx));
-    const auto ty = static_cast<std::int64_t>(std::nearbyint((ay * 20 - lty) / sy));
-    Bytes place;
-    place.push_back(0x02 | 0x04 | 0x20);
-    app16(place, static_cast<std::uint32_t>(depth));
-    app16(place, *donor);
-    app(place, translate_matrix(tx, ty));
-    app(place, name);
-    place.push_back(0);
-    Bytes new_sprite(b.begin() + ls.s, b.begin() + *first_show);
-    app(new_sprite, tag_bytes(kPlace2, place));
-    app(new_sprite, b, *first_show, ls.e);
-    Bytes out(b.begin(), b.begin() + ls.head);
-    app(out, tag_bytes(kDefineSprite, new_sprite));
-    app(out, b, ls.e, b.size());
-    put32(out, 4, static_cast<std::uint32_t>(out.size()));
     return out;
 }
 
-// One more line in a command list: the sprite placed as `list` (anywhere)
-// gets an Item_<n>_0 placed like its last one, one pitch further down, at a
-// free depth. The menu counts a list's lines from its Item_*_0 children, so
-// the list then has room for another row. (The title's CommandList, sprite
-// 32 of title.gfx: Item_0_0..Item_4_0 at depths 21..1, 40 px apart.)
-Bytes add_list_slot(const Bytes& b, const std::string& list) {
-    std::map<std::uint16_t, Sprite> sp;
-    for (const Tag& t : tags(b, body_start(b), b.size()))
-        if (t.code == kDefineSprite) sp[u16(b, t.s)] = Sprite{t.head, t.s, t.e};
-    std::optional<std::uint16_t> list_cid;
-    for (const auto& [cid, spr] : sp) {
-        for (const Tag& t : tags(b, spr.s + 4, spr.e)) {
-            if (t.code != kPlace2 && t.code != kPlace3) continue;
-            const Placement p = placement(b, t.code, t.s);
-            if (p.name && *p.name == list && p.cid) list_cid = p.cid;
-        }
-        if (list_cid) break;
-    }
-    if (!list_cid || !sp.count(*list_cid)) throw Fail{"no sprite placed as " + list};
-    const Sprite& ls = sp[*list_cid];
-    std::map<int, Place2> rows;
-    std::set<int> depths;
-    std::optional<std::size_t> first_show;
-    for (const Tag& t : tags(b, ls.s + 4, ls.e)) {
-        if (t.code == kPlace2) {
-            Place2 p2 = parse_place2(b, t.s, t.e);
-            depths.insert(p2.depth);
-            if (p2.name && starts_with(*p2.name, "Item_") && ends_with(*p2.name, "_0") && p2.mat)
-                rows[std::atoi(p2.name->substr(5, p2.name->size() - 7).c_str())] = p2;
-        } else if (t.code == kPlace3) {
-            depths.insert(u16(b, t.s + 2));
-        }
-        if (t.code == kShowFrame && !first_show) first_show = t.head;
-    }
-    if (rows.size() < 2 || !first_show) throw Fail{list + " has fewer than two Item_*_0 rows"};
-    const Place2& last = rows.rbegin()->second;
-    const Place2& prev = std::next(rows.rbegin())->second;
-    std::optional<Matrix> m = last.mat;
-    m->ty += last.mat->ty - prev.mat->ty;
-    int depth = *depths.rbegin() + 1;
-    const std::string name = "Item_" + std::to_string(rows.rbegin()->first + 1) + "_0";
-    Bytes new_sprite(b.begin() + ls.s, b.begin() + *first_show);
-    app(new_sprite, tag_bytes(kPlace2, build_place2(last, static_cast<std::uint16_t>(depth), m, name)));
-    app(new_sprite, b, *first_show, ls.e);
-    Bytes out(b.begin(), b.begin() + ls.head);
-    app(out, tag_bytes(kDefineSprite, new_sprite));
-    app(out, b, ls.e, b.size());
-    put32(out, 4, static_cast<std::uint32_t>(out.size()));
-    return out;
-}
-
-// The movie: nine sections, then the System list's scroll bar. PCDeck is
-// opened on a Steam Deck only (engine/option_menu.cpp), but is always made.
-Bytes build_option_movie(const Bytes& src) {
-    Bytes m = src;
-    auto section = [&](const char* name, int title, int depth, std::optional<int> defaults, int add_rows,
-                       std::vector<std::string> drops) {
-        SectionArgs a;
-        a.name = name;
-        a.title_id = title;
-        a.section_depth = depth;
-        a.defaults_slot = defaults;
-        a.add_rows = add_rows;
-        for (auto& d : drops) a.drop.push_back(d);
-        m = add_option_section(m, a);
-    };
-    section("PCSetting", 116020, 383, 6, 0, {});
-    section("PCGraphics", 117020, 384, 6, 0, {});
-    section("PCControls", 118020, 385, std::nullopt, 2, {});
-    section("PCKeys", 119020, 386, std::nullopt, 2, {});
-    section("PCEffects", 120020, 387, 5, 0, {"Item_5_0"});
-    section("PCCamera", 121020, 388, 3, 0, {"Item_3_0", "Item_4_0", "Item_5_0"});
-    section("PCDeck", 123020, 389, 2, 0, {"Item_2_0", "Item_3_0", "Item_4_0", "Item_5_0"});
-    section("PCEnhance", 124020, 390, 3, 0, {"Item_3_0", "Item_4_0", "Item_5_0"});
-    section("PCColour", 125020, 391, 5, 0, {"Item_5_0"});
-    return add_scrollbar(m, "Top", 1290, 354.5);
-}
-
-// ---------------------------------------------------------------- the messages
-
-constexpr std::uint32_t kMenuText = 200, kLineHelp = 0xc9;
-// Dialog text: ids from 920000 go to group 78 (MenuMan's generic dialog,
-// sub_2022750) and group 204 (the options screens' own questions, sub_1f24850)
-// instead of the menu groups.
-constexpr std::uint32_t kDialogText = 78, kScreenDialogText = 0xcc;
-constexpr std::int32_t kFirstDialogId = 920000, kLastDialogId = 929999;
-bool dialog_id(std::int32_t id) { return id >= kFirstDialogId && id <= kLastDialogId; }
-// Event text: ids 14000332..14000399 go to group 30 (ã‚¤ãƒ™ãƒ³ãƒˆãƒ†ã‚­ã‚¹ãƒˆ), the talk
-// menus' entries and the messages their scripts show (engine/rebirth_script.h).
-constexpr std::uint32_t kEventText = 30;
-constexpr std::int32_t kFirstEventId = 14000332, kLastEventId = 14000399;
-bool event_id(std::int32_t id) { return id >= kFirstEventId && id <= kLastEventId; }
-int message_kind(std::int32_t id) { return event_id(id) ? 2 : dialog_id(id) ? 1 : 0; }
-
-Bytes inflate_all(const Bytes& in, std::size_t from) {
-    if (from > in.size()) throw Fail{"invalid compressed range"};
-    z_stream z{};
-    if (inflateInit(&z) != Z_OK) throw Fail{"inflateInit"};
-    Bytes out;
-    std::uint8_t buf[1 << 16];
-    z.next_in = const_cast<Bytef*>(in.data() + from);
-    z.avail_in = static_cast<uInt>(in.size() - from);
-    int r;
-    do {
-        z.next_out = buf;
-        z.avail_out = sizeof(buf);
-        r = inflate(&z, Z_NO_FLUSH);
-        if (r != Z_OK && r != Z_STREAM_END) {
-            inflateEnd(&z);
-            throw Fail{"the message bundle does not inflate"};
-        }
-        if (out.size() + sizeof(buf) - z.avail_out > 64 * 1024 * 1024) {
-            inflateEnd(&z); throw Fail{"message bundle exceeds 64 MiB"};
-        }
-        out.insert(out.end(), buf, buf + (sizeof(buf) - z.avail_out));
-    } while (r != Z_STREAM_END);
-    inflateEnd(&z);
-    return out;
-}
-
-std::size_t find(const Bytes& b, const char* what, std::size_t n, std::size_t from = 0) {
-    auto it = std::search(b.begin() + from, b.end(), what, what + n);
-    return it == b.end() ? std::string::npos : static_cast<std::size_t>(it - b.begin());
-}
-
-// The end of a UTF-16LE string starting at `from`: the first 0 code unit, read two bytes at a time.
-// A byte-wise search for "\0\0" also matches across two characters, an ASCII one (high byte 0)
-// followed by one whose low byte is 0 (U+AC00, U+C800, U+4E00, ...), and cut the text there:
-// Korean menu text lost its end (parsifal295, GitHub #69).
-std::size_t utf16_end(const Bytes& b, std::size_t from, std::size_t limit) {
-    for (std::size_t z = from; z + 1 < limit; z += 2)
-        if (b[z] == 0 && b[z + 1] == 0) return z;
-    return std::string::npos;
-}
-
-struct BndFile {
-    std::uint64_t flags;
-    std::uint32_t id;
-    Bytes name;  // as stored, without its terminator
-    Bytes data;
-};
-
-struct Bnd4 {
-    Bytes head;
-    std::uint64_t esize = 0;
-    bool unicode = false;
-    std::vector<BndFile> files;
-};
-
-Bnd4 bnd_read(const Bytes& b) {
-    if (b.size() < 0x40 || std::memcmp(b.data(), "BND4", 4) != 0) throw Fail{"not a BND4"};
-    Bnd4 r;
-    r.head.assign(b.begin(), b.begin() + 0x40);
-    r.esize = u64(b, 0x20);
-    const std::uint32_t n = u32(b, 0x0c);
-    r.unicode = b[0x30] != 0;
-    for (std::uint32_t k = 0; k < n; ++k) {
-        const std::size_t e = 0x40 + k * r.esize;
-        BndFile f;
-        f.flags = u64(b, e);
-        const std::uint64_t size = u64(b, e + 8);
-        const std::uint32_t off = u32(b, e + 0x18);
-        f.id = u32(b, e + 0x1c);
-        const std::uint32_t name_off = u32(b, e + 0x20);
-        if (r.unicode) {
-            const std::size_t stop = utf16_end(b, name_off, std::min<std::size_t>(b.size(), name_off + 4096));
-            if (stop == std::string::npos) throw Fail{"an unterminated bundle entry name"};
-            f.name.assign(b.begin() + name_off, b.begin() + stop);
+Sprite TitleSprite(const Donor& d, const Section& s, std::uint16_t id) {
+    const std::string field = "StaticText_" + std::to_string(s.title);
+    Sprite out{id, d.title_sprite.frames, {}};
+    for (const Tag& t : d.title_sprite.tags) {
+        if (t.code == kPlace2 && ReadPlace(t).name == d.title_field) {
+            const Place p = ReadPlace(t);
+            out.tags.push_back(Changed(kPlace2, Rewrite(t, p, {}, {}, {}, field)));
         } else {
-            std::size_t z = name_off;
-            while (z < b.size() && b[z]) ++z;
-            f.name.assign(b.begin() + name_off, b.begin() + z);
+            out.tags.push_back(t);
         }
-        if (off + size > b.size()) throw Fail{"a bundle entry runs past the end"};
-        f.data.assign(b.begin() + off, b.begin() + off + size);
+    }
+    return out;
+}
+
+Tag HiddenPlacement(std::uint16_t id, std::uint16_t depth, const Matrix& at, const std::string& name) {
+    Bytes b{0x02 | 0x04 | 0x20, 0x20};
+    PutLe(b, depth, 2);
+    PutLe(b, id, 2);
+    Append(b, WriteMatrix(at));
+    b.insert(b.end(), name.begin(), name.end());
+    b.push_back(0);
+    b.push_back(0);
+    return Changed(kPlace3, std::move(b));
+}
+
+void AddClasses(Movie& m, const std::vector<std::pair<std::uint16_t, std::string>>& classes) {
+    for (Tag& t : m.tags) {
+        if (t.code != kSymbolClass) continue;
+        Bytes body = t.body;
+        SetLe(body, 0, U16(body, 0) + classes.size(), 2);
+        for (const auto& [id, name] : classes) {
+            PutLe(body, id, 2);
+            body.insert(body.end(), name.begin(), name.end());
+            body.push_back(0);
+        }
+        t = Changed(kSymbolClass, std::move(body));
+        return;
+    }
+    throw Error("the movie has no SymbolClass");
+}
+
+constexpr double kScrollX = 1290, kScrollY = 354.5;
+void AddScrollBar(Movie& m) {
+    const Place top = ReadPlace(m.tags[FindPlaced(m, "Top")]);
+    if (!top.character) throw Error("Top is placed without a character");
+    std::optional<std::uint16_t> bar;
+    for (const Tag& t : m.tags) {
+        if (t.code != kSprite || bar) continue;
+        for (const Tag& c : ReadSprite(t).tags)
+            if (IsPlace(c) && !bar) {
+                const Place p = ReadPlace(c);
+                if (p.name == "ScrollBarV" && p.character) bar = p.character;
+            }
+    }
+    if (!bar) throw Error("the movie has no ScrollBarV to place");
+    Matrix list = top.matrix.value_or(Matrix{});
+    if (list.rotated) throw Error("Top is rotated");
+    const double sx = list.scaled ? Fixed(list.sx, list.scale_bits) : 1, sy = list.scaled ? Fixed(list.sy, list.scale_bits) : 1;
+    const std::size_t at = FindSprite(m, *top.character);
+    Sprite s = ReadSprite(m.tags[at]);
+    std::uint16_t depth = 0;
+    for (const Tag& t : s.tags) {
+        if (!IsPlace(t)) continue;
+        const Place p = ReadPlace(t);
+        if (p.name == "ScrollBarV") throw Error("Top has a ScrollBarV already");
+        depth = std::max(depth, p.depth);
+    }
+    const auto first_frame = std::find_if(s.tags.begin(), s.tags.end(), [](const Tag& t) { return t.code == kShowFrame; });
+    if (first_frame == s.tags.end()) throw Error("Top has no frame");
+    Matrix place;
+    place.tx = std::llrint((kScrollX * 20 - double(list.tx)) / sx);
+    place.ty = std::llrint((kScrollY * 20 - double(list.ty)) / sy);
+    Bytes b{0x02 | 0x04 | 0x20};
+    PutLe(b, depth + 1, 2);
+    PutLe(b, *bar, 2);
+    Append(b, WriteMatrix(place));
+    const std::string name = "ScrollBarV";
+    b.insert(b.end(), name.begin(), name.end());
+    b.push_back(0);
+    s.tags.insert(first_frame, Changed(kPlace2, std::move(b)));
+    m.tags[at] = WriteSprite(s);
+}
+
+const char kTsv[] =
+#include "pc_option_messages.inc"
+    ;
+
+constexpr std::uint32_t kMenuGroup = 200, kHelpGroup = 201, kQuestionGroup = 78, kScreenQuestionGroup = 204, kEventGroup = 30;
+
+std::string Unescape(std::string s) {
+    for (std::size_t at = 0; (at = s.find("\\n", at)) != std::string::npos; ++at) s.replace(at, 2, "\n");
+    return s;
+}
+}
+
+std::u16string Utf16(const std::string& s) {
+    std::u16string out;
+    for (std::size_t i = 0; i < s.size();) {
+        const auto lead = static_cast<unsigned char>(s[i++]);
+        const int more = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
+        std::uint32_t c = lead & (0x7f >> more);
+        for (int k = 0; k < more && i < s.size(); ++k) c = c << 6 | (static_cast<unsigned char>(s[i++]) & 0x3f);
+        if (c >= 0x10000) {
+            out.push_back(char16_t(0xd800 + ((c - 0x10000) >> 10)));
+            out.push_back(char16_t(0xdc00 + ((c - 0x10000) & 0x3ff)));
+        } else {
+            out.push_back(char16_t(c));
+        }
+    }
+    return out;
+}
+
+Kind KindOf(std::int32_t id) {
+    if (id >= 920000 && id <= 929999) return Kind::Question;
+    if (id >= 14000332 && id <= 14000399) return Kind::Event;
+    return Kind::Menu;
+}
+
+std::map<std::int32_t, PcMessage> PcMessages(bool chinese) {
+    std::map<std::int32_t, PcMessage> out;
+    const std::string all(kTsv);
+    for (std::size_t at = 0; at < all.size();) {
+        std::size_t end = all.find('\n', at);
+        if (end == std::string::npos) end = all.size();
+        std::string line = all.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const std::size_t first = line.find_first_not_of(" \t");
+        if (first == std::string::npos || line[first] == '#') continue;
+        std::vector<std::string> column;
+        for (std::size_t from = 0;;) {
+            const std::size_t tab = line.find('\t', from);
+            column.push_back(line.substr(from, tab == std::string::npos ? std::string::npos : tab - from));
+            if (tab == std::string::npos) break;
+            from = tab + 1;
+        }
+        if (column.size() < 2) throw Error("pc_option_messages.tsv: a line without text: " + line);
+        auto pick = [&](std::size_t english, std::size_t translated) {
+            const std::size_t c = chinese && column.size() > translated && !column[translated].empty() ? translated : english;
+            return c < column.size() ? Unescape(column[c]) : std::string();
+        };
+        const std::int32_t id = std::stoi(column[0]);
+        if (out.count(id)) throw Error("pc_option_messages.tsv: id " + column[0] + " twice");
+        out[id] = PcMessage{pick(1, 3), pick(2, 4)};
+    }
+    return out;
+}
+
+Dcx DcxRead(const Bytes& b) {
+    if (!Has(b, 0, "DCX\0", 4) || !Has(b, 0x18, "DCS\0", 4) || !Has(b, 0x24, "DCP\0DFLT", 8) || !Has(b, 0x44, "DCA\0", 4))
+        throw Error("not a DFLT DCX");
+    const std::size_t start = 0x44 + std::size_t(Be32(b, 0x48));
+    const std::size_t size = Be32(b, 0x1c), packed = Be32(b, 0x20);
+    if (start > b.size() || packed > b.size() - start) throw Error("a DCX shorter than its header says");
+    if (size > kMostBytes) throw Error("a DCX of more than 64 MiB");
+    Dcx d{Bytes(b.begin(), b.begin() + start), Bytes(size)};
+    z_stream z{};
+    if (inflateInit(&z) != Z_OK) throw Error("zlib");
+    z.next_in = const_cast<Bytef*>(b.data() + start);
+    z.avail_in = uInt(b.size() - start);
+    z.next_out = d.data.data();
+    z.avail_out = uInt(size);
+    const int r = inflate(&z, Z_FINISH);
+    const bool whole = r == Z_STREAM_END && z.avail_out == 0;
+    inflateEnd(&z);
+    if (!whole) throw Error("a DCX whose data does not inflate to its size");
+    return d;
+}
+
+Bytes DcxWrite(const Dcx& d) {
+    uLongf packed = compressBound(uLong(d.data.size()));
+    Bytes z(packed);
+    if (compress2(z.data(), &packed, d.data.data(), uLong(d.data.size()), 9) != Z_OK) throw Error("zlib");
+    Bytes out = d.header;
+    SetBe32(out, 0x1c, std::uint32_t(d.data.size()));
+    SetBe32(out, 0x20, std::uint32_t(packed));
+    out.insert(out.end(), z.begin(), z.begin() + packed);
+    return out;
+}
+
+Binder BinderRead(const Bytes& b) {
+    if (!Has(b, 0, "BND4", 4) || b.size() < 0x40) throw Error("not a BND4");
+    Binder r;
+    r.header.assign(b.begin(), b.begin() + 0x40);
+    r.entry_bytes = std::size_t(U64(b, 0x20));
+    r.wide_names = b[0x30] != 0;
+    if (r.entry_bytes < 0x24 || r.entry_bytes > 0x100 || U64(b, 0x38)) throw Error("a BND4 laid out unlike the game's");
+    const std::uint32_t count = U32(b, 0x0c);
+    if (count > 4096) throw Error("a BND4 of too many files");
+    for (std::uint32_t k = 0; k < count; ++k) {
+        const std::size_t e = 0x40 + k * r.entry_bytes;
+        BinderFile f;
+        f.flags = U64(b, e);
+        const std::uint64_t size = U64(b, e + 0x08), at = U32(b, e + 0x18);
+        f.id = U32(b, e + 0x1c);
+        const std::size_t name = U32(b, e + 0x20);
+        if (at > b.size() || size > b.size() - at || name >= b.size()) throw Error("a BND4 entry past the end");
+        std::size_t end = name;
+        if (r.wide_names) end = WideEnd(b, name);
+        else
+            while (end < b.size() && b[end]) ++end;
+        f.name.assign(b.begin() + name, b.begin() + end);
+        f.data.assign(b.begin() + at, b.begin() + at + size);
         r.files.push_back(std::move(f));
     }
     return r;
 }
 
-Bytes bnd_pack(const Bnd4& r) {
-    Bytes names;
-    std::vector<std::uint32_t> name_off;
-    const std::size_t base = 0x40 + r.files.size() * r.esize;
-    for (const BndFile& f : r.files) {
-        name_off.push_back(static_cast<std::uint32_t>(base + names.size()));
-        app(names, f.name);
-        names.push_back(0);
-        if (r.unicode) names.push_back(0);
+Bytes BinderWrite(const Binder& r) {
+    Bytes out = r.header;
+    SetLe(out, 0x0c, r.files.size(), 4);
+    const std::size_t names = 0x40 + r.files.size() * r.entry_bytes;
+    out.resize(names, 0);
+    std::vector<std::size_t> name_at;
+    for (const BinderFile& f : r.files) {
+        name_at.push_back(out.size());
+        Append(out, f.name);
+        out.resize(out.size() + (r.wide_names ? 2 : 1), 0);
     }
-    const std::size_t data_start = base + names.size();
-    Bytes blobs;
-    std::vector<std::uint32_t> offs;
-    for (const BndFile& f : r.files) {
-        blobs.resize(blobs.size() + ((0x10 - blobs.size() % 0x10) % 0x10), 0);
-        offs.push_back(static_cast<std::uint32_t>(data_start + blobs.size()));
-        app(blobs, f.data);
-    }
-    Bytes out = r.head;
-    put64(out, 0x28, data_start);
+    SetLe(out, 0x28, out.size(), 8);
     for (std::size_t k = 0; k < r.files.size(); ++k) {
-        Bytes e(r.esize, 0);
-        put64(e, 0, r.files[k].flags);
-        put64(e, 8, r.files[k].data.size());
-        put64(e, 16, r.files[k].data.size());
-        put32(e, 0x18, offs[k]);
-        put32(e, 0x1c, r.files[k].id);
-        put32(e, 0x20, name_off[k]);
-        app(out, e);
+        const BinderFile& f = r.files[k];
+        out.resize((out.size() + 15) & ~std::size_t(15), 0);
+        const std::size_t e = 0x40 + k * r.entry_bytes;
+        SetLe(out, e, f.flags, 8);
+        SetLe(out, e + 0x08, f.data.size(), 8);
+        SetLe(out, e + 0x10, f.data.size(), 8);
+        SetLe(out, e + 0x18, out.size(), 4);
+        SetLe(out, e + 0x1c, f.id, 4);
+        SetLe(out, e + 0x20, name_at[k], 4);
+        Append(out, f.data);
     }
-    app(out, names);
-    app(out, blobs);
     return out;
 }
 
-using Fmg = std::map<std::int32_t, std::optional<Bytes>>;  // id -> UTF-16LE text, nullopt for an id with none
-
-Fmg fmg_read(const Bytes& b) {
-    if (b.size() < 0x28 || b[2] != 2) throw Fail{"an FMG that is not version 2"};
-    const std::uint32_t gcount = u32(b, 0x0c), scount = u32(b, 0x10);
-    const std::uint64_t soff = u64(b, 0x18);
-    Fmg ids;
-    for (std::uint32_t g = 0; g < gcount; ++g) {
-        const auto idx = static_cast<std::int32_t>(u32(b, 0x28 + g * 16));
-        const auto first = static_cast<std::int32_t>(u32(b, 0x28 + g * 16 + 4));
-        const auto last = static_cast<std::int32_t>(u32(b, 0x28 + g * 16 + 8));
-        for (std::int32_t mid = first, k = 0; mid <= last; ++mid, ++k) {
-            if (static_cast<std::uint32_t>(idx + k) >= scount) throw Fail{"an FMG group past its strings"};
-            const std::uint64_t o = u64(b, soff + static_cast<std::uint64_t>(idx + k) * 8);
-            if (!o) {
-                ids[mid] = std::nullopt;
+Fmg FmgRead(const Bytes& b) {
+    if (b.size() < 0x28 || b[2] != 2) throw Error("an FMG that is not version 2");
+    Fmg f;
+    f.header.assign(b.begin(), b.begin() + 0x28);
+    const std::uint32_t groups = U32(b, 0x0c), strings = U32(b, 0x10);
+    const std::uint64_t offsets = U64(b, 0x18);
+    for (std::uint32_t g = 0; g < groups; ++g) {
+        const std::size_t at = 0x28 + std::size_t(g) * 16;
+        const std::uint32_t index = U32(b, at);
+        const auto first = std::int32_t(U32(b, at + 4)), last = std::int32_t(U32(b, at + 8));
+        if (last < first || std::uint64_t(index) + std::uint64_t(last - first) >= strings) throw Error("an FMG group past its strings");
+        for (std::int32_t id = first; id <= last; ++id) {
+            const std::uint64_t text = U64(b, offsets + 8 * (index + std::uint64_t(id - first)));
+            if (!text) {
+                f.text[id] = std::nullopt;
                 continue;
             }
-            const std::size_t e = utf16_end(b, o, b.size());
-            if (e == std::string::npos) throw Fail{"an unterminated FMG string"};
-            ids[mid] = Bytes(b.begin() + o, b.begin() + e);
+            if (text >= b.size()) throw Error("an FMG string past the end");
+            const std::size_t end = WideEnd(b, text);
+            std::u16string s((end - text) / 2, u'\0');
+            for (std::size_t i = 0; i < s.size(); ++i) s[i] = char16_t(U16(b, text + 2 * i));
+            f.text[id] = std::move(s);
         }
     }
-    return ids;
+    return f;
 }
 
-Bytes fmg_write(const Fmg& ids) {
-    std::vector<std::int32_t> order;
-    for (const auto& [k, v] : ids) order.push_back(k);
-    struct Group {
-        std::size_t idx;
+Bytes FmgWrite(const Fmg& f) {
+    struct Run {
+        std::uint32_t index;
         std::int32_t first, last;
     };
-    std::vector<Group> groups;
-    std::size_t run_start = 0;
-    for (std::size_t i = 1; i <= order.size(); ++i) {
-        if (i == order.size() || order[i] != order[i - 1] + 1) {
-            groups.push_back({run_start, order[run_start], order[i - 1]});
-            run_start = i;
+    std::vector<Run> runs;
+    std::uint32_t index = 0;
+    for (const auto& [id, text] : f.text) {
+        if (runs.empty() || runs.back().last + 1 != id) runs.push_back({index, id, id});
+        else runs.back().last = id;
+        ++index;
+    }
+    const std::size_t offsets = 0x28 + runs.size() * 16, pool = offsets + f.text.size() * 8;
+    Bytes out = f.header;
+    out.resize(pool, 0);
+    std::map<std::u16string, std::size_t> placed;
+    std::size_t k = 0;
+    for (const auto& [id, text] : f.text) {
+        std::size_t at = 0;
+        if (text) {
+            auto [it, fresh] = placed.emplace(*text, out.size());
+            if (fresh) {
+                for (const char16_t c : *text) PutLe(out, c, 2);
+                PutLe(out, 0, 2);
+            }
+            at = it->second;
         }
+        SetLe(out, offsets + 8 * k++, at, 8);
     }
-    std::map<Bytes, std::size_t> strings;
-    Bytes pool;
-    for (std::int32_t mid : order) {
-        const auto& t = ids.at(mid);
-        if (!t || strings.count(*t)) continue;
-        strings[*t] = pool.size();
-        app(pool, *t);
-        pool.push_back(0);
-        pool.push_back(0);
+    for (std::size_t g = 0; g < runs.size(); ++g) {
+        SetLe(out, 0x28 + g * 16, runs[g].index, 4);
+        SetLe(out, 0x28 + g * 16 + 4, std::uint32_t(runs[g].first), 4);
+        SetLe(out, 0x28 + g * 16 + 8, std::uint32_t(runs[g].last), 4);
+        SetLe(out, 0x28 + g * 16 + 12, 0, 4);
     }
-    const std::size_t head = 0x28 + groups.size() * 16, soff = head, body = soff + order.size() * 8;
-    Bytes out(body + pool.size(), 0);
-    out[2] = 2;
-    put32(out, 0x08, 1);
-    put32(out, 0x0c, static_cast<std::uint32_t>(groups.size()));
-    put32(out, 0x10, static_cast<std::uint32_t>(order.size()));
-    put32(out, 0x14, 0xff);
-    put64(out, 0x18, soff);
-    for (std::size_t g = 0; g < groups.size(); ++g) {
-        put32(out, 0x28 + g * 16, static_cast<std::uint32_t>(groups[g].idx));
-        put32(out, 0x28 + g * 16 + 4, static_cast<std::uint32_t>(groups[g].first));
-        put32(out, 0x28 + g * 16 + 8, static_cast<std::uint32_t>(groups[g].last));
-    }
-    for (std::size_t i = 0; i < order.size(); ++i) {
-        const auto& t = ids.at(order[i]);
-        put64(out, soff + i * 8, t ? body + strings[*t] : 0);
-    }
-    std::copy(pool.begin(), pool.end(), out.begin() + body);
-    put32(out, 0x04, static_cast<std::uint32_t>(out.size()));
+    SetLe(out, 0x04, out.size(), 4);
+    SetLe(out, 0x0c, runs.size(), 4);
+    SetLe(out, 0x10, f.text.size(), 4);
+    SetLe(out, 0x18, offsets, 8);
     return out;
 }
 
-Bytes utf16(const std::string& s) {
-    Bytes out;
-    for (std::size_t i = 0; i < s.size();) {
-        std::uint32_t c = static_cast<std::uint8_t>(s[i]);
-        int extra = c >= 0xf0 ? 3 : c >= 0xe0 ? 2 : c >= 0xc0 ? 1 : 0;
-        c &= extra == 3 ? 0x07 : extra == 2 ? 0x0f : extra == 1 ? 0x1f : 0x7f;
-        ++i;
-        for (int k = 0; k < extra && i < s.size(); ++k, ++i) c = (c << 6) | (static_cast<std::uint8_t>(s[i]) & 0x3f);
-        if (c >= 0x10000) {
-            c -= 0x10000;
-            app16(out, 0xd800 + (c >> 10));
-            app16(out, 0xdc00 + (c & 0x3ff));
-        } else {
-            app16(out, c);
+Bytes MenuMessages(const Bytes& file, bool chinese) {
+    const bool packed = Has(file, 0, "DCX\0", 4);
+    Dcx dcx = packed ? DcxRead(file) : Dcx{{}, file};
+    Binder bundle = BinderRead(dcx.data);
+    const auto messages = PcMessages(chinese);
+    struct Group {
+        std::uint32_t id;
+        Kind kind;
+        bool help;
+        bool found = false;
+    };
+    Group groups[] = {{kMenuGroup, Kind::Menu, false}, {kHelpGroup, Kind::Menu, true}, {kQuestionGroup, Kind::Question, false},
+                      {kScreenQuestionGroup, Kind::Question, false}, {kEventGroup, Kind::Event, false}};
+    for (BinderFile& file_in : bundle.files) {
+        Group* g = nullptr;
+        for (Group& candidate : groups)
+            if (candidate.id == file_in.id) g = &candidate;
+        if (!g) continue;
+        Fmg fmg = FmgRead(file_in.data);
+        for (const auto& [id, m] : messages) {
+            if (KindOf(id) != g->kind) continue;
+            if (fmg.text.count(id))
+                throw Error("message " + std::to_string(id) + " is already in group " + std::to_string(g->id));
+            const std::string& s = g->help ? m.help : m.text;
+            fmg.text[id] = s.empty() ? std::nullopt : std::optional<std::u16string>(Utf16(s));
         }
+        file_in.data = FmgWrite(fmg);
+        g->found = true;
     }
-    return out;
+    for (const Group& g : groups)
+        if (!g.found) throw Error("the message bundle has no group " + std::to_string(g.id));
+    dcx.data = BinderWrite(bundle);
+    return packed ? DcxWrite(dcx) : dcx.data;
 }
 
-struct Message {
-    std::string text, help;
-};
-
-std::map<std::int32_t, Message> read_messages(bool chinese = false) {
-    std::map<std::int32_t, Message> rows;
-    std::string all(kMessagesTsv);
-    std::size_t at = 0;
-    while (at < all.size()) {
-        std::size_t nl = all.find('\n', at);
-        if (nl == std::string::npos) nl = all.size();
-        const std::string line = all.substr(at, nl - at);
-        at = nl + 1;
-        const std::size_t first = line.find_first_not_of(" \t");
-        if (line.empty() || (first != std::string::npos && line[first] == '#')) continue;
-        std::vector<std::string> parts;
-        for (std::size_t p = 0;;) {
-            const std::size_t t = line.find('\t', p);
-            parts.push_back(line.substr(p, t == std::string::npos ? std::string::npos : t - p));
-            if (t == std::string::npos) break;
-            p = t + 1;
-        }
-        if (parts.size() < 2) throw Fail{"pc_option_messages: a row without text: " + line};
-        const auto unescape = [](std::string t) {  // "\n" is a line break
-            for (std::size_t k = 0; (k = t.find("\\n", k)) != std::string::npos; ++k) t.replace(k, 2, "\n");
-            return t;
-        };
-        const auto column = [&](std::size_t english, std::size_t translated) {
-            const std::size_t index = chinese && parts.size() > translated && !parts[translated].empty()
-                                          ? translated : english;
-            return parts.size() > index ? unescape(parts[index]) : std::string{};
-        };
-        rows[std::atoi(parts[0].c_str())] = Message{column(1, 3), column(2, 4)};
+Bytes OptionMovie(const Bytes& gfx) {
+    Movie m = ReadMovie(gfx);
+    for (const Section& s : kSections)
+        if (Placed(m, s.name)) throw Error(std::string("the movie already has ") + s.name);
+    const Donor d = ReadDonor(m);
+    std::uint16_t next = HighestCharacter(m);
+    std::vector<Tag> sprites, placements;
+    std::vector<std::pair<std::uint16_t, std::string>> classes;
+    std::uint16_t depth = kFirstSectionDepth;
+    for (const Section& s : kSections) {
+        if (std::to_string(s.title).size() + 11 != d.title_field.size() || s.rows < 1 || s.rows > 8)
+            throw Error(std::string("section ") + s.name + " does not fit the donor");
+        const std::uint16_t id = ++next, title = ++next;
+        sprites.push_back(WriteSprite(TitleSprite(d, s, title)));
+        sprites.push_back(WriteSprite(SectionSprite(d, s, id, title)));
+        placements.push_back(HiddenPlacement(id, depth++, d.placed, s.name));
+        if (d.class_name) classes.emplace_back(id, *d.class_name);
     }
-    return rows;
+    if (depth > 500) throw Error("the sections' depths reach Top's");
+    m.tags.insert(m.tags.begin() + std::ptrdiff_t(d.tag) + 1, sprites.begin(), sprites.end());
+    const std::size_t top = FindPlaced(m, "Top");
+    m.tags.insert(m.tags.begin() + std::ptrdiff_t(top) + 1, placements.begin(), placements.end());
+    if (!classes.empty()) AddClasses(m, classes);
+    AddScrollBar(m);
+    return WriteMovie(m);
 }
 
-// The message bundle: the port's ids in groups 200 and 201, the dialog groups
-// and the event text.
-Bytes build_menu_messages(const Bytes& raw, bool chinese = false) {
-    Bytes payload, dcx_head;
-    if (raw.size() >= 4 && std::memcmp(raw.data(), "DCX\0", 4) == 0) {
-        if (raw.size() < 0x2c || std::memcmp(raw.data() + 0x28, "DFLT", 4) != 0) throw Fail{"the message bundle is not DFLT"};
-        const std::size_t i = find(raw, "DCA\0", 4);
-        if (i == std::string::npos) throw Fail{"no DCA block"};
-        const std::uint32_t dca_size = be32(raw, i + 4);
-        dcx_head.assign(raw.begin(), raw.begin() + i + dca_size);
-        payload = inflate_all(raw, i + dca_size);
-    } else {
-        payload = raw;
-    }
-    Bnd4 bnd = bnd_read(payload);
-    const auto rows = read_messages(chinese);
-    std::set<std::uint32_t> added;
-    for (BndFile& f : bnd.files) {
-        if (f.id != kMenuText && f.id != kLineHelp && f.id != kDialogText && f.id != kScreenDialogText && f.id != kEventText) continue;
-        const int group_kind = f.id == kEventText ? 2 : (f.id == kDialogText || f.id == kScreenDialogText) ? 1 : 0;
-        Fmg ids = fmg_read(f.data);
-        for (const auto& [mid, m] : rows) {
-            if (message_kind(mid) != group_kind) continue;
-            if (ids.count(mid)) throw Fail{"message id " + std::to_string(mid) + " is already in group " + std::to_string(f.id)};
-        }
-        for (const auto& [mid, m] : rows) {
-            if (message_kind(mid) != group_kind) continue;
-            const std::string& s = f.id == kLineHelp ? m.help : m.text;
-            ids[mid] = s.empty() ? std::nullopt : std::optional<Bytes>(utf16(s));
-        }
-        f.data = fmg_write(ids);
-        added.insert(f.id);
-    }
-    if (!added.count(kMenuText) || !added.count(kLineHelp) || !added.count(kDialogText) || !added.count(kScreenDialogText) ||
-        !added.count(kEventText))
-        throw Fail{"the message bundle lacks the menu text, line help, dialog or event text group"};
-    const Bytes packed = bnd_pack(bnd);
-    if (dcx_head.empty()) return packed;
-    uLongf clen = compressBound(static_cast<uLong>(packed.size()));
-    Bytes comp(clen);
-    if (compress2(comp.data(), &clen, packed.data(), static_cast<uLong>(packed.size()), 9) != Z_OK) throw Fail{"compress2"};
-    comp.resize(clen);
-    Bytes out = dcx_head;
-    const std::size_t dcs = find(out, "DCS\0", 4);
-    if (dcs == std::string::npos) throw Fail{"no DCS block"};
-    putbe32(out, dcs + 4, static_cast<std::uint32_t>(packed.size()));
-    putbe32(out, dcs + 8, static_cast<std::uint32_t>(clen));
-    app(out, comp);
-    return out;
-}
-
-
-
-Bytes build_rebirth(const Bytes& raw) {
-    if (raw.size()<0x4c || std::memcmp(raw.data(),"DCX\0",4) || std::memcmp(raw.data()+0x28,"DFLT",4))
-        throw Fail{"altar archive is not DFLT DCX"};
-    const auto dca=find(raw,"DCA\0",4);
-    if (dca==std::string::npos || dca+8>raw.size()) throw Fail{"altar archive has no DCA"};
-    const auto offset=dca+be32(raw,dca+4);
-    if (offset>raw.size()) throw Fail{"invalid altar DCX header"};
-    auto archive=bnd_read(inflate_all(raw,offset));
-    bool changed=false;
-    for (auto& f:archive.files) {
+Bytes AltarScripts(const Bytes& file) {
+    Dcx dcx = DcxRead(file);
+    Binder scripts = BinderRead(dcx.data);
+    bool found = false;
+    for (BinderFile& f : scripts.files) {
         std::string name;
-        if (archive.unicode) {
-            for (std::size_t i=0;i+1<f.name.size();i+=2) name.push_back(f.name[i+1]?'?':f.name[i]);
-        } else name.assign(f.name.begin(),f.name.end());
-        if (!ends_with(name,"t242307.esd")) continue;
+        for (std::size_t i = 0; i < f.name.size(); i += scripts.wide_names ? 2 : 1)
+            name.push_back(scripts.wide_names && i + 1 < f.name.size() && f.name[i + 1] ? '?' : char(f.name[i]));
+        if (name.size() < 11 || name.compare(name.size() - 11, 11, "t242307.esd")) continue;
         std::string why;
-        if (!rebirth_script(f.data,&why)) throw Fail{why};
-        changed=true;
+        if (!rebirth_script(f.data, &why)) throw Error(why);
+        found = true;
     }
-    if (!changed) throw Fail{"altar archive has no t242307.esd"};
-    auto payload=bnd_pack(archive);
-    uLongf size=compressBound(payload.size()); Bytes compressed(size);
-    if (compress2(compressed.data(),&size,payload.data(),payload.size(),9)!=Z_OK) throw Fail{"compress altar"};
-    compressed.resize(size);
-    Bytes out(raw.begin(),raw.begin()+offset);
-    const auto dcs=find(out,"DCS\0",4);
-    if (dcs==std::string::npos) throw Fail{"altar archive has no DCS"};
-    putbe32(out,dcs+4,payload.size()); putbe32(out,dcs+8,size); app(out,compressed);
-    return out;
+    if (!found) throw Error("the altar's scripts have no t242307.esd");
+    dcx.data = BinderWrite(scripts);
+    return DcxWrite(dcx);
 }
-} // namespace
-
-// The launcher runs this only on its private cache. Game data is input-only.
-#include <fstream>
-#include <cstdio>
-#ifdef _WIN32
-#include <windows.h>
-#include <shellapi.h>
-#endif
-int main(int argc, char** argv) {
-    std::vector<std::filesystem::path> args;
-#ifdef _WIN32
-    int count=0;
-    wchar_t** wide=CommandLineToArgvW(GetCommandLineW(),&count);
-    if (!wide) return 2;
-    for (int i=0;i<count;++i) args.emplace_back(wide[i]);
-    LocalFree(wide);
-    (void)argc; (void)argv;
-#else
-    for (int i=0;i<argc;++i) args.emplace_back(argv[i]);
-#endif
-    if (args.size()!=4 || (args[1]!="movie" && args[1]!="messages" && args[1]!="rebirth")) {
-        std::fputs("Usage: bb-engine-assets movie|messages|rebirth INPUT OUTPUT\n",stderr); return 2;
-    }
-    try {
-        if (std::filesystem::equivalent(args[2],args[3])) { std::fputs("Engine menu assets: output must differ from source\n",stderr); return 1; }
-    } catch (const std::filesystem::filesystem_error&) { /* new cache output */ }
-    try {
-        std::ifstream in(args[2],std::ios::binary|std::ios::ate);
-        if (!in || in.tellg()<0 || in.tellg()>64*1024*1024) throw Fail{"missing or oversized source"};
-        Bytes raw(static_cast<std::size_t>(in.tellg()));
-        in.seekg(0);
-        if (!in.read(reinterpret_cast<char*>(raw.data()),raw.size())) throw Fail{"read source"};
-        Bytes result=args[1]=="movie" ? build_option_movie(raw) : args[1]=="rebirth" ? build_rebirth(raw) : build_menu_messages(raw, args[2].parent_path().filename() == "zhocn");
-        std::ofstream out(args[3],std::ios::binary|std::ios::trunc);
-        if (!out || !out.write(reinterpret_cast<const char*>(result.data()),result.size())) throw Fail{"write cache"};
-        return 0;
-    } catch (const Fail& f) {
-        std::fprintf(stderr,"Engine menu assets: %s\n",f.why.c_str());
-    } catch (const std::exception& e) {
-        std::fprintf(stderr,"Engine menu assets: %s\n",e.what());
-    }
-    return 1;
 }

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Exercises the production target/resolve path on Vulkan (Lavapipe works, no game/window).
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -15,8 +14,6 @@
 int main() {
     using namespace Vulkan;
     Instance instance(0, false);
-    // Calls emitted by this executable use a local dispatcher. libbbgpu.so initializes
-    // its own default dispatcher while constructing Instance.
     static vk::detail::DynamicLoader loader;
     vk::detail::DispatchLoaderDynamic dispatch;
     dispatch.init(
@@ -110,7 +107,7 @@ int main() {
         const auto size = SceneResolution::ForPreset(preset, output);
         targets.SetSize(size);
         assert(SceneResolution::Unpack(SceneResolution::Pack(size)) == size);
-        clear_native(0xffff0000, copied_stencil); // blue
+        clear_native(0xffff0000, copied_stencil);
         auto c = targets.Read(color_id,cv);
         assert(pixel(c.image,vk::ImageAspectFlagBits::eColor,c.layout,size.width,size.height)==0xffff0000);
         auto d = targets.Read(depth_id,dv);
@@ -143,19 +140,17 @@ int main() {
                      vk::ImageLayout::eTransferSrcOptimal,1920,1080))==0.75f);
         assert((pixel(images[depth_id].GetImage(),vk::ImageAspectFlagBits::eStencil,
                      vk::ImageLayout::eTransferSrcOptimal,1920,1080)&255)==resolved_stencil);
-        clear_native(0xff00ff00); // overwrite after reduced render: proxy must be invalidated
+        clear_native(0xff00ff00);
         c=targets.Read(color_id,cv);
         assert(pixel(c.image,vk::ImageAspectFlagBits::eColor,c.layout,size.width,size.height)==0xff00ff00);
         std::printf("Scene targets: %ux%u color/depth/stencil roundtrip PASS\n",size.width,size.height);
     }
 
-    // Half-resolution mip chain (the game's bloom pyramid): one proxy per level, scaled by the
-    // scene's factor, resolved into its own native level.
     auto hi = ci;
     hi.size = {960, 540, 1};
     hi.resources = {4, 1};
     const auto half_id = images.insert(instance, runtime, views, hi);
-    const auto scene = SceneResolution::ForPreset(4); // 640x360 (x3 of 1080p)
+    const auto scene = SceneResolution::ForPreset(4);
     targets.SetSize(scene);
     auto& half = images[half_id];
     assert(targets.Eligible(half) && !targets.EligibleScene(half));
@@ -174,7 +169,6 @@ int main() {
         cmd.endRendering(dispatch);
     }
     assert(targets.ProxyCurrent(half, 2, 1) && !targets.ProxyCurrent(half, 0, 4));
-    // A native access resolves the level: its last texel (239, 134) is the proxy's colour.
     runtime.Transit(&half, vk::ImageLayout::eTransferSrcOptimal,
                     vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
     runtime.FlushBarriers();

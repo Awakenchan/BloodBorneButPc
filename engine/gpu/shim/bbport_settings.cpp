@@ -33,7 +33,6 @@ float Clamp(float v, float lo, float hi) {
     return std::clamp(v, lo, hi);
 }
 
-// cheat_vials / cheat_bullets: off, infinite or an amount 1..CheatMaxAmount; anything else is off.
 int CheatValue(const std::string& key, const std::string& value) {
     if (value == "off" || value == "0") {
         return CheatOff;
@@ -57,8 +56,6 @@ std::string CheatText(int value) {
                                                    : "off";
 }
 
-// cheat_gun_range: off or one of CheatGunRanges (percent); cheat_echo_multiplier: one of
-// CheatEchoMultipliers. Anything else is the game's own (off / 1).
 template <std::size_t N>
 int CheatChoice(const std::string& key, const std::string& value, const int (&choices)[N], const char* expected) {
     if (value == "off") {
@@ -100,7 +97,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
             }
         }
     } else if (key == "frame_gen") {
-        // bbport: "off" / "fsr3" / "dlss"; 0 and 1 too (BB_FRAME_GEN=0).
         v.frame_gen = value == "dlss"                     ? FrameGenDlss
                       : (value == "fsr3" || value == "1") ? FrameGenFsr3
                                                           : FrameGenOff;
@@ -158,7 +154,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "fsr3_min_disocclusion") {
         v.fsr3_min_disocclusion = Clamp(f, -1.0f, 1.0f);
     } else if (key == "debug_view") {
-        // Debug views last one session: a saved one came back on every start and looked like a bug.
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
     } else if (key == "show_fps_rate") {
@@ -178,7 +173,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "fps_scale") {
         v.fps_scale = Clamp(f, 0.75f, 2.0f);
     } else if (key == "fps_text_color" || key == "fps_bg_color") {
-        // "#RRGGBB" (or without the #).
         const char* hex = value.c_str() + (value.starts_with('#') ? 1 : 0);
         char* end = nullptr;
         const unsigned long rgb = std::strtoul(hex, &end, 16);
@@ -257,7 +251,7 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         }
         v.pad_icons = mode < 0 ? PadIconsAuto : mode;
     } else if (key == "mouse_sensitivity") {
-        v.mouse_sensitivity=std::clamp(i,-10,20); // bbport: below 0 and past 10 (mouse_camera_step.h)
+        v.mouse_sensitivity=std::clamp(i,-10,20);
     } else if (key == "camera_controls") {
         v.camera_controls = i != 0;
     } else if (key == "change_appearance") {
@@ -274,7 +268,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.graphics_controls=i!=0;
     } else if (key == "graphics_vignette") {
         v.graphics_vignette=i!=0;
-    // Wide limits: the menu's sliders show the useful range, Ctrl+click types any value up to these.
     } else if (key == "graphics_ao_strength") {
         v.graphics_ao_strength=Clamp(std::isfinite(f)?f:1.0f,0.0f,5.0f);
     } else if (key == "graphics_shadow_scale") {
@@ -366,9 +359,6 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     }
 }
 
-// The menu's language for the launcher's code (BB_MENU_LANGUAGE: en, ru, pt_BR...) or a locale
-// (ru_RU.UTF-8, de_DE...): its first two letters; Portuguese only as pt_BR. Else English.
-// Simplified Chinese is never picked from the locale, only chosen (menu_language=zh_CN).
 MenuLanguage LanguageOfLocale(const char* lang) {
     if (!lang || !lang[0] || !lang[1]) {
         return MenuLanguage::English;
@@ -388,10 +378,8 @@ MenuLanguage LanguageOfLocale(const char* lang) {
     return MenuLanguage::English;
 }
 
-} // namespace
+}
 
-// The display's size for output_res = auto: BB_DISPLAY_SIZE ("WxH", from run_windows.py), even
-// (the game has half-resolution buffers); 1920x1080 without it.
 static std::pair<int, int> DisplaySize() {
     static const std::pair<int, int> size = [] {
         int w = 0, h = 0;
@@ -439,8 +427,6 @@ void Load() {
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
     }
-    // bbport: the menu's language until one is chosen in it (menu_language in lantern.ini): the
-    // launcher's (BB_MENU_LANGUAGE), else the system's, as the launcher picks its own.
     {
         const char* lang = std::getenv("BB_MENU_LANGUAGE");
         if (!lang || !*lang) {
@@ -467,7 +453,6 @@ void Load() {
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
     }
-    // Environment overrides (scripts, A/B tests).
     if (const char* env = std::getenv("BB_UPSCALER")) {
         v.upscaler = UpscalerOff;
         for (int u = 0; u < UpscalerCount; ++u) {
@@ -493,7 +478,7 @@ void Load() {
         }
     }
     if (std::getenv("BB_HDR_PEAK")) {
-        v.hdr_peak_auto = false; // a peak given for this run is meant
+        v.hdr_peak_auto = false;
     }
     v.startup_preset = v.preset;
     v.startup_render_scale = v.render_scale;
@@ -522,8 +507,6 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool dlss) {
         std::printf("Upscaler: dlss unavailable; falling back to FSR 3.1 before the first frame\n");
         v.upscaler = UpscalerFsr3;
     } else if (requested == UpscalerFsr411 && !v.fsr411_supported && v.fsr4_supported) {
-        // FSR 4.1.1 needs mixed-precision dot products (VK_VALVE_shader_mixed_float_dot_product)
-        // that FSR 4 does not, and its fsr4_411 files: the next best is FSR 4, not 3.1.
         v.fsr4_problem = "FSR 4.1.1 needs its fsr4_411 files and a GPU that runs its shaders; using FSR 4";
         std::printf("Upscaler: fsr411 unavailable (GPU or fsr4_411 files); falling back to FSR 4 before the first frame\n");
         v.upscaler = UpscalerFsr4;
@@ -549,7 +532,6 @@ int RenderPreset() {
 
 bool ResolutionNeedsRestart() {
     const auto& v = Get();
-    // TAA needs the live path (native guest targets): run.sh selects it on restart.
     return FixedRenderSession() &&
         (v.preset != v.startup_preset || v.output_res != v.startup_output_res ||
          (v.preset == PresetCustom && v.render_scale != v.startup_render_scale) ||
@@ -559,8 +541,6 @@ bool ResolutionNeedsRestart() {
 
 void Save() {
     const auto& v = Get();
-    // The keys the menu writes, in this order; the rest of the file stays as it is: the
-    // launcher's controls (key.* / pad.*) and its other keys, comments.
     std::vector<std::pair<std::string, std::string>> keys;
     const auto put = [&](const char* key, std::string value) { keys.emplace_back(key, std::move(value)); };
     const auto fixed = [](float value, int digits) {
@@ -623,7 +603,6 @@ void Save() {
     put("optiscaler_clean_thread", flag(v.optiscaler_clean_thread));
     put("optiscaler_sync_submit", v.optiscaler_sync_submit == OptiSubmitAuto ? std::string("auto")
                                                                             : flag(v.optiscaler_sync_submit != 0));
-    // Read by patches.py at start.
     for (int e = 0; e < EffectCount; ++e) {
         put(Effects[e].key, flag(v.effects[e]));
     }
@@ -676,7 +655,6 @@ void Save() {
     put("output_res", v.output_res == OutputAuto ? std::string("auto")
                                                   : std::to_string(OutputWidth(v.output_res)) + "x" +
                                                         std::to_string(OutputHeight(v.output_res)));
-    // Read by run.sh at start.
     put("live_resolution", v.live_resolution < 0 ? "auto" : flag(v.live_resolution != 0));
     if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));
@@ -717,7 +695,6 @@ void Save() {
             out += keys[k].first + "=" + keys[k].second + "\n";
         }
     }
-    // Replaced whole: a crash while writing leaves the old file.
     const std::string temporary = std::string(Path()) + ".tmp";
     FILE* file = std::fopen(temporary.c_str(), "w");
     bool ok = file && std::fwrite(out.data(), 1, out.size(), file) == out.size();
@@ -735,7 +712,6 @@ void Save() {
 float PresetScale(int preset) {
     static constexpr float scales[PresetCustom] = {1.0f, 1.5f, 1.7f, 2.0f, 3.0f};
     if (preset == PresetCustom) {
-        // The startup patch's render size is fixed for the session (BB_RENDER_RES, run.sh).
         const auto& v = Get();
         const float scale = FixedRenderSession() ? v.startup_render_scale : v.render_scale.load();
         return std::clamp(std::isfinite(scale) ? scale : 1.0f, RenderScaleMin, RenderScaleMax);
@@ -753,7 +729,6 @@ int ModelPreset(int preset) {
     if (preset != PresetCustom) {
         return std::clamp(preset, 0, PresetCustom - 1);
     }
-    // The fixed preset whose ratio is nearest: a 1.3 ratio runs the Quality model, 1.0 Native.
     const float scale = PresetScale(preset);
     int nearest = NativeAA;
     for (int p = NativeAA; p < PresetCustom; ++p) {
@@ -765,7 +740,6 @@ int ModelPreset(int preset) {
 }
 
 bool DlssPresetValid(int preset) {
-    // NVSDK_NGX_DLSS_Hint_Render_Preset (DLSS SDK 310.9): E, F, J, K, L, M.
     return preset == DlssPresetDefault || preset == 5 || preset == 6 || (preset >= 10 && preset <= 13);
 }
 
@@ -778,8 +752,6 @@ int DlssPresetFromText(const char* text) {
     }
     const char letter = char(std::tolower(static_cast<unsigned char>(text[0])));
     if (letter >= 'a' && letter <= 'z' && text[1] == '\0') {
-        // bbport: letters NVIDIA removed (A-D) or ignores (G-I, N, O) ran the DLL's default
-        // while the menu showed the letter: K instead, said once here.
         if (!DlssPresetValid(letter - 'a' + 1)) {
             std::printf("Settings: DLSS preset '%s' is not in NVIDIA's DLSS 310.9 (E, F, J, K, L, M); k\n",
                         text);
@@ -807,4 +779,4 @@ const char* UpscalerName(int upscaler) {
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
 }
 
-} // namespace BbSettings
+}

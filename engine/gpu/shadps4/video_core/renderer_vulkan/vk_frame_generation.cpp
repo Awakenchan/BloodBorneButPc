@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: frame generation, FSR 3.1 frame interpolation (vk_frame_generation.h).
 
 #include "video_core/renderer_vulkan/vk_frame_generation.h"

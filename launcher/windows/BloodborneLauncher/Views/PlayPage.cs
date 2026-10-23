@@ -172,7 +172,7 @@ namespace BloodborneLauncher.Views
                 RefreshBackups();
             };
             Add(Card(SymbolRegular.ArrowSync24, L.T("Save backups"),
-                L.F($"Before every start, when this profile's saves changed. The newest {SaveBackups.Keep} are kept"), Row(
+                L.F($"Before every start and every {SaveBackups.PlayEvery.TotalMinutes:0} minutes while playing, when this profile's saves changed. The newest {SaveBackups.Keep} and {SaveBackups.PlayKeep} from play are kept"), Row(
                 _restoreButton,
                 IconButton(SymbolRegular.Open24, L.T("Open the backups folder"), (_, _) =>
                 {
@@ -423,7 +423,7 @@ namespace BloodborneLauncher.Views
                 var item = new System.Windows.Controls.MenuItem
                 {
                     Header = L.F($"{backup.When:d MMM yyyy, HH:mm}  ·  {backup.Bytes / 1048576.0:0.0} MB") +
-                             (backup.MadeBeforeRestore ? L.T("  ·  before a restore") : ""),
+                             (backup.MadeBeforeRestore ? L.T("  ·  before a restore") : backup.MadeDuringPlay ? L.T("  ·  while playing") : ""),
                 };
                 var chosen = backup;
                 item.Click += (_, _) => RestoreBackup(chosen);

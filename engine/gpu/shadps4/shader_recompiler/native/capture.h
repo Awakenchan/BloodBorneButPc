@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: shader capture (BB_SHADER_CAPTURE=1). Every shader the game draws or dispatches with is
 // written once per distinct runtime state, with all a compile reads: the GCN code, the stage's
 // user data, the RuntimeInfo, the fetch shader's code and the device's Profile. The shader lab

@@ -1,6 +1,5 @@
 #include "bbport_write_log.h"
 #include "bbport_gnm_hooks.h"
-// bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 #include "bbport_copy.h"
@@ -46,7 +45,6 @@
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 extern "C" {
-// runtime_memory.c
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
 int runtime_memory_write_backing(uintptr_t address, const void* data, uint64_t size);
 void runtime_memory_read_backing(uintptr_t address, void* data, uint64_t size);
@@ -55,7 +53,6 @@ int runtime_memory_region(uintptr_t address, uintptr_t* start, uintptr_t* end, i
 const uint64_t* runtime_memory_generation(void);
 void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write);
 typedef void (*RuntimeGpuRange)(uintptr_t address, uint64_t size);
-// runtime_kernel.c: one clock for guest and GPU timestamps
 uint64_t runtime_process_time_us(void);
 uint64_t runtime_process_time_counter(void);
 uint64_t runtime_tsc_frequency(void);
@@ -82,16 +79,15 @@ struct Symbol {
 };
 std::vector<Symbol> g_symbols;
 u32 g_sdk_version;
-} // namespace
+}
 
 namespace Core::Loader {
 void SymbolsResolver::AddSymbol(const char* nid, const char* library, const char* module, SymbolType,
                                 u64 address) {
     g_symbols.push_back({nid, library, module, address});
 }
-} // namespace Core::Loader
+}
 
-// ElfInfo's fields are private to Core::Emulator; the port fills them here.
 namespace Core {
 class Emulator {
 public:
@@ -102,8 +98,6 @@ public:
         info.title = config.title ? config.title : "";
         info.sdk_ver = config.sdk_version;
         info.psf_attributes.raw = config.psf_attributes;
-        // Online libraries read the game's NP communication id, rather than an
-        // emulator's profile. Use the same validated game directory as the launcher.
         const char* app0 = std::getenv("BB_GAME_DIR");
         if (app0 && *app0) {
             info.game_folder = std::filesystem::path(app0);
@@ -137,11 +131,9 @@ public:
 
 void MemoryManager::SetRasterizer(Vulkan::Rasterizer* rasterizer_) {
     rasterizer = rasterizer_;
-    // bbport: resource table plans (BB_NATIVE_TABLES) read only mapped guest memory.
     Shader::Native::TablePlan::guest_readable = [](u64 address, u64 bytes) {
         return Memory::Instance()->ClampRangeSize(address, bytes) >= bytes;
     };
-    // Existing guest mappings are replayed by the runtime when hooks are installed.
     runtime_memory_set_gpu_hooks(
         [](uintptr_t address, uint64_t size) {
             auto* r = Memory::Instance()->GetRasterizer();
@@ -152,12 +144,9 @@ void MemoryManager::SetRasterizer(Vulkan::Rasterizer* rasterizer_) {
         [](uintptr_t address, uint64_t size) {
             Memory::Instance()->GetRasterizer()->InvalidateMemory(address, size);
         });
-    // bbport: data written into GPU memory by a path the GPU side hears of (file reads, the game's
-    // resource loaders): invalidated, and an asset (it may keep a VRAM copy).
     runtime_memory_set_note_write_hook([](uintptr_t address, uint64_t size) {
         Memory::Instance()->GetRasterizer()->NoteAssetWrite(address, size);
     });
-    // bbport: the game's libc copies (memcpy, memset, memmove) over pages the caches watch.
     runtime_memory_set_cpu_write_hook([](uintptr_t address, uint64_t size) {
         Memory::Instance()->GetRasterizer()->OnCpuWrite(address, size);
     });
@@ -166,11 +155,8 @@ void MemoryManager::InvalidateMemory(VAddr address, u64 size) {
     if (rasterizer) rasterizer->InvalidateMemory(address, size);
 }
 namespace {
-// bbport: the mapped region of the last lookup, per thread, valid for the mapping table generation
-// it was read at. The GPU command thread clamps and copies thousands of constant ranges a frame,
-// nearly all within the region of the one before: two calls into the runtime each (~5% of it).
 struct RegionCache {
-    u64 generation = 1; // odd: invalid
+    u64 generation = 1;
     uintptr_t start = 0, end = 0;
 };
 thread_local RegionCache region_cache;
@@ -179,7 +165,7 @@ bool CachedMapped(VAddr address, u64 size) {
     static const uint64_t* const generation_ptr = runtime_memory_generation();
     const u64 generation = __atomic_load_n(generation_ptr, __ATOMIC_ACQUIRE);
     if (generation & 1) {
-        return false; // being changed
+        return false;
     }
     auto& cache = region_cache;
     if (cache.generation == generation && address >= cache.start && address + size <= cache.end) {
@@ -193,7 +179,7 @@ bool CachedMapped(VAddr address, u64 size) {
     cache = {generation, start, end};
     return address + size <= end;
 }
-} // namespace
+}
 
 u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
     if (size && CachedMapped(virtual_addr, size)) {
@@ -206,9 +192,6 @@ bool MemoryManager::IsValidMapping(VAddr virtual_addr, u64 size) {
     return virtual_addr && runtime_memory_clamp(virtual_addr, wanted) >= wanted;
 }
 static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
-    // BB_READBACKS=2 protects GPU-written pages against reads: the copy threads and recorders
-    // read through the backing view, as a read fault on them would wait for the GPU thread,
-    // which waits for them.
     static const bool precise =
         EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise;
     if (precise) {
@@ -232,7 +215,6 @@ static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
     }
 }
 void MemoryManager::CopySparseMemory(VAddr source, u8* dest, u64 size) {
-    // bbport: large uploads (streaming) are split across the copy threads.
     constexpr u64 Chunk = 512 * 1024;
     if (size < 4 * Chunk || !BbCopy::Enabled()) {
         return CopySparseSerial(source, dest, size);
@@ -263,16 +245,15 @@ boost::icl::interval_set<VAddr> AddressSpace::GetUsableRegions() {
     set += boost::icl::interval<VAddr>::right_open(0x10'0000'0000ULL, 0xfc'0000'0000ULL);
     return set;
 }
-} // namespace Core
+}
 
-// Kernel services the vendored libraries call directly.
 namespace Libraries::Kernel {
 u64 PS4_SYSV_ABI sceKernelGetTscFrequency() { return runtime_tsc_frequency(); }
 u64 PS4_SYSV_ABI sceKernelReadTsc() { return Common::FencedRDTSC(); }
 u64 PS4_SYSV_ABI sceKernelGetProcessTime() { return runtime_process_time_us(); }
 u64 PS4_SYSV_ABI sceKernelGetProcessTimeCounter() { return runtime_process_time_counter(); }
 u64 PS4_SYSV_ABI sceKernelGetProcessTimeCounterFrequency() { return 1'000'000'000; }
-s32 PS4_SYSV_ABI sceKernelIsNeoMode() { return 0; } // base PS4
+s32 PS4_SYSV_ABI sceKernelIsNeoMode() { return 0; }
 s32 PS4_SYSV_ABI sceKernelGetCompiledSdkVersion(s32* ver) {
     if (!ver) return ORBIS_KERNEL_ERROR_EINVAL;
     *ver = s32(g_sdk_version);
@@ -282,16 +263,14 @@ s32 PS4_SYSV_ABI sceKernelUsleep(u32 microseconds) {
     std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
     return ORBIS_OK;
 }
-} // namespace Libraries::Kernel
+}
 
 namespace {
-// SDL video must be driven from one thread: the window lives on its own host thread.
 std::thread g_window_thread;
 std::mutex g_window_mutex;
 std::condition_variable g_window_cv;
 bool g_window_ready;
 
-// bbport: exit tuning (milliseconds) from the environment; fallback when unset or invalid.
 long EnvMs(const char* name, long fallback) {
     const char* value = std::getenv(name);
     if (!value || !*value) {
@@ -302,10 +281,6 @@ long EnvMs(const char* name, long fallback) {
     return (end && *end == '\0' && ms >= 0 && ms <= 60'000) ? ms : fallback;
 }
 
-// bbport: the end of every window-close exit. TerminateProcess (not _Exit/ExitProcess, which
-// runs every DLL's process-detach - the Vulkan driver's included - after killing the other
-// threads, and stalled the desktop while the driver tore a busy device down). BB_EXIT_MODE=exit:
-// the old std::_Exit.
 [[noreturn]] void TerminateNow(int code) {
     std::fflush(stdout);
     const char* mode = std::getenv("BB_EXIT_MODE");
@@ -314,14 +289,10 @@ long EnvMs(const char* name, long fallback) {
     }
     BbPlatform::TerminateProcessNow(static_cast<unsigned>(code));
 }
-} // namespace
+}
 
 #ifdef BB_PGO_GENERATE
 #ifdef __clang__
-// bbport: clang's profile runtime (IR instrumentation, .profraw). __gcov_dump links there too
-// but writes only gcov data (none here): the profile was written at a normal exit only. With
-// -fprofile-generate=<dir> the file is default_%m.profraw and each write merges into it, hence
-// the reset after it.
 extern "C" int __llvm_profile_write_file(void);
 extern "C" void __llvm_profile_reset_counters(void);
 static void ProfileDump() {
@@ -340,9 +311,6 @@ static void ProfileReset() {
     __gcov_reset();
 }
 #endif
-// Instrumented build (BB_PGO=generate): the game often ends through _exit (watchdog, guest
-// exit), which skips the profile write at exit. Write every 30 s and reset: the files sum the
-// intervals.
 static void StartProfileWriter() {
     std::thread([] {
         Common::SetCurrentThreadName("bb:pgo");
@@ -358,13 +326,11 @@ static void StartProfileWriter() {
 
 extern "C" int bbgpu_init(const BbGpuConfig* config) {
     BbSettings::Load();
-    // The fault handlers are registered before any guest thread runs: the registry is a std::set
-    // the fault handler walks without a lock (the SRT walker's was added at the first shader).
     Shader::RegisterSrtFaultHandler();
 #ifdef BB_PGO_GENERATE
     StartProfileWriter();
 #endif
-    BbSampler::Start(); // BB_SAMPLE_THREADS: where loading time goes
+    BbSampler::Start();
     BbFreeze::SetStateReporter([] {
         if (presenter) {
             presenter->ReportState();
@@ -388,46 +354,30 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             g_window_ready = true;
         }
         g_window_cv.notify_all();
-        // bbport: wait for the next input event instead of sleeping 2 ms between polls: mouse and
-        // keyboard input is handled as it arrives, and at most 2 ms still pass between rounds (as
-        // with SDL_PollEvent, on the thread that created the window).
         while (window->PollEvents()) {
             SDL_WaitEventTimeout(nullptr, 2);
         }
         LOG_INFO(Frontend, "Window closed by user");
         const auto exit_started = std::chrono::steady_clock::now();
-        // bbport: the watchdog starts first, so nothing below (cache save, a window call, the
-        // GPU drain) can hold the exit up past BB_EXIT_WATCHDOG_MS (default 4000).
         const long watchdog_ms = EnvMs("BB_EXIT_WATCHDOG_MS", 4000);
         std::thread([watchdog_ms] {
             std::this_thread::sleep_for(std::chrono::milliseconds(watchdog_ms));
             std::printf("Exit: watchdog ended the process after %ld ms\n", watchdog_ms);
             TerminateNow(0);
         }).detach();
-        // Snapshot completed pipeline work and drain its asynchronous cache writes, on its own
-        // thread: disk writes overlap the GPU drain below instead of preceding it.
         std::atomic<bool> cache_saved{false};
         std::thread([&cache_saved] {
             Vulkan::PipelineCache::SaveAllForShutdown();
             cache_saved.store(true, std::memory_order_release);
             cache_saved.notify_all();
         }).detach();
-        // Give the display back before terminating (no SDL cleanup runs): leave fullscreen and
-        // hide the window, on this thread, which owns it. It is not destroyed: the present
-        // thread may still be presenting to its Vulkan surface, and a window destroyed under a
-        // live swapchain fails the next present or recreate (an assert, exit 23).
         if (SDL_Window* sdl_window = window->GetSDLWindow()) {
             SDL_SetWindowFullscreen(sdl_window, false);
             SDL_HideWindow(sdl_window);
         }
-        // The GPU finishes the work already submitted before the process ends (at most
-        // BB_EXIT_GPU_WAIT_MS, default 1500): a process killed with work in flight makes the
-        // driver preempt and tear down a busy context, which stalled the whole desktop for
-        // seconds after closing the game. New submissions are blocked while it drains.
         if (presenter) {
             presenter->WaitForSubmittedWork(u64(EnvMs("BB_EXIT_GPU_WAIT_MS", 1500)) * 1'000'000ull);
         }
-        // The cache save is waited for (the watchdog bounds it); it usually finished meanwhile.
         bool saved = cache_saved.load(std::memory_order_acquire);
         while (!saved) {
             cache_saved.wait(false, std::memory_order_acquire);
@@ -446,7 +396,6 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
         g_window_cv.wait(lock, [] { return g_window_ready; });
     }
     Core::Loader::SymbolsResolver resolver;
-    // GnmDriver creates the presenter that the VideoOut present thread uses.
     Libraries::GnmDriver::RegisterLib(&resolver);
     Libraries::VideoOut::RegisterLib(&resolver);
     return 0;
@@ -480,9 +429,6 @@ extern "C" uintptr_t bbgpu_resolve(const char* scoped_nid) {
 }
 
 namespace {
-// bbport: the same access (instruction and address) faulting again within microseconds, many
-// times in a row: the tracking claimed the fault but left the page protected, and the thread
-// would retry forever. A write the game repeats each frame comes milliseconds apart.
 struct RepeatedFault {
     u64 rip = 0, address = 0, last_tsc = 0;
     u32 count = 0;
@@ -490,7 +436,7 @@ struct RepeatedFault {
 thread_local RepeatedFault repeated_fault;
 
 bool FaultRepeats(void* ucontext, void* address) {
-    constexpr u64 RepeatCycles = 4'000'000; // ~1 ms
+    constexpr u64 RepeatCycles = 4'000'000;
     constexpr u32 RepeatLimit = 64;
     auto& r = repeated_fault;
     const u64 rip = reinterpret_cast<u64>(Common::GetRip(ucontext));
@@ -507,17 +453,14 @@ bool FaultRepeats(void* ucontext, void* address) {
     r.count = 0;
     return true;
 }
-} // namespace
+}
 
 extern "C" int bbgpu_handle_fault(void* ucontext, void* address) {
-    // BB_LABEL_TRAP (diagnostic): its read-only label pages first. Not passed on to GPU page
-    // tracking (a write fault drains the draw pipe: thousands a second would change the timing
-    // under test); label pages are not expected to be GPU-tracked.
     if (BbFreeCheck::OnTrapFault(ucontext, reinterpret_cast<std::uint64_t>(address))) {
         return 1;
     }
     if (bb_fault_recovers_only && runtime_fault_recover) {
-        return 0; // the loader jumps to the recovery point (bbport_toggles.h)
+        return 0;
     }
     if (Core::Signals::Instance()->DispatchAccessViolation(ucontext, address)) {
         if (FaultRepeats(ucontext, address)) {
@@ -528,15 +471,12 @@ extern "C" int bbgpu_handle_fault(void* ucontext, void* address) {
     if (BbFreeCheck::OnStaleTrapFault(reinterpret_cast<std::uint64_t>(address))) {
         return 1;
     }
-    // bbport: nobody claimed it. A guest page the guest may access but GPU tracking left
-    // protected (a stale protection, a page it no longer knows) gets its access back; ending the
-    // game for it is worse than a GPU copy that may miss a write. Real faults stay unhandled.
     return runtime_memory_restore_access(ucontext, reinterpret_cast<uintptr_t>(address), 0);
 }
 
 extern "C" void bbnet_set_image(unsigned char* image, uint64_t size);
 extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
-    bbnet_set_image(image, size); // before the engine's hooks change the code it checks
+    bbnet_set_image(image, size);
     BbGnmHooks::PatchImage(image, size);
     BbEngine::Install(image, size);
 }
@@ -545,7 +485,6 @@ extern "C" unsigned bbgpu_symbol_count(void) {
     return unsigned(g_symbols.size());
 }
 
-// Kernel service thread: runs boost::asio timers for equeue timer events.
 namespace Libraries::Kernel {
 boost::asio::io_context io_context;
 static std::mutex m_asio_req;
@@ -565,8 +504,6 @@ static void KernelServiceThread(std::stop_token stoken) {
         {
             std::unique_lock lock{m_asio_req};
             cv_asio_req.wait(lock, stoken, [] { return asio_requests != 0; });
-            // Taken before the run: a request made while it runs (a timer armed after run()
-            // found no work) wakes the next one instead of being cleared after it.
             asio_requests.exchange(0);
         }
         if (stoken.stop_requested()) break;
@@ -582,9 +519,8 @@ void StartKernelService() {
 int* PS4_SYSV_ABI __Error() {
     return runtime_errno();
 }
-} // namespace Libraries::Kernel
+}
 
-// RenderDoc capture hooks: not used by the port.
 namespace VideoCore {
 void LoadRenderDoc() {}
 void StartCapture() {}
@@ -596,7 +532,7 @@ void RequestScreenshot(ScreenshotRequest) {}
 u32 ConsumeGameOnlyScreenshotRequests() { return 0; }
 u32 ConsumeWithOverlaysScreenshotRequests() { return 0; }
 ScreenshotRequests ConsumeScreenshotRequests() { return {}; }
-} // namespace VideoCore
+}
 
 extern "C" int bbgpu_overlay_captures_input(void) {
     return BbOverlay::CapturesInput() ? 1 : 0;

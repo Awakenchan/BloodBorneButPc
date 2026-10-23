@@ -45,6 +45,7 @@ namespace BloodborneLauncher.Core
         public event Action? PortChanged;
 
         private DispatcherTimer? _saveTimer;
+        private DispatcherTimer? _playBackupTimer;
         private bool _iniWarned;
 
         /// <summary>The session being played, then the last one played (null before the first).</summary>
@@ -76,6 +77,10 @@ namespace BloodborneLauncher.Core
                 Announce(Trophies.Poll(readRunLog: !Game.Running));
             };
             _trophyTimer.Start();
+
+            _playBackupTimer = new DispatcherTimer { Interval = SaveBackups.PlayEvery };
+            _playBackupTimer.Tick += (_, _) => BackUpDuringPlay();
+            _playBackupTimer.Start();
 
             // Output arrives on the reader threads, often thousands of lines at once (the engine's
             // statistics when it exits): it is queued and handed on in batches, ten times a second.
@@ -319,6 +324,24 @@ namespace BloodborneLauncher.Core
             }
             GameStateChanged?.Invoke();
             return null;
+        }
+
+        private void BackUpDuringPlay()
+        {
+            if (!Game.Running || !Settings.Bool("save_backups")) return;
+            var settings = Settings;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    if (SaveBackups.CreateDuringPlay(settings) != null)
+                        Log(L.F($"Saves backed up while playing (the newest {SaveBackups.PlayKeep} of these are kept)."), LogLevel.Step);
+                }
+                catch (Exception e)
+                {
+                    Log(L.T("Could not back up the saves: ") + e.Message, LogLevel.Warn);
+                }
+            });
         }
 
         public async Task StopGameAsync()

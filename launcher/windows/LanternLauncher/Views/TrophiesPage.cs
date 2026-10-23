@@ -185,7 +185,7 @@ namespace BloodborneLauncher.Views
             _support.IsOpen = !reports && !hasLog;
             _support.Title = L.T("This build of the game does not report trophies");
             _support.Message = L.T("Its bb-probe.exe accepts unlocks silently, so nothing can be tracked. A build with trophy hooks ") +
-                               L.T("(for example the Windows release of github.com/pyL1nx/bloodborne_pc) writes trophies.log, and the ") +
+                               L.T("writes trophies.log, and the ") +
                                L.T("launcher picks it up from there.");
         }
 

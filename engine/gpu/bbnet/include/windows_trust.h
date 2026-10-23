@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: HTTPS servers Windows trusts are trusted here too. OpenSSL checks the server's chain
 // against the Windows ROOT and CA stores as they are when the game starts; a root Windows only
 // fetches on demand (ISRG Root X1 on a fresh install) or the certificate an antivirus' HTTPS

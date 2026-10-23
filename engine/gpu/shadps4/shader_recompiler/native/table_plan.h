@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: the native compiler's resource table plan (docs/native_shader_compiler.md, step 1).
 // A shader reads its constants and resource descriptors (T#, V#, S#) through tables in the game's
 // memory: a pointer in the user data, pointers in those tables, and so on. The inherited compiler

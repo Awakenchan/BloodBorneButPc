@@ -1,5 +1,3 @@
-// bbport: the game window. Created by the VideoOut driver on first open; the
-// event pump runs on the port's window thread (see window.cpp).
 #pragma once
 #include <atomic>
 #include <mutex>
@@ -10,13 +8,8 @@ struct SDL_Window;
 
 namespace Frontend {
 
-/// bbport: the game window is not in front (unfocused or minimized): VideoOut caps the frame
-/// rate then (BB_BACKGROUND_FPS, default 30; 0 off; never in online sessions), so an alt-tabbed
-/// game does not keep the GPU and CPU busy rendering frames no one sees.
 bool WindowInBackground();
 u32 BackgroundFrameLimit();
-/// bbport: refresh rate (Hz, rounded) of the display the game window is on; 0 until known.
-/// Updated by the window thread when the window moves to another display or its mode changes.
 u32 DisplayRefreshHz();
 
 enum class WindowSystemType : u8 { Headless, Windows, X11, Wayland, Metal };
@@ -37,11 +30,8 @@ public:
     SDL_Window* GetSDLWindow() const { return window; }
     WindowSystemInfo GetWindowInfo() const { return window_info; }
     bool IsOpen() const { return is_open.load(std::memory_order_relaxed); }
-    /// Processes pending window events. Returns false once the user closed the window.
     bool PollEvents();
-    /// Keyboard text entry for the system IME dialog; typed text shows in the title bar.
     void BeginTextInput(const std::string& initial, const std::string& prompt);
-    /// 0 while typing, 1 confirmed (Enter), 2 cancelled (Escape); text is UTF-8.
     int PollTextInput(std::string& text);
 
 private:
@@ -49,12 +39,12 @@ private:
     std::atomic<bool> is_open{true};
     std::mutex text_mutex;
     bool text_requested{}, text_active{};
-    bool text_selected{}; ///< the whole text is selected: typing or pasting replaces it
+    bool text_selected{};
     int text_state{};
     std::string text, text_prompt, base_title;
     void UpdateTextTitle();
     void UpdateCursor();
-    u64 last_mouse_motion_ms{}; ///< SDL_GetTicks of the last mouse motion (UpdateCursor)
+    u64 last_mouse_motion_ms{};
     bool cursor_hidden{};
     SDL_Window* window{};
     WindowSystemInfo window_info{};
@@ -64,4 +54,4 @@ private:
 #endif
 };
 
-} // namespace Frontend
+}

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: OptiScaler (a DLL players drop next to the executable, often as winmm.dll) hooks
 // vkCreateDevice, vkGetDeviceProcAddr, vkQueueSubmit and takes over the NGX entry points: our
 // DLSS runs through its own feature, which may call vkDeviceWaitIdle from the thread recording

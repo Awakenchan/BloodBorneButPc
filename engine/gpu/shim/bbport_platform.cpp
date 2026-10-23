@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: Windows implementations of bbport_platform.h and bbport_threads.h.
 
 #ifdef _WIN32
 #include <algorithm>
@@ -58,7 +57,6 @@ bool GetMemory(Memory& out) {
 }
 
 bool GetMemoryBreakdown(MemoryBreakdown& out) {
-    // Every resident page (QueryWorkingSet), grouped by the region it is in.
     std::vector<ULONG_PTR> buffer(1 << 20);
     for (int attempt = 0; attempt < 4; ++attempt) {
         if (QueryWorkingSet(GetCurrentProcess(), buffer.data(), DWORD(buffer.size() * sizeof(ULONG_PTR)))) break;
@@ -141,10 +139,10 @@ bool ReadProcessMemory(const void* source, void* destination, std::size_t size) 
 void TerminateProcessNow(unsigned code) {
     std::fflush(nullptr);
     TerminateProcess(GetCurrentProcess(), code);
-    _exit(static_cast<int>(code)); // not reached
+    _exit(static_cast<int>(code));
 }
 
-} // namespace BbPlatform
+}
 
 namespace BbThreads {
 
@@ -160,11 +158,6 @@ void MakeBackground() {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE);
 }
 
-// The game runs dozens of threads at normal priority (cloth, character, Havok, job pools); on
-// 12 or fewer hardware threads Windows gives a ready thread of equal priority a core only when
-// another one's quantum ends (tens of ms), so a render-chain thread queued behind them delays
-// the frame. Its idle spins are bounded (BB_GPU_SPIN_US, BB_PIPE_SPIN_US, recording: 200 us)
-// before it sleeps, so the higher priority takes no lasting time from the game's threads.
 namespace {
 bool Raising() {
     static const bool enabled = [] {
@@ -173,7 +166,7 @@ bool Raising() {
     }();
     return enabled;
 }
-} // namespace
+}
 
 void MakeCritical(bool bulk) {
     if (Raising() && (!bulk || Available() >= 16)) {
@@ -185,5 +178,5 @@ unsigned CapSpinUs(unsigned wanted) {
     return Raising() && Available() < 16 ? std::min(wanted, 50u) : wanted;
 }
 
-} // namespace BbThreads
+}
 #endif

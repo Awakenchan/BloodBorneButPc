@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Camera blend, stage pins and projected plates adapted from bbhost db5457cb.
-// Existing bbport resolution, Vulkan targets and temporal providers remain authoritative.
 #include "widescreen.h"
 #include "camera.h"
 #include "engine_hooks.h"
-#include "bbport_settings.h"
 #include "bbport_platform.h"
+#include "bbport_settings.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -15,103 +13,161 @@
 
 namespace BbEngine::Widescreen {
 namespace {
-std::uint8_t* base;
-std::size_t image_size;
-bool installed;
-constexpr float original_aspect=16.0f/9.0f;
-std::atomic<float> aspect{original_aspect},previous_aspect{original_aspect};
-struct Stage { std::size_t at,reads;std::uint32_t value;bool cx=false; };
-constexpr Stage stage[]={
-    {0x15e83af,0x51289f8,1920},{0x1bfd491,0x51289f8,1920},{0x1bfd4d1,0x51289fc,1080},
-    {0x1644357,0x51289f8,1920},{0x1644365,0x51289fc,1080},{0x1644c55,0x51289f8,1920},
-    {0x1644c63,0x51289fc,1080},{0x16452c7,0x51289f8,1920},{0x16452d5,0x51289fc,1080},
-    {0x1654df6,0x51289f8,1920},{0x1654e1c,0x51289fc,1080},{0x1655611,0x51289fc,1080},
-    {0x1655628,0x51289f8,1920},{0x16b3372,0x51289f8,1920,true},{0x16b3398,0x51289fc,1080}};
-constexpr std::size_t plates[]={0x48f9a00,0x48f9a60,0x48f9ad0};
-constexpr std::size_t right_bounds[]={0x1bfd491,0x1654df6,0x16b3372};
-constexpr std::size_t bottom_bounds[]={0x1bfd4d1,0x1654e1c,0x16b3398};
-struct Branch {std::size_t at;std::array<std::uint8_t,3> before,after;std::size_t n;};
-constexpr Branch left[]={
-    {0x1bfd473,{0x77,0x30},{0x66,0x90},2},{0x1654dd9,{0x77,0x2f},{0x66,0x90},2},
-    {0x16b3370,{0x77,0x5a},{0x66,0x90},2},{0x1642520,{0x0f,0x96,0xc1},{0xb1,0x01,0x90},3}};
-constexpr Branch top[]={
-    {0x1bfd4cf,{0x77,0x14},{0x66,0x90},2},{0x1654e1a,{0x77,0x14},{0x66,0x90},2},
-    {0x16b3396,{0x77,0x34},{0x66,0x90},2},{0x164253c,{0x77,0x20},{0x66,0x90},2}};
-template<typename T> bool Read(std::uint64_t address,T& value) {
-    return address && BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(address),&value,sizeof value);
+constexpr float kGameAspect = 16.0f / 9.0f;
+constexpr std::uint32_t kStageWidth = 1920, kStageHeight = 1080;
+
+constexpr std::size_t kStageWidthAt = 0x51289f8, kStageHeightAt = 0x51289fc;
+enum class Edge : std::uint8_t { None, Right, Bottom };
+struct StageRead {
+    std::size_t at;
+    bool height;
+    bool ecx;
+    Edge edge;
+};
+constexpr StageRead kStageReads[] = {
+    {0x15e83af, false, false, Edge::None},   {0x1bfd491, false, false, Edge::Right},
+    {0x1bfd4d1, true, false, Edge::Bottom},  {0x1644357, false, false, Edge::None},
+    {0x1644365, true, false, Edge::None},    {0x1644c55, false, false, Edge::None},
+    {0x1644c63, true, false, Edge::None},    {0x16452c7, false, false, Edge::None},
+    {0x16452d5, true, false, Edge::None},    {0x1654df6, false, false, Edge::Right},
+    {0x1654e1c, true, false, Edge::Bottom},  {0x1655611, true, false, Edge::None},
+    {0x1655628, false, false, Edge::None},   {0x16b3372, false, true, Edge::Right},
+    {0x16b3398, true, false, Edge::Bottom},
+};
+
+struct Clip {
+    std::size_t at;
+    std::array<std::uint8_t, 3> game;
+    std::size_t n;
+};
+constexpr Clip kLeftClips[] = {{0x1bfd473, {0x77, 0x30}, 2}, {0x1654dd9, {0x77, 0x2f}, 2},
+                               {0x16b3370, {0x77, 0x5a}, 2}, {0x1642520, {0x0f, 0x96, 0xc1}, 3}};
+constexpr Clip kTopClips[] = {{0x1bfd4cf, {0x77, 0x14}, 2}, {0x1654e1a, {0x77, 0x14}, 2},
+                              {0x16b3396, {0x77, 0x34}, 2}, {0x164253c, {0x77, 0x20}, 2}};
+constexpr std::size_t kBounds = 0x4926ea4;
+constexpr std::size_t kPlates[] = {0x48f9a00, 0x48f9a60, 0x48f9ad0};
+
+constexpr std::size_t kCameraBlend = 0x14368b0;
+constexpr std::uint8_t kCameraBlendEntry[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41,
+                                              0x55, 0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x48};
+constexpr std::size_t kCameraA = 0x60, kCameraB = 0x68, kAspect = 0x54;
+
+std::uint8_t* g_image = nullptr;
+std::size_t g_size = 0;
+bool g_installed = false;
+std::atomic<float> g_aspect{kGameAspect}, g_replaced{kGameAspect};
+float g_applied = 0;
+
+bool Matches(std::size_t at, const void* bytes, std::size_t n) {
+    return at <= g_size && n <= g_size - at && std::memcmp(g_image + at, bytes, n) == 0;
 }
-bool Matches(std::size_t at,const void* bytes,std::size_t n) {
-    return at<=image_size && n<=image_size-at && !std::memcmp(base+at,bytes,n);
+
+std::array<std::uint8_t, 9> Original(const StageRead& r) {
+    std::array<std::uint8_t, 9> b = {0x48, 0x8d, std::uint8_t(r.ecx ? 0x0d : 0x05), 0, 0, 0, 0, 0x8b,
+                                     std::uint8_t(r.ecx ? 0x09 : 0x00)};
+    const auto d = std::int32_t(std::int64_t(r.height ? kStageHeightAt : kStageWidthAt) - std::int64_t(r.at + 7));
+    std::memcpy(b.data() + 3, &d, 4);
+    return b;
 }
-std::int64_t __attribute__((sysv_abi)) Blend(std::uint64_t,const std::uint64_t* saved) {
-    auto fix=[](std::uint64_t camera) {
-        float a=0;const float want=aspect.load(),previous=previous_aspect.load();
-        if (Read(camera+0x54,a) && a!=want && (std::fabs(a-original_aspect)<1e-4f || a==previous))
-            std::memcpy(reinterpret_cast<void*>(camera+0x54),&want,4);
-    };
-    const auto manager=saved[5];if (!manager) return 0;
-    std::uint64_t a=0,b=0;
-    if (Read(manager+0x60,a) && a) fix(a);
-    if (Read(manager+0x68,b) && b) fix(b);
-    fix(manager);return 0;
+std::array<std::uint8_t, 9> Pinned(const StageRead& r, std::uint32_t value) {
+    std::array<std::uint8_t, 9> b = {std::uint8_t(r.ecx ? 0xb9 : 0xb8), 0, 0, 0, 0, 0x0f, 0x1f, 0x40, 0x00};
+    std::memcpy(b.data() + 1, &value, 4);
+    return b;
+}
+std::uint32_t Native(const StageRead& r) { return r.height ? kStageHeight : kStageWidth; }
+
+void SetClip(const Clip& c, bool open) {
+    static constexpr std::uint8_t kNop2[] = {0x66, 0x90}, kAlwaysCl[] = {0xb1, 0x01, 0x90};
+    const std::uint8_t* bytes = !open ? c.game.data() : c.n == 3 ? kAlwaysCl : kNop2;
+    WriteCode(g_image + c.at, bytes, c.n);
+}
+
+void FixCamera(std::uint64_t camera) {
+    float now = 0;
+    if (!camera || !BbPlatform::ReadProcessMemory(reinterpret_cast<const void*>(camera + kAspect), &now, sizeof now))
+        return;
+    const float want = g_aspect.load(std::memory_order_relaxed);
+    if (now != want && (std::fabs(now - kGameAspect) < 1e-4f || now == g_replaced.load(std::memory_order_relaxed)))
+        std::memcpy(reinterpret_cast<void*>(camera + kAspect), &want, sizeof want);
+}
+
+std::int64_t __attribute__((sysv_abi)) BeforeCameraBlend(std::uint64_t, const std::uint64_t* saved) {
+    const std::uint64_t manager = saved[5];
+    if (!manager) return 0;
+    for (const std::size_t at : {kCameraA, kCameraB}) {
+        std::uint64_t camera = 0;
+        if (BbPlatform::ReadProcessMemory(reinterpret_cast<const void*>(manager + at), &camera, sizeof camera))
+            FixCamera(camera);
+    }
+    FixCamera(manager);
+    return 0;
+}
+
+void ApplyStage(float aspect) {
+    const float rx = std::max(1.0f, aspect / kGameAspect), ry = std::max(1.0f, kGameAspect / aspect);
+    const auto right = std::uint32_t(kStageWidth + std::ceil(kStageWidth / 2 * (rx - 1)));
+    const auto bottom = std::uint32_t(kStageHeight + std::ceil(kStageHeight / 2 * (ry - 1)));
+    const float scales[] = {0.5f * rx, -0.5f * ry}, bounds[] = {float(right), float(bottom)};
+    for (const std::size_t at : kPlates) WriteCode(g_image + at, scales, sizeof scales);
+    WriteCode(g_image + kBounds, bounds, sizeof bounds);
+    for (const auto& r : kStageReads) {
+        if (r.edge == Edge::None) continue;
+        const std::uint32_t edge = r.edge == Edge::Right ? right : bottom;
+        WriteCode(g_image + r.at + 1, &edge, sizeof edge);
+    }
+    for (const auto& c : kLeftClips) SetClip(c, rx > 1.0005f);
+    for (const auto& c : kTopClips) SetClip(c, ry > 1.0005f);
+    std::printf("Engine: camera aspect %.4f, world plates x%u / y%u, %s\n", aspect, right, bottom,
+                ry <= 1.0005f ? "vertical FOV preserved"
+                : Camera::Active() ? "horizontal FOV preserved (Vert+)"
+                                   : "vertical FOV preserved (narrower view: camera hook off)");
 }
 }
-bool Install(std::uint8_t* image,std::size_t size) {
-    base=image;image_size=size;
+
+bool Install(std::uint8_t* image, std::size_t size) {
+    g_image = image;
+    g_size = size;
     if (!BbSettings::Get().widescreen) return false;
-    for (const auto& s:stage) {
-        std::uint8_t expected[9]={0x48,0x8d,0x05,0,0,0,0,0x8b,0};
-        if(s.cx){expected[2]=0x0d;expected[8]=0x09;}
-        const auto disp=std::int32_t(s.reads-(s.at+7));std::memcpy(expected+3,&disp,4);
-        // The existing resolution patch pins nine reads already. Accept only its
-        // exact native-stage instruction, never an arbitrary replacement.
-        std::uint8_t pinned[9]={std::uint8_t(s.cx?0xb9:0xb8),0,0,0,0,0x0f,0x1f,0x40,0};
-        std::memcpy(pinned+1,&s.value,4);
-        if(!Matches(s.at,expected,9) && !Matches(s.at,pinned,9)) {
-            std::printf("Engine: widescreen refused: Scaleform stage code differs at %zx\n",s.at);return false;
+    for (const auto& r : kStageReads) {
+        if (!Matches(r.at, Original(r).data(), 9) && !Matches(r.at, Pinned(r, Native(r)).data(), 9)) {
+            std::printf("Engine: widescreen off: the UI's stage code at %zx is not 1.09's\n", r.at);
+            return false;
         }
     }
-    constexpr float scale[]={0.5f,-0.5f};
-    for(auto at:plates) if(!Matches(at,scale,8)) return false;
-    constexpr float r=1920,b=1080;
-    if(!Matches(0x4926ea4,&r,4)||!Matches(0x4926ea8,&b,4)) return false;
-    for(const auto& site:left) if(!Matches(site.at,site.before.data(),site.n))return false;
-    for(const auto& site:top) if(!Matches(site.at,site.before.data(),site.n))return false;
-    constexpr std::uint8_t pro[]={0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x48};
-    Hook hook;if(!Prepare(hook,image,size,0x14368b0,pro,Blend))return false;
-    for(const auto& s:stage){std::uint8_t code[9]={0xb8,0,0,0,0,0x0f,0x1f,0x40,0};if(s.cx)code[0]=0xb9;
-        std::memcpy(code+1,&s.value,4);std::memcpy(base+s.at,code,9);}
-    Commit(std::span<Hook>(&hook,1));installed=true;Tick();
-    std::puts("Engine: widescreen enabled: native camera aspect and 15 Scaleform stage pins");return true;
+    const float scales[] = {0.5f, -0.5f}, bounds[] = {float(kStageWidth), float(kStageHeight)};
+    for (const std::size_t at : kPlates)
+        if (!Matches(at, scales, sizeof scales)) return false;
+    if (!Matches(kBounds, bounds, sizeof bounds)) return false;
+    for (const auto& c : kLeftClips) if (!Matches(c.at, c.game.data(), c.n)) return false;
+    for (const auto& c : kTopClips) if (!Matches(c.at, c.game.data(), c.n)) return false;
+    Hook hook;
+    if (!Prepare(hook, image, size, kCameraBlend, kCameraBlendEntry, BeforeCameraBlend)) return false;
+    for (const auto& r : kStageReads) std::memcpy(image + r.at, Pinned(r, Native(r)).data(), 9);
+    Commit(std::span(&hook, 1));
+    g_installed = true;
+    Tick();
+    std::printf("Engine: widescreen enabled: native camera aspect and %zu Scaleform stage pins\n",
+                std::size(kStageReads));
+    return true;
 }
+
 void Tick() {
-    if(!installed)return;
-    const auto& settings=BbSettings::Get();
-    const auto index=std::clamp(BbSettings::ResolutionNeedsRestart()?settings.startup_output_res:settings.output_res.load(),0,BbSettings::OutputCount-1);
-    const float want=settings.widescreen?float(BbSettings::OutputWidth(index))/BbSettings::OutputHeight(index):original_aspect;
-    static float applied=0;if(want==applied)return;
-    previous_aspect=aspect.load();aspect=want;
-    const float rx=std::max(1.0f,want/original_aspect),ry=std::max(1.0f,original_aspect/want);
-    const float scale[]={0.5f*rx,-0.5f*ry};
-    const auto r=std::uint32_t(1920+std::ceil(960*(rx-1))),b=std::uint32_t(1080+std::ceil(540*(ry-1)));
-    const float rf=float(r),bf=float(b);
-    for(auto at:plates) WriteCode(base+at,scale,8);
-    WriteCode(base+0x4926ea4,&rf,4);WriteCode(base+0x4926ea8,&bf,4);
-    for(auto at:right_bounds)WriteCode(base+at+1,&r,4);
-    for(auto at:bottom_bounds)WriteCode(base+at+1,&b,4);
-    for(const auto& s:left)WriteCode(base+s.at,(rx>1.0005f?s.after:s.before).data(),s.n);
-    for(const auto& s:top)WriteCode(base+s.at,(ry>1.0005f?s.after:s.before).data(),s.n);
-    applied=want;
-    // Narrower than 16:9 the camera keeps the 16:9 horizontal view and sees more above and below
-    // (Vert+, camera.cpp scales LockCamParam's vertical FOV by NarrowFovFactor). With the vertical
-    // FOV kept instead, a 5:4 screen showed 30% less to the sides, zoomed in.
-    std::printf("Engine: camera aspect %.4f, world plates x%u / y%u, %s\n",want,r,b,
-                ry>1.0005f?(Camera::Active()?"horizontal FOV preserved (Vert+)":"vertical FOV preserved (narrower view: camera hook off)")
-                          :"vertical FOV preserved");
+    if (!g_installed) return;
+    const auto& s = BbSettings::Get();
+    const int index = std::clamp(BbSettings::ResolutionNeedsRestart() ? s.startup_output_res : s.output_res.load(), 0,
+                                 BbSettings::OutputCount - 1);
+    const float want = s.widescreen ? float(BbSettings::OutputWidth(index)) / float(BbSettings::OutputHeight(index))
+                                    : kGameAspect;
+    if (!std::isfinite(want) || want <= 0 || want == g_applied) return;
+    g_replaced = g_aspect.load();
+    g_aspect = want;
+    ApplyStage(want);
+    g_applied = want;
 }
+
 float NarrowFovFactor() {
-    if(!installed)return 1.0f;
-    const float a=aspect.load();
-    return a>0.1f && a<original_aspect ? original_aspect/a : 1.0f;
+    if (!g_installed) return 1.0f;
+    const float a = g_aspect.load();
+    return a > 0.1f && a < kGameAspect ? kGameAspect / a : 1.0f;
 }
 }

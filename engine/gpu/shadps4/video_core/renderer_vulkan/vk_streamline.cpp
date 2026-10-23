@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: NVIDIA DLSS Frame Generation through NVIDIA Streamline (vk_streamline.h).
 
 #include "video_core/renderer_vulkan/vk_streamline.h"

@@ -1,5 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: direct calls, stage 2 (see bbport_native_calls.h).
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "bbport_native_calls.h"
 
 #include <atomic>
@@ -31,9 +30,6 @@ const char* ModeName(Mode mode) {
     return mode == Mode::Verify ? "verify" : mode == Mode::Native ? "1" : "off";
 }
 
-/// Records by packet address, direct-mapped (a later call at the same address replaces the
-/// entry; a collision only leaves a draw unverified). Command memory is reused once the GPU is
-/// past it, long after the decode took the entry.
 struct Slot {
     std::atomic<u32> lock{0};
     u64 address = 0;
@@ -60,7 +56,6 @@ void Unlock(Slot& s) {
     s.lock.store(0, std::memory_order_release);
 }
 
-// Statistics: game threads write the atomics, the GPU thread the plain counters and prints.
 std::atomic<u64> written_records{0}, written_fallback{0};
 u64 verified = 0, mismatches = 0, unrecorded = 0, trace_trailers = 0, decoded = 0;
 u64 window_draws = 0, packet_ticks = 0, draw_ticks = 0, timed_draws = 0;
@@ -75,7 +70,7 @@ const char* KindName(u32 kind) {
                                                                   : "?";
 }
 
-} // namespace
+}
 
 Mode GetMode() {
     static const Mode mode = [] {
@@ -135,7 +130,6 @@ void NoteTraceTrailer() {
 
 void ReportMismatch(const char* what, u64 address, const DrawRecord& record, const u32* actual,
                     u32 words, u32 num_instances) {
-    // The first 16, then one per 5 s.
     const auto now = std::chrono::steady_clock::now();
     if (mismatch_logged >= 16) {
         if (now - mismatch_window < std::chrono::seconds(5)) {
@@ -191,7 +185,6 @@ void MaybeReport() {
     if (mode == Mode::Off && !timing) {
         return;
     }
-    // The clock is read every 256 draws (rdtsc per packet is the only per-draw cost).
     if ((++window_draws & 255) != 0) {
         return;
     }
@@ -201,7 +194,6 @@ void MaybeReport() {
         return;
     }
     const u64 tsc = Ticks();
-    // Ticks per microsecond over the window (the first window has no start: no timing yet).
     const double ticks_per_us = window_tsc && tsc > window_tsc ? (tsc - window_tsc) / (secs * 1e6)
                                                                : 0.0;
     window_tsc = tsc;
@@ -230,4 +222,4 @@ void MaybeReport() {
     packet_ticks = draw_ticks = timed_draws = 0;
 }
 
-} // namespace BbNativeCalls
+}

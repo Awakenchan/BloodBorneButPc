@@ -1,6 +1,3 @@
-/* Host rwlocks (pthread rwlocks on Linux, SRW locks on Windows) behind the PS4
-   pointer-to-handle ABI. The registry protects lifetime, static initialization and
-   ownership; waiting happens outside it. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -20,7 +17,6 @@ static int native_lock(NativeRwlock *l, int writer) {
     if (writer) AcquireSRWLockExclusive(l); else AcquireSRWLockShared(l);
     return 0;
 }
-/* SRW locks have no timed acquire: retry until the realtime deadline. */
 static int native_timedlock(NativeRwlock *l, int writer, const GuestTime *time) {
     uint64_t deadline=(uint64_t)time->seconds*1000000000+(uint64_t)time->nanoseconds;
     for (unsigned attempt=0;;++attempt) {
@@ -59,7 +55,6 @@ typedef struct Rwlock {
 static HostMutex registry_lock = HOST_MUTEX_INIT;
 static Rwlock *registry;
 static size_t created, destroyed, reads, writes, unlocks;
-/* bbport: list entries walked by find_locked (the 60 s "Load:" line: steps per lookup). */
 static uint64_t lookups, lookup_steps;
 static int32_t error(int e) {
     if (!e) return 0;
@@ -76,11 +71,6 @@ static int32_t error(int e) {
     }
     return (int32_t)(UINT32_C(0x80020000)|code);
 }
-/* All helpers ending in _locked require registry_lock.
- * bbport: a found rwlock moves to the front of the registry. New ones went in front, so the
- * game's busiest locks, made at boot, sat behind every one made since: each area load made the
- * walk under registry_lock longer for every lock and unlock of every guest thread.
- * BB_RWLOCK_FRONT=0: the list keeps its order, as before. */
 static Rwlock *find_locked(Rwlock *handle) {
     static int front=-1;
     if (front<0) { const char *e=getenv("BB_RWLOCK_FRONT"); front=!(e && e[0]=='0'); }
@@ -106,7 +96,6 @@ static ABI int32_t rw_init(Rwlock **out, void *const *attr, const char *name) {
     if (!out || (attr && !*attr)) return error(EINVAL);
     if (attr) { fputs("STOP: non-default PS4 rwlock attributes are not implemented\n",stderr); exit(21); }
     host_lock(&registry_lock);
-    /* POSIX allows uninitialized storage, so never read *out during init. */
     int e=create_locked(out);
     host_unlock(&registry_lock); return error(e);
 }
@@ -140,7 +129,6 @@ static int32_t acquire(Rwlock **handle, enum Operation op, const GuestTime *time
     }
     ++r->inflight; ++h->pending;
     host_unlock(&registry_lock);
-    /* Timed operations first try the lock, matching POSIX timeout validation. */
     if (attempt || timed) e=native_try(&r->native,writer);
     else e=native_lock(&r->native,writer);
     if (timed && e==EBUSY) {
@@ -202,7 +190,6 @@ uintptr_t runtime_rwlock_resolve(const char *name) {
     if (!strcmp(name,"adh--6nIqTk#p#J")) return (uintptr_t)rw_timedwrite;
     return 0;
 }
-/* bbport: rwlocks alive now, and lookups and the list entries they walked so far. */
 void runtime_rwlock_census(uint64_t *live, uint64_t *found, uint64_t *steps) {
     host_lock(&registry_lock);
     *live=created-destroyed; *found=lookups; *steps=lookup_steps;

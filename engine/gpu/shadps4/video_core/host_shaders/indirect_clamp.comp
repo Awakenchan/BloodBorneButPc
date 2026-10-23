@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: an indirect dispatch's group counts, clamped to what the device runs, read from there
 // instead of the game's memory (vk_rasterizer.cpp ClampDispatchArgs). A count the game's GPU work
 // left wrong (3063677180 groups, RX 9070 XT on RADV, 0.9.37 beta 7) is outside the Vulkan spec and

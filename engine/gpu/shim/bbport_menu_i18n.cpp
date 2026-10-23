@@ -1,11 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: the in-game menu (bbport_overlay.cpp) in the languages other than English and
-// Russian, which MenuText takes at its call sites. Each table maps the English text, exactly as
-// passed to MenuText (the effect labels: bbport_settings.h Effects), to its translation; text
-// missing here is shown in English. Translations keep the printf specifiers of the English text in
-// the same order and the ImGui ID after "###"; FSR, DLSS, TAA, RCAS, SSAO, key and button names,
-// preset names and paths stay as they are. The menu font (DejaVu Sans) has every character used;
-// Chinese has those of Lantern Menu SC (third_party/fonts/LanternMenuSC-glyphs.txt) only.
 #include "bbport_menu_i18n.h"
 
 #include <array>
@@ -22,7 +15,6 @@ struct Entry {
     const char* text;
 };
 
-// Spanish (es)
 constexpr Entry kSpanish[] = {
     {"Hide mouse cursor",
      "Ocultar el cursor del ratón"},
@@ -205,7 +197,6 @@ constexpr Entry kSpanish[] = {
      "Cámara libre (Cross + L3)"},
     {"Debug menu (requires font files)",
      "Menú de depuración (requiere archivos de fuente)"},
-    // The tabbed menu, its search, DLSS, the reactive mask per upscaler, OptiScaler.
     {"Search settings (Ctrl+F)",
      "Buscar ajustes (Ctrl+F)"},
     {"Nothing matches \"%s\"",
@@ -290,7 +281,6 @@ constexpr Entry kSpanish[] = {
      "Las partes del modo de compatibilidad, cada una aplicada tras reiniciar. Desactiva una solo para averiguar de cuál viene un cierre con OptiScaler, y comparte tu registro en cualquier caso."},
 };
 
-// Portuguese, Brazil (pt_BR)
 constexpr Entry kPortugueseBrazil[] = {
     {"Hide mouse cursor",
      "Ocultar o cursor do mouse"},
@@ -472,7 +462,6 @@ constexpr Entry kPortugueseBrazil[] = {
      "Câmera livre (Cross + L3)"},
     {"Debug menu (requires font files)",
      "Menu de depuração (requer arquivos de fonte)"},
-    // The tabbed menu, its search, DLSS, the reactive mask per upscaler, OptiScaler.
     {"Search settings (Ctrl+F)",
      "Pesquisar configurações (Ctrl+F)"},
     {"Nothing matches \"%s\"",
@@ -557,7 +546,6 @@ constexpr Entry kPortugueseBrazil[] = {
      "As partes do modo de compatibilidade, cada uma aplicada após reiniciar. Desligue uma só para descobrir de qual vem um travamento com o OptiScaler e envie seu log de qualquer forma."},
 };
 
-// French (fr)
 constexpr Entry kFrench[] = {
     {"Hide mouse cursor",
      "Masquer le curseur de la souris"},
@@ -741,7 +729,6 @@ constexpr Entry kFrench[] = {
      "Caméra libre (Cross + L3)"},
     {"Debug menu (requires font files)",
      "Menu de débogage (fichiers de police requis)"},
-    // The tabbed menu, its search, DLSS, the reactive mask per upscaler, OptiScaler.
     {"Search settings (Ctrl+F)",
      "Rechercher un réglage (Ctrl+F)"},
     {"Nothing matches \"%s\"",
@@ -826,7 +813,6 @@ constexpr Entry kFrench[] = {
      "Les parties du mode de compatibilité, chacune appliquée après un redémarrage. N'en désactivez une que pour trouver laquelle provoque un plantage avec OptiScaler, et envoyez votre journal dans tous les cas."},
 };
 
-// German (de)
 constexpr Entry kGerman[] = {
     {"Hide mouse cursor",
      "Mauszeiger ausblenden"},
@@ -1010,7 +996,6 @@ constexpr Entry kGerman[] = {
      "Freie Kamera (Cross + L3)"},
     {"Debug menu (requires font files)",
      "Debug-Menü (benötigt Schriftdateien)"},
-    // The tabbed menu, its search, DLSS, the reactive mask per upscaler, OptiScaler.
     {"Search settings (Ctrl+F)",
      "Einstellungen suchen (Strg+F)"},
     {"Nothing matches \"%s\"",
@@ -1095,7 +1080,6 @@ constexpr Entry kGerman[] = {
      "Die Teile des Kompatibilitätsmodus, jeder gilt nach einem Neustart. Schalte einen nur aus, um herauszufinden, von welchem ein Absturz mit OptiScaler kommt, und schick dein Log in jedem Fall mit."},
 };
 
-// Italian (it)
 constexpr Entry kItalian[] = {
     {"Hide mouse cursor",
      "Nascondi il cursore del mouse"},
@@ -1279,7 +1263,6 @@ constexpr Entry kItalian[] = {
      "Telecamera libera (Cross + L3)"},
     {"Debug menu (requires font files)",
      "Menu di debug (richiede file dei font)"},
-    // The tabbed menu, its search, DLSS, the reactive mask per upscaler, OptiScaler.
     {"Search settings (Ctrl+F)",
      "Cerca impostazioni (Ctrl+F)"},
     {"Nothing matches \"%s\"",
@@ -1364,7 +1347,6 @@ constexpr Entry kItalian[] = {
      "Le parti della modalità compatibilità, ognuna applicata dopo un riavvio. Disattivane una solo per capire da quale viene un crash con OptiScaler, e invia comunque il tuo log."},
 };
 
-// Polish (pl)
 constexpr Entry kPolish[] = {
     {"Hide mouse cursor",
      "Ukryj kursor myszy"},
@@ -1545,7 +1527,6 @@ constexpr Entry kPolish[] = {
      "Wolna kamera (Cross + L3)"},
     {"Debug menu (requires font files)",
      "Menu debugowania (wymaga plików czcionek)"},
-    // The tabbed menu, its search, DLSS, the reactive mask per upscaler, OptiScaler.
     {"Search settings (Ctrl+F)",
      "Szukaj ustawień (Ctrl+F)"},
     {"Nothing matches \"%s\"",
@@ -1630,7 +1611,6 @@ constexpr Entry kPolish[] = {
      "Części trybu zgodności, każda działa po restarcie. Wyłączaj je tylko po to, by znaleźć, która powoduje awarię z OptiScalerem, i w każdym razie wyślij log."},
 };
 
-// Turkish (tr)
 constexpr Entry kTurkish[] = {
     {"Hide mouse cursor",
      "Fare imlecini gizle"},
@@ -1811,7 +1791,6 @@ constexpr Entry kTurkish[] = {
      "Serbest kamera (Cross + L3)"},
     {"Debug menu (requires font files)",
      "Hata ayıklama menüsü (yazı tipi dosyaları gerekir)"},
-    // The tabbed menu, its search, DLSS, the reactive mask per upscaler, OptiScaler.
     {"Search settings (Ctrl+F)",
      "Ayarlarda ara (Ctrl+F)"},
     {"Nothing matches \"%s\"",
@@ -1896,7 +1875,6 @@ constexpr Entry kTurkish[] = {
      "Uyumluluk modunun parçaları; her biri yeniden başlatınca uygulanır. Birini yalnızca OptiScaler ile çökmenin hangisinden geldiğini bulmak için kapatın ve her durumda günlüğünüzü paylaşın."},
 };
 
-// Simplified Chinese (zh_CN). Lantern Menu SC (Noto Sans SC subset) supplies CJK glyphs.
 constexpr Entry kChinese[] = {
     {"Off", "关闭"},
     {"Infinite", "无限"},
@@ -2003,7 +1981,6 @@ constexpr Entry kChinese[] = {
     {"Frame time", "帧时间"},
     {"CPU usage", "CPU 占用率"},
     {"GPU usage", "GPU 占用率"},
-    // The counter's look; glyphs are included in Lantern Menu SC.
     {"Top right", "右上"},
     {"Top left", "左上"},
     {"Bottom right", "右下"},
@@ -2097,7 +2074,6 @@ constexpr Entry kChinese[] = {
     {"Frame generation: game at half the refresh rate", "帧生成：游戏帧率为刷新率的一半"},
     {"Shows an extra frame between the game's own (2x smoother motion). Adds a little input lag. Needs an upscaler; off in menus, movies and with HDR output.", "在游戏的原生帧之间插入额外一帧（运动流畅度提高至 2 倍）。会略增输入延迟。需启用超分辨率；菜单、影片和 HDR 输出时关闭。"},
     {"Every generated frame reaches the screen evenly (60 + 60 at 120 Hz). Off: the game runs faster, but the screen skips some generated frames.", "使每个生成帧均匀显示（120 Hz 下为 60 + 60 帧）。关闭后游戏运行更快，但屏幕会跳过部分生成帧。"},
-    // The tabbed menu, its search, DLSS, the reactive mask per upscaler, OptiScaler.
     {"Search settings (Ctrl+F)", "查找设置（Ctrl+F）"},
     {"Nothing matches \"%s\"", "没有找到“%s”"},
     {"Tabs: L2 / R2 or Ctrl+PgUp / Ctrl+PgDn. Search: Ctrl+F, Esc clears it. A setting's (?) also shows while it is selected.", "分类：L2 / R2 或 Ctrl+PgUp / Ctrl+PgDn。查找：Ctrl+F，Esc 删除。选中设置时也显示其 (?) 提示。"},
@@ -2194,10 +2170,9 @@ Table Build(const Entry (&entries)[N]) {
     return table;
 }
 
-} // namespace
+}
 
 const char* MenuTranslation(MenuLanguage language, const char* english) {
-    // Built once (thread-safe static initialization); looked up for every string every frame.
     static const std::array<Table, 8> tables = {
         Build(kSpanish), Build(kPortugueseBrazil), Build(kFrench), Build(kGerman),
         Build(kItalian), Build(kPolish), Build(kTurkish), Build(kChinese),
@@ -2219,4 +2194,4 @@ const char* MenuTranslation(MenuLanguage language, const char* english) {
     return it != table.end() ? it->second : english;
 }
 
-} // namespace BbSettings
+}

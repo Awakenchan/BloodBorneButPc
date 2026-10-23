@@ -14,8 +14,6 @@
 #include "imstb_truetype.h"
 #pragma GCC diagnostic pop
 
-// Roboto Medium (third_party/imgui/misc/fonts, Apache License 2.0), embedded as the overlay embeds
-// its font (bbport_overlay.cpp).
 #ifdef _WIN32
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -47,8 +45,6 @@ std::string Spec::Id() const {
 
 namespace {
 
-// Drawn at 4x4 samples a pixel; a sample is in or out of a shape, or covered by a glyph as
-// stb_truetype rasterizes it.
 constexpr int S = 4;
 
 struct Color {
@@ -58,18 +54,14 @@ constexpr Color Rgb(std::uint32_t rgb, float a = 1.0f) {
     return {float((rgb >> 16) & 0xff) / 255.0f, float((rgb >> 8) & 0xff) / 255.0f,
             float(rgb & 0xff) / 255.0f, a};
 }
-// From KG_R1: the face, the rims (light along the top, dark along the bottom and the right),
-// the line under the top rim, the shadow under the cap, the lettering.
 constexpr Color kFace = Rgb(0x2f2f2f), kRimTop = Rgb(0x7a7a7a), kRimSide = Rgb(0x4a4a4a),
                 kRimDark = Rgb(0x1e1e1e), kUnderRim = Rgb(0x262626), kShadow = Rgb(0, 0.42f),
                 kInk = Rgb(0xc3a171), kOutline = Rgb(0x8a8a8a);
 
-// Shapes are laid out on 32 units; a canvas shows them at its own size, `scale` pixels a unit
-// from (ox, oy) - the game's 26-pixel HUD buttons show a window around the square cap.
 struct Canvas {
-    int size, n;  // pixels, samples
+    int size, n;
     float scale, ox, oy;
-    std::vector<float> px;  // premultiplied
+    std::vector<float> px;
 
     Canvas(int size_, float scale_, float ox_, float oy_)
         : size(size_), n(size_ * S), scale(scale_), ox(ox_), oy(oy_), px(std::size_t(n) * n * 4, 0.0f) {}
@@ -87,10 +79,8 @@ struct Canvas {
     }
 };
 
-// Samples per unit: how sharp shape edges are (Paint sets it for its canvas).
 thread_local float t_samples = S;
 
-// `coverage(x, y)` at each sample, in units.
 template <class Coverage>
 void Paint(Canvas& c, Color color, Coverage coverage) {
     t_samples = S * c.scale;
@@ -106,7 +96,7 @@ void Paint(Canvas& c, Color color, Coverage coverage) {
 }
 
 struct Box {
-    float x0, y0, x1, y1, r;  // r: the corners' radius
+    float x0, y0, x1, y1, r;
 };
 
 float Distance(const Box& b, float x, float y) {
@@ -149,11 +139,9 @@ void DrawCap(Canvas& c, const Box& cap) {
     Paint(c, kFace, [&](float x, float y) { return Inside(face, x, y); });
 }
 
-// An arrow `size` pixels long centred on (cx, cy): 0 up, 1 right, 2 down, 3 left.
 void DrawArrow(Canvas& c, float cx, float cy, float size, int dir, Color color) {
     const float head = size * 0.5f, half_head = size * 0.45f, half_shaft = size * 0.14f;
     Paint(c, color, [&](float x, float y) {
-        // u across the arrow, v from its tip (0) to its tail (size).
         float u = x - cx, v = y - cy;
         switch (dir) {
         case 1: std::swap(u, v); v = -v; break;
@@ -194,7 +182,7 @@ std::vector<int> Utf8(const std::string& s) {
 struct Font {
     stbtt_fontinfo info{};
     bool ok = false;
-    float cap_height = 1.0f;  // font units
+    float cap_height = 1.0f;
 
     Font() {
         ok = stbtt_InitFont(&info, bb_keycap_font, stbtt_GetFontOffsetForIndex(bb_keycap_font, 0)) != 0;
@@ -210,14 +198,12 @@ const Font& GetFont() {
     return font;
 }
 
-// `text` centred on (cx, cy), its capitals `cap` pixels tall, smaller if it is wider than `width`.
 void DrawText(Canvas& c, const std::string& text, float cx, float cy, float width, float cap, Color color = kInk) {
     const Font& font = GetFont();
     const auto cps = Utf8(text);
     if (!font.ok || cps.empty()) {
         return;
     }
-    // The ink's extent at the font's own scale.
     float pen = 0.0f, left = 1e9f, right = -1e9f, top = -1e9f, bottom = 1e9f;
     bool capitals = false;
     std::vector<float> at(cps.size());
@@ -241,7 +227,6 @@ void DrawText(Canvas& c, const std::string& text, float cx, float cy, float widt
         return;
     }
     const float scale = std::min(cap / font.cap_height, width / (right - left));
-    // Capitals sit centred; text without any (punctuation) centres its own ink.
     const float baseline = capitals ? cy + font.cap_height * scale / 2 : cy + (top + bottom) / 2 * scale;
     const float origin = cx - (left + right) / 2 * scale;
 
@@ -271,7 +256,6 @@ void DrawText(Canvas& c, const std::string& text, float cx, float cy, float widt
             }
         }
     }
-    // A little heavier, as the game's lettering: each sample takes its left neighbour's ink.
     for (int y = 0; y < n; ++y) {
         float* row = &ink[std::size_t(y) * n];
         for (int x = n - 1; x > 0; --x) {
@@ -285,7 +269,6 @@ void DrawText(Canvas& c, const std::string& text, float cx, float cy, float widt
     }
 }
 
-// A cap with a label: an arrow or text.
 void DrawLabel(Canvas& c, const Box& cap, const std::string& label, float cap_px) {
     DrawCap(c, cap);
     const float cx = (cap.x0 + cap.x1) / 2, cy = (cap.y0 + cap.y1) / 2 + 0.3f;
@@ -305,14 +288,12 @@ void DrawMouse(Canvas& c, int button) {
     const Box face = Inset(body, 1.3f, 1.3f, 1.3f, 1.3f);
     Paint(c, kFace, [&](float x, float y) { return Inside(face, x, y); });
     const float cx = 16.0f, split = 13.0f;
-    // SDL's numbering (input.cpp): 1 left, 2 middle (the wheel), 3 right.
     if (button == 1 || button == 3) {
         Paint(c, kInk, [&](float x, float y) {
             const bool side = button == 1 ? x < cx - 0.6f : x > cx + 0.6f;
             return side && y < split - 0.6f ? Inside(face, x, y) : 0.0f;
         });
     }
-    // The buttons' seams.
     Paint(c, kOutline, [&](float x, float y) {
         const bool seam = (std::abs(x - cx) <= 0.6f && y < split) || std::abs(y - split) <= 0.6f;
         return seam ? Inside(face, x, y) : 0.0f;
@@ -323,29 +304,23 @@ void DrawMouse(Canvas& c, int button) {
     if (button == 6 || button == 7) {
         DrawArrow(c, 28.5f, 8.0f, 6.5f, button == 6 ? 0 : 2, kInk);
     } else if (button == 0) {
-        // The camera: the mouse moved.
         DrawArrow(c, 3.5f, 17.0f, 6.0f, 3, kInk);
         DrawArrow(c, 28.5f, 17.0f, 6.0f, 1, kInk);
     }
 }
 
-// The round cap of the game's face buttons and sticks (KG_Cancel, KG_L3), and the wide one of
-// its shoulder buttons (KG_L1).
 constexpr Box kRoundCap{3.7f, 3.2f, 28.3f, 27.8f, 12.3f};
 constexpr Box kWideCap{0.5f, 6.0f, 31.5f, 26.0f, 4.0f};
-// A, B, X and Y in their colours, as bright as the game's own symbols.
 constexpr Color kPadFace[] = {Rgb(0x5bbf3f), Rgb(0xe2423a), Rgb(0x3a7bf0), Rgb(0xf1c232)};
 constexpr const char* kPadNames[] = {"A",  "B",  "X",  "Y",  "LB", "RB", "LT",  "RT",
                                      "LS", "RS", "",   "",   "",   "",   "",    "",
                                      "",   "P1", "P2", "P3", "P4", "Pad", "Home"};
 static_assert(sizeof(kPadNames) / sizeof(kPadNames[0]) == PadGuide + 1);
 
-// The shoulder buttons, the triggers and the names are on a wide cap, the rest round.
 bool PadWide(int button) {
     return (button >= PadLB && button <= PadRT) || button >= PadP1;
 }
 
-// An outlined box: `line` units thick, its inside the cap's face.
 void DrawFrame(Canvas& c, const Box& box, float line) {
     Paint(c, kInk, [&](float x, float y) { return Inside(box, x, y); });
     const Box inside = Inset(box, line, line, line, line);
@@ -372,7 +347,6 @@ void DrawPad(Canvas& c, int button) {
         DrawText(c, kPadNames[button], cx, cy, 19.0f, 11.5f);
         break;
     case PadView:
-        // Two windows, one over the other.
         DrawFrame(c, {9.0f, 9.5f, 18.5f, 17.0f, 1.5f}, 1.5f);
         DrawFrame(c, {13.5f, 14.0f, 23.0f, 21.5f, 1.5f}, 1.5f);
         break;
@@ -383,7 +357,6 @@ void DrawPad(Canvas& c, int button) {
         }
         break;
     case PadShare: {
-        // An arrow out of a tray.
         DrawArrow(c, cx, 13.0f, 9.0f, 0, kInk);
         const Box tray[] = {{10.0f, 15.5f, 11.8f, 21.5f, 0.6f}, {20.2f, 15.5f, 22.0f, 21.5f, 0.6f},
                             {10.0f, 19.7f, 22.0f, 21.5f, 0.6f}};
@@ -392,7 +365,7 @@ void DrawPad(Canvas& c, int button) {
         }
         break;
     }
-    default: {  // the d-pad: up, down, left, right
+    default: {
         constexpr int kDir[] = {0, 2, 3, 1};
         DrawArrow(c, cx, cy, 12.0f, kDir[std::clamp(button - int(PadUp), 0, 3)], kInk);
         break;
@@ -417,10 +390,6 @@ void Resolve(const Canvas& c, std::uint8_t* rgba) {
     }
 }
 
-// BC7 modes 4, 5 and 6, the ones the game's icons use: one subset, colour and alpha either
-// on one line (6) or on two (4 and 5, rotation 0). Each is fitted along the block's principal
-// axis, then refined by least squares for the indices it got; the block keeps whichever mode
-// came closest.
 namespace bc7 {
 
 constexpr int kW2[4] = {0, 21, 43, 64};
@@ -442,12 +411,11 @@ struct Block {
     int px[16][4];
 };
 
-// Channels [c0, c1) on one line between two endpoints.
 struct LineSpec {
     int c0, c1;
     int index_bits;
     int endpoint_bits;
-    bool pbits;  // mode 6: 7 bits and a bit shared by the endpoint's channels
+    bool pbits;
 };
 
 struct Line {
@@ -600,7 +568,6 @@ Line Fit(const LineSpec& s, const Block& b) {
     return best;
 }
 
-// The first index's top bit is not stored: it has to be 0.
 void Anchor(Line& line, int index_bits) {
     const int n = 1 << index_bits;
     if (line.index[0] < n / 2) {
@@ -661,7 +628,7 @@ Encoded Mode5(const Block& b) {
     Encoded out;
     out.err = lc.err + la.err;
     out.bits.Put(1u << 5, 6);
-    out.bits.Put(0, 2);  // rotation
+    out.bits.Put(0, 2);
     for (int c = 0; c < 3; ++c) {
         for (int k = 0; k < 2; ++k) {
             out.bits.Put(lc.stored[k][c], 7);
@@ -679,7 +646,6 @@ Encoded Mode5(const Block& b) {
     return out;
 }
 
-// index_mode 0: colour on the 2-bit indices, alpha on the 3-bit ones; 1 the other way round.
 Encoded Mode4(const Block& b, int index_mode) {
     const int color_bits = index_mode ? 3 : 2, alpha_bits = index_mode ? 2 : 3;
     const LineSpec cs{0, 3, color_bits, 5, false}, as{3, 4, alpha_bits, 6, false};
@@ -689,7 +655,7 @@ Encoded Mode4(const Block& b, int index_mode) {
     Encoded out;
     out.err = lc.err + la.err;
     out.bits.Put(1u << 4, 5);
-    out.bits.Put(0, 2);  // rotation
+    out.bits.Put(0, 2);
     out.bits.Put(index_mode, 1);
     for (int c = 0; c < 3; ++c) {
         for (int k = 0; k < 2; ++k) {
@@ -720,13 +686,11 @@ void EncodeBlock(const Block& b, std::uint8_t out[16]) {
     std::memcpy(out, best.bits.w, 16);
 }
 
-} // namespace bc7
+}
 
-} // namespace
+}
 
 void Draw(const Spec& spec, std::uint8_t* rgba, int size) {
-    // A square cap fills a smaller button: the 27 units around it at that size. Other layouts
-    // scale down whole.
     const std::string first = spec.labels.empty() ? std::string() : spec.labels[0];
     const bool square = spec.kind == Spec::Pad ? !PadWide(spec.button)
                                                : spec.kind == Spec::Key && (Utf8(first).size() <= 2 || ArrowDir(first) >= 0);
@@ -745,7 +709,6 @@ void Draw(const Spec& spec, std::uint8_t* rgba, int size) {
         break;
     case Spec::Keys:
         if (spec.labels.size() >= 4) {
-            // An inverted T: up; left, down, right.
             DrawLabel(c, {10.75f, 0.5f, 21.25f, 14.5f, 2.5f}, spec.labels[0], 7.5f);
             DrawLabel(c, {0.0f, 16.0f, 10.5f, 30.0f, 2.5f}, spec.labels[1], 7.5f);
             DrawLabel(c, {10.75f, 16.0f, 21.25f, 30.0f, 2.5f}, spec.labels[2], 7.5f);
@@ -762,7 +725,6 @@ void Draw(const Spec& spec, std::uint8_t* rgba, int size) {
         if (glyphs <= 2 || ArrowDir(label) >= 0) {
             DrawLabel(c, {3.0f, 2.5f, 29.0f, 28.0f, 4.5f}, label, glyphs <= 1 ? 13.0f : 11.0f);
         } else {
-            // Long names on a wide cap, as KG_R1 is.
             DrawLabel(c, {0.5f, 6.0f, 31.5f, 26.0f, 4.0f}, label, 10.0f);
         }
         break;
@@ -788,7 +750,6 @@ void EncodeBlocks(const std::uint8_t* rgba, int width, int height, std::uint8_t*
 }
 
 void Encode(const std::uint8_t rgba[kSize * kSize * 4], std::uint8_t out[kBytes]) {
-    // Block i of the tile is at x = i's even bits, y = its odd bits.
     for (int i = 0; i < 64; ++i) {
         int bx = 0, by = 0;
         for (int k = 0; k < 3; ++k) {
@@ -806,4 +767,4 @@ void Encode(const std::uint8_t rgba[kSize * kSize * 4], std::uint8_t out[kBytes]
     }
 }
 
-} // namespace Keycap
+}
