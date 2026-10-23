@@ -24,8 +24,7 @@ constexpr Background Choose(bool scaled, bool ui_draw, bool scene_ready, bool fs
 // The game's UI movie viewport: 1920x1080, or with Widescreen on a screen of another shape that
 // shape around it (2520x1080 at 21:9, 1920x1200 at 16:10; scripts/patches.py ui_size, passed as
 // BB_UI_SIZE; with Sharp UI the output's own size). Scaleform then shows the 1920x1080 stage whole
-// and centred (scaled to fit a larger viewport), as bbhost's window
-// does, and what the game places past the stage's edges - the enemy gauges, co-op names and the
+// and centred (scaled to fit a larger viewport), and what the game places past the stage's edges - the enemy gauges, co-op names and the
 // lock-on marker at the screen's sides (engine/widescreen.cpp) - stays inside the viewport
 // instead of being clipped at the 16:9 box.
 inline std::array<float, 2> ParseUiSize(const char* value) {

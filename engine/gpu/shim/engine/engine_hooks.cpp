@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Prologue stub adapted from bbhost core/thunk.cpp; see licenses/BBHOST-PORTS.md.
 #include "engine_hooks.h"
 #include <cstring>
+#include <initializer_list>
+#include <mutex>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -10,213 +12,210 @@
 
 namespace BbEngine {
 namespace {
-std::uint8_t* EmitPrologueStub(std::uint8_t* c, std::uint64_t id, void* host, std::uint64_t resume,
-                                      const std::uint8_t* displaced, std::size_t n, bool keep_rax) {
-    // Below the six registers: a return slot (zeroed; what a skipped call
-    // returns, saved[-1] to the host) and xmm0-7, which carry a hooked
-    // function's float arguments and which host code would otherwise clobber.
-    // 48 + 136 bytes over the entry's 8 keeps the host call 16-byte aligned.
-    static constexpr std::uint8_t kSave[] = {
-        0x57, 0x56, 0x52, 0x51, 0x41, 0x50, 0x41, 0x51,                    // push rdi rsi rdx rcx r8 r9
-        0x48, 0x81, 0xec, 0x88, 0x00, 0x00, 0x00,                          // sub rsp, 136
-        0xf3, 0x0f, 0x7f, 0x44, 0x24, 0x00,                                // movdqu [rsp], xmm0
-        0xf3, 0x0f, 0x7f, 0x4c, 0x24, 0x10,                                // movdqu [rsp+16], xmm1
-        0xf3, 0x0f, 0x7f, 0x54, 0x24, 0x20,                                // movdqu [rsp+32], xmm2
-        0xf3, 0x0f, 0x7f, 0x5c, 0x24, 0x30,                                // movdqu [rsp+48], xmm3
-        0xf3, 0x0f, 0x7f, 0x64, 0x24, 0x40,                                // movdqu [rsp+64], xmm4
-        0xf3, 0x0f, 0x7f, 0x6c, 0x24, 0x50,                                // movdqu [rsp+80], xmm5
-        0xf3, 0x0f, 0x7f, 0x74, 0x24, 0x60,                                // movdqu [rsp+96], xmm6
-        0xf3, 0x0f, 0x7f, 0x7c, 0x24, 0x70,                                // movdqu [rsp+112], xmm7
-        0x48, 0xc7, 0x84, 0x24, 0x80, 0x00, 0x00, 0x00, 0, 0, 0, 0,        // mov qword [rsp+128], 0
-        0x48, 0x8d, 0xb4, 0x24, 0x88, 0x00, 0x00, 0x00,                    // lea rsi, [rsp+136]
-    };
-    static constexpr std::uint8_t kRestore[] = {
-        0x4c, 0x8b, 0x94, 0x24, 0x80, 0x00, 0x00, 0x00,                    // mov r10, [rsp+128]
-        0xf3, 0x0f, 0x6f, 0x44, 0x24, 0x00,                                // movdqu xmm0, [rsp]
-        0xf3, 0x0f, 0x6f, 0x4c, 0x24, 0x10,                                // movdqu xmm1, [rsp+16]
-        0xf3, 0x0f, 0x6f, 0x54, 0x24, 0x20,                                // movdqu xmm2, [rsp+32]
-        0xf3, 0x0f, 0x6f, 0x5c, 0x24, 0x30,                                // movdqu xmm3, [rsp+48]
-        0xf3, 0x0f, 0x6f, 0x64, 0x24, 0x40,                                // movdqu xmm4, [rsp+64]
-        0xf3, 0x0f, 0x6f, 0x6c, 0x24, 0x50,                                // movdqu xmm5, [rsp+80]
-        0xf3, 0x0f, 0x6f, 0x74, 0x24, 0x60,                                // movdqu xmm6, [rsp+96]
-        0xf3, 0x0f, 0x6f, 0x7c, 0x24, 0x70,                                // movdqu xmm7, [rsp+112]
-        0x48, 0x81, 0xc4, 0x88, 0x00, 0x00, 0x00,                          // add rsp, 136
-        0x41, 0x59, 0x41, 0x58, 0x59, 0x5a, 0x5e, 0x5f,                    // pop r9 r8 rcx rdx rsi rdi
-    };
-    // The same, with rax pushed where the alignment pad was: seven pushes are
-    // 56 bytes, which aligns the call as the pad did.
-    static constexpr std::uint8_t kSaveRax[] = {
-        0x57, 0x56, 0x52, 0x51, 0x41, 0x50, 0x41, 0x51,  // push rdi rsi rdx rcx r8 r9
-        0x50,                                            // push rax
-        0x48, 0x8d, 0x74, 0x24, 0x08,                    // lea rsi, [rsp+8]
-    };
-    static constexpr std::uint8_t kRestoreRax[] = {
-        0x58,                                            // pop rax (after mov r11, rax)
-        0x41, 0x59, 0x41, 0x58, 0x59, 0x5a, 0x5e, 0x5f,  // pop r9 r8 rcx rdx rsi rdi
-    };
-    if (keep_rax) {
-        std::memcpy(c, kSaveRax, sizeof(kSaveRax));
-        c += sizeof(kSaveRax);
-    } else {
-        std::memcpy(c, kSave, sizeof(kSave));
-        c += sizeof(kSave);
-    }
-    *c++ = 0x48;
-    *c++ = 0xbf;  // movabs rdi, id
-    std::memcpy(c, &id, 8);
-    c += 8;
-    const std::uint64_t fn = reinterpret_cast<std::uint64_t>(host);
-    *c++ = 0x48;
-    *c++ = 0xb8;  // movabs rax, host
-    std::memcpy(c, &fn, 8);
-    c += 8;
-    *c++ = 0xff;
-    *c++ = 0xd0;  // call rax
-    static constexpr std::uint8_t kKeep[] = {0x49, 0x89, 0xc3};  // mov r11, rax (the pops leave r11 alone)
-    std::memcpy(c, kKeep, sizeof(kKeep));
-    c += sizeof(kKeep);
-    if (keep_rax) {
-        std::memcpy(c, kRestoreRax, sizeof(kRestoreRax));
-        c += sizeof(kRestoreRax);
-    } else {
-        std::memcpy(c, kRestore, sizeof(kRestore));
-        c += sizeof(kRestore);
-    }
-    static constexpr std::uint8_t kReturn[] = {
-        0x4d, 0x85, 0xdb,  // test r11, r11
-        0x74, 0x04,        // jz +4: run the method
-        0x4c, 0x89, 0xd0,  // mov rax, r10: the return slot
-        0xc3,              // ret to the method's caller
-    };
-    static constexpr std::uint8_t kReturnRax[] = {
-        0x4d, 0x85, 0xdb,  // test r11, r11
-        0x74, 0x03,        // jz +3: run the method
-        0x31, 0xc0,        // xor eax, eax
-        0xc3,              // ret to the method's caller
-    };
-    if (keep_rax) {
-        std::memcpy(c, kReturnRax, sizeof(kReturnRax));
-        c += sizeof(kReturnRax);
-    } else {
-        std::memcpy(c, kReturn, sizeof(kReturn));
-        c += sizeof(kReturn);
-    }
-    if (n) std::memcpy(c, displaced, n);  // none for a redirected tail call
-    c += n;
-    const std::uint8_t jmp[6] = {0xff, 0x25, 0, 0, 0, 0};  // jmp [rip+0]
-    std::memcpy(c, jmp, 6);
-    c += 6;
-    std::memcpy(c, &resume, 8);
-    return c + 8;
+constexpr std::size_t kPage = 4096;
+constexpr std::size_t kReservation = 64 * 1024;
+
+constexpr std::uint32_t kFrame = 0x98;
+constexpr std::uint32_t kSavedRax = 0x88;
+constexpr std::uint32_t kReturnSlot = 0x90;
+static_assert(kFrame == kSavedXmm, "SavedXmm() reads the stub's frame");
+static_assert(kReturnSlot + 8 == kFrame, "saved[-1] sits just below saved[0]");
+static_assert((8 + 6 * 8 + kFrame) % 16 == 0, "the host call needs a 16-byte aligned stack");
+
+enum Reg : std::uint8_t { RAX = 0, RCX = 1, RDX = 2, RSI = 6, RDI = 7, R8 = 8, R9 = 9 };
+constexpr Reg kArgs[] = {RDI, RSI, RDX, RCX, R8, R9};
+
+class Emitter {
+public:
+    explicit Emitter(std::uint8_t* at) : at_(at) {}
+    std::uint8_t* Here() const { return at_; }
+    void Put(std::initializer_list<std::uint8_t> bytes) { for (auto b : bytes) *at_++ = b; }
+    void Copy(const std::uint8_t* bytes, std::size_t n) { std::memcpy(at_, bytes, n); at_ += n; }
+    template <typename T> void Value(T v) { std::memcpy(at_, &v, sizeof v); at_ += sizeof v; }
+
+    void Push(Reg r) { if (r >= 8) Put({0x41}); Put({std::uint8_t(0x50 + (r & 7))}); }
+    void Pop(Reg r) { if (r >= 8) Put({0x41}); Put({std::uint8_t(0x58 + (r & 7))}); }
+    void SubRsp(std::uint32_t n) { Put({0x48, 0x81, 0xec}); Value(n); }
+    void AddRsp(std::uint32_t n) { Put({0x48, 0x81, 0xc4}); Value(n); }
+    void Store(std::uint32_t disp, Reg r) { Put({0x48, 0x89, std::uint8_t(0x84 | (r << 3)), 0x24}); Value(disp); }
+    void Load(Reg r, std::uint32_t disp) { Put({0x48, 0x8b, std::uint8_t(0x84 | (r << 3)), 0x24}); Value(disp); }
+    void StoreZero(std::uint32_t disp) { Put({0x48, 0xc7, 0x84, 0x24}); Value(disp); Value(std::uint32_t(0)); }
+    void StoreXmm(std::uint8_t disp, unsigned n) { Put({0x0f, 0x11, std::uint8_t(0x44 | (n << 3)), 0x24, disp}); }
+    void LoadXmm(unsigned n, std::uint8_t disp) { Put({0x0f, 0x10, std::uint8_t(0x44 | (n << 3)), 0x24, disp}); }
+    void LeaRsi(std::uint32_t disp) { Put({0x48, 0x8d, 0xb4, 0x24}); Value(disp); }
+    void ZeroEdi() { Put({0x31, 0xff}); }
+    void MovRax(std::uint64_t v) { Put({0x48, 0xb8}); Value(v); }
+    void CallRax() { Put({0xff, 0xd0}); }
+    void TestRax() { Put({0x48, 0x85, 0xc0}); }
+    std::uint8_t* Jz8() { Put({0x74, 0x00}); return at_ - 1; }
+    void Land(std::uint8_t* rel8) { *rel8 = std::uint8_t(at_ - (rel8 + 1)); }
+    void Ret() { Put({0xc3}); }
+    void JumpTo(std::uint64_t target) { Put({0xff, 0x25, 0, 0, 0, 0}); Value(target); }
+
+private:
+    std::uint8_t* at_;
+};
+constexpr std::size_t kJumpBytes = 14;
+
+std::size_t WriteStub(std::uint8_t* at, Callback callback, std::uint64_t resume,
+                      const std::uint8_t* moved, std::size_t n) {
+    Emitter e(at);
+    for (Reg r : kArgs) e.Push(r);
+    e.SubRsp(kFrame);
+    e.Store(kSavedRax, RAX);
+    for (unsigned x = 0; x < 8; ++x) e.StoreXmm(std::uint8_t(16 * x), x);
+    e.StoreZero(kReturnSlot);
+    e.ZeroEdi();
+    e.LeaRsi(kFrame);
+    e.MovRax(reinterpret_cast<std::uint64_t>(callback));
+    e.CallRax();
+    e.TestRax();
+    std::uint8_t* run = e.Jz8();
+    e.Load(RAX, kReturnSlot);
+    e.AddRsp(kFrame);
+    for (int i = 5; i >= 0; --i) e.Pop(kArgs[i]);
+    e.Ret();
+    e.Land(run);
+    for (unsigned x = 0; x < 8; ++x) e.LoadXmm(x, std::uint8_t(16 * x));
+    e.Load(RAX, kSavedRax);
+    e.AddRsp(kFrame);
+    for (int i = 5; i >= 0; --i) e.Pop(kArgs[i]);
+    if (n) e.Copy(moved, n);
+    e.JumpTo(resume);
+    return std::size_t(e.Here() - at);
 }
 
-} // namespace
+class StubPages {
+public:
+    template <typename W> std::uint8_t* Make(W&& write) {
+        std::scoped_lock lock(mutex_);
+        std::uint8_t* page = Take();
+        if (!page) return nullptr;
+        if (!Writable(page, true)) { free_.push_back(page); return nullptr; }
+        write(page);
+        if (!Writable(page, false)) { Give(page); return nullptr; }
+        return page;
+    }
+    void Free(std::uint8_t* page) {
+        if (!page) return;
+        std::scoped_lock lock(mutex_);
+        Give(page);
+    }
+
+private:
+    std::uint8_t* Take() {
+        if (!free_.empty()) { auto* p = free_.back(); free_.pop_back(); return p; }
+        if (!next_ || next_ == end_) {
+#ifdef _WIN32
+            next_ = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, kReservation, MEM_RESERVE, PAGE_NOACCESS));
+#else
+            void* r = mmap(nullptr, kReservation, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            next_ = r == MAP_FAILED ? nullptr : static_cast<std::uint8_t*>(r);
+#endif
+            if (!next_) { end_ = nullptr; return nullptr; }
+            end_ = next_ + kReservation;
+        }
+        std::uint8_t* page = next_;
+        next_ += kPage;
+        return page;
+    }
+    void Give(std::uint8_t* page) {
+#ifdef _WIN32
+        VirtualFree(page, kPage, MEM_DECOMMIT);
+#else
+        mprotect(page, kPage, PROT_NONE);
+        madvise(page, kPage, MADV_DONTNEED);
+#endif
+        free_.push_back(page);
+    }
+    static bool Writable(std::uint8_t* page, bool writable) {
+#ifdef _WIN32
+        if (writable) return VirtualAlloc(page, kPage, MEM_COMMIT, PAGE_READWRITE) != nullptr;
+        DWORD before = 0;
+        return VirtualProtect(page, kPage, PAGE_EXECUTE_READ, &before) &&
+               FlushInstructionCache(GetCurrentProcess(), page, kPage);
+#else
+        if (mprotect(page, kPage, writable ? PROT_READ | PROT_WRITE : PROT_READ | PROT_EXEC)) return false;
+        if (!writable) __builtin___clear_cache(reinterpret_cast<char*>(page), reinterpret_cast<char*>(page + kPage));
+        return true;
+#endif
+    }
+
+    std::mutex mutex_;
+    std::uint8_t* next_ = nullptr;
+    std::uint8_t* end_ = nullptr;
+    std::vector<std::uint8_t*> free_;
+};
+StubPages& Pages() {
+    static StubPages pages;
+    return pages;
+}
+
+void FlushCode(void* at, std::size_t n) {
+#ifdef _WIN32
+    FlushInstructionCache(GetCurrentProcess(), at, n);
+#else
+    __builtin___clear_cache(static_cast<char*>(at), static_cast<char*>(at) + n);
+#endif
+}
+}
 
 bool Prepare(Hook& hook, std::uint8_t* image, std::size_t size, std::size_t offset,
              std::span<const std::uint8_t> expected, Callback callback) {
-    if (!image || !callback || expected.size() < 14 || expected.size() > 128 ||
-        offset > size || expected.size() > size - offset ||
-        std::memcmp(image + offset, expected.data(), expected.size()) != 0) return false;
-#ifdef _WIN32
-    auto* page = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-    if (!page) return false;
-#else
-    auto* page = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    if (page == MAP_FAILED) return false;
-#endif
-    hook = {image + offset, page, expected.size()};
-    EmitPrologueStub(page, 0, reinterpret_cast<void*>(callback),
-        reinterpret_cast<std::uint64_t>(image + offset + expected.size()),
-        expected.data(), expected.size(), false);
-#ifdef _WIN32
-    DWORD previous = 0;
-    if (!VirtualProtect(page, 4096, PAGE_EXECUTE_READ, &previous) ||
-        !FlushInstructionCache(GetCurrentProcess(), page, 4096)) {
-        Discard(hook); return false;
-    }
-#else
-    if (mprotect(page, 4096, PROT_READ | PROT_EXEC)) { Discard(hook); return false; }
-    __builtin___clear_cache(reinterpret_cast<char*>(page), reinterpret_cast<char*>(page + 4096));
-#endif
+    hook = {};
+    const std::size_t n = expected.size();
+    if (!image || !callback || n < kJumpBytes || n > 128 || offset > size || n > size - offset) return false;
+    std::uint8_t* site = image + offset;
+    if (std::memcmp(site, expected.data(), n) != 0) return false;
+    const auto resume = reinterpret_cast<std::uint64_t>(site + n);
+    std::uint8_t* stub = Pages().Make([&](std::uint8_t* page) { WriteStub(page, callback, resume, expected.data(), n); });
+    if (!stub) return false;
+    hook = {site, stub, n};
     return true;
+}
+
+void Discard(Hook& hook) {
+    Pages().Free(hook.stub);
+    hook = {};
 }
 
 std::uint8_t* TailStub(Callback callback, std::uint64_t resume) {
     if (!callback || !resume) return nullptr;
-#ifdef _WIN32
-    auto* page = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-    if (!page) return nullptr;
-#else
-    auto* page = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    if (page == MAP_FAILED) return nullptr;
-#endif
-    EmitPrologueStub(page, 0, reinterpret_cast<void*>(callback), resume, nullptr, 0, false);
-#ifdef _WIN32
-    DWORD previous = 0;
-    if (!VirtualProtect(page, 4096, PAGE_EXECUTE_READ, &previous) ||
-        !FlushInstructionCache(GetCurrentProcess(), page, 4096)) {
-        FreeStub(page); return nullptr;
-    }
-#else
-    if (mprotect(page, 4096, PROT_READ | PROT_EXEC)) { FreeStub(page); return nullptr; }
-    __builtin___clear_cache(reinterpret_cast<char*>(page), reinterpret_cast<char*>(page + 4096));
-#endif
-    return page;
+    return Pages().Make([&](std::uint8_t* page) { WriteStub(page, callback, resume, nullptr, 0); });
 }
 
 void FreeStub(std::uint8_t* stub) {
-    if (!stub) return;
-#ifdef _WIN32
-    VirtualFree(stub, 0, MEM_RELEASE);
-#else
-    munmap(stub, 4096);
-#endif
-}
-
-void Discard(Hook& hook) {
-    if (hook.stub) {
-#ifdef _WIN32
-        VirtualFree(hook.stub, 0, MEM_RELEASE);
-#else
-        munmap(hook.stub, 4096);
-#endif
-    }
-    hook = {};
+    Pages().Free(stub);
 }
 
 void Commit(std::span<Hook> hooks) {
-    // The loader still owns writable image pages and has not entered guest code.
-    // No hook is installed into a running game or overwritten without a byte check.
     for (Hook& hook : hooks) {
-        hook.site[0] = 0xff; hook.site[1] = 0x25;
-        std::memset(hook.site + 2, 0, 4);
-        const auto dest = reinterpret_cast<std::uint64_t>(hook.stub);
-        std::memcpy(hook.site + 6, &dest, 8);
-        std::memset(hook.site + 14, 0xcc, hook.bytes - 14);
-#ifdef _WIN32
-        FlushInstructionCache(GetCurrentProcess(), hook.site, hook.bytes);
-#else
-        __builtin___clear_cache(reinterpret_cast<char*>(hook.site), reinterpret_cast<char*>(hook.site + hook.bytes));
-#endif
+        if (!hook.site || !hook.stub) continue;
+        Emitter e(hook.site);
+        e.JumpTo(reinterpret_cast<std::uint64_t>(hook.stub));
+        std::memset(e.Here(), 0xcc, hook.bytes - kJumpBytes);
+        FlushCode(hook.site, hook.bytes);
     }
 }
-bool WriteCode(void* address,const void* bytes,std::size_t size) {
-    if (!address || !bytes || !size || size>4096) return false;
-    const auto at=reinterpret_cast<std::uintptr_t>(address),lo=at&~std::uintptr_t(4095);
-    const auto length=((at+size+4095)&~std::uintptr_t(4095))-lo;
+
+bool WriteCode(void* address, const void* bytes, std::size_t size) {
+    if (!address || !bytes || !size) return false;
+    const auto at = reinterpret_cast<std::uintptr_t>(address);
+    const std::uintptr_t first = at & ~std::uintptr_t(kPage - 1);
+    const std::size_t span = ((at + size + kPage - 1) & ~std::uintptr_t(kPage - 1)) - first;
+    auto* pages = reinterpret_cast<void*>(first);
 #ifdef _WIN32
-    DWORD old=0,unused=0;
-    if (!VirtualProtect(reinterpret_cast<void*>(lo),length,PAGE_EXECUTE_READWRITE,&old)) return false;
-    std::memcpy(address,bytes,size);
-    const bool ok=VirtualProtect(reinterpret_cast<void*>(lo),length,old,&unused)!=0;
-    return FlushInstructionCache(GetCurrentProcess(),address,size)!=0 && ok;
+    DWORD before = 0, ignored = 0;
+    if (!VirtualProtect(pages, span, PAGE_EXECUTE_READWRITE, &before)) return false;
+    std::memcpy(address, bytes, size);
+    const bool restored = VirtualProtect(pages, span, before, &ignored) != 0;
+    FlushCode(address, size);
+    return restored;
 #else
-    if (mprotect(reinterpret_cast<void*>(lo),length,PROT_READ|PROT_WRITE|PROT_EXEC)) return false;
-    std::memcpy(address,bytes,size);
-    __builtin___clear_cache(reinterpret_cast<char*>(address),reinterpret_cast<char*>(address)+size);
-    return mprotect(reinterpret_cast<void*>(lo),length,PROT_READ|PROT_EXEC)==0;
+    if (mprotect(pages, span, PROT_READ | PROT_WRITE | PROT_EXEC)) return false;
+    std::memcpy(address, bytes, size);
+    FlushCode(address, size);
+    return mprotect(pages, span, PROT_READ | PROT_EXEC) == 0;
 #endif
 }
-} // namespace BbEngine
+}

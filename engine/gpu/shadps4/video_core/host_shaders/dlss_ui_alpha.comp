@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: DLSS Frame Generation's UI alpha (vk_streamline.cpp): 1 where the back buffer differs
 // from the frame without its UI (the game's HUD and menus, the engine's overlay), 0 elsewhere.
 // Both are the back buffer's format and size; where no UI is drawn they are bit-identical.

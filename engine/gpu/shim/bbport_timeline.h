@@ -1,8 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport BB_TIMELINE=<file>: a timeline of the frame's way to the GPU (guest submissions and
-// waits, decoding, Vulkan submissions, GPU completion), to see where the GPU waits for work.
-// Recording starts BB_TIMELINE_START seconds (default 30) after the first event and stops when
-// the buffer is full (~15 s of play); the file is then written once: "ns event arg arg2" per line.
 #pragma once
 
 #include <atomic>
@@ -15,17 +11,17 @@
 namespace BbTimeline {
 
 enum Event : std::uint32_t {
-    GuestSubmit,       ///< arg: queue (0 graphics), arg2: submission number
-    GuestSubmitDone,   ///< arg: frame
-    GuestWaitBegin,    ///< the guest waits for the previous frame
+    GuestSubmit,
+    GuestSubmitDone,
+    GuestWaitBegin,
     GuestWaitEnd,
-    DecodeBegin,       ///< arg: queue, arg2: decoded submissions so far
+    DecodeBegin,
     DecodeEnd,
-    PipeTask,          ///< arg: 0 signals flush, 1 frame retired, 2 idle signal, 3 end of frame
-    VulkanSubmit,      ///< arg: tick, arg2: 1 on the recording thread
-    GpuDone,           ///< arg: tick the GPU has reached
-    FrameRetired,      ///< arg: frame
-    DecoderIdleBegin,  ///< the GPU command thread has nothing to decode
+    PipeTask,
+    VulkanSubmit,
+    GpuDone,
+    FrameRetired,
+    DecoderIdleBegin,
     DecoderIdleEnd,
 };
 
@@ -97,4 +93,4 @@ inline void Note(Event event, std::uint64_t arg = 0, std::uint64_t arg2 = 0) {
     }
 }
 
-} // namespace BbTimeline
+}

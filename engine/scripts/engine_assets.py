@@ -1,8 +1,6 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
-"""Local, version-gated asset preparation for engine features ported from bbhost.
-
-Adapted from droogie/bbhost engine/dream_mirror_layout.cpp and gcn/container.cpp,
-upstream 7c790536c2c27ad7bb5115e3b1a12d7ffd7a972e. Game files stay local.
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Local, version-gated asset preparation for the engine features: the Dream mirror's layout, the
+effect fixes and the native menu assets, from the player's own dump. Game files stay local.
 """
 import hashlib
 import os
@@ -26,103 +24,103 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+DCX_HEADER = bytes.fromhex(
+    '44435800000100000000001800000024000000440000004c'
+    '4443530000000000000000004443500044464c5400000020'
+    '09000000000000000000000000000000000001014443410000000008')
+DCX_LARGEST = 32 << 20
+
+
 def dcx_unpack(data):
+    """The file inside a DCX container; anything else is returned as it is."""
     if data[:4] != b'DCX\0':
         return data
     if len(data) < 0x4c or data[0x28:0x2c] != b'DFLT':
         raise ValueError('Unsupported DCX format')
-    dca = data.find(b'DCA\0')
+    dca = data.find(b'DCA\0', 0x2c)
     if dca < 0 or dca + 8 > len(data):
         raise ValueError('DCX without a valid DCA header')
-    skip = struct.unpack_from('>I', data, dca + 4)[0]
-    if skip < 8 or dca + skip >= len(data):
-        raise ValueError('Invalid DCX compressed offset')
-    expected = struct.unpack_from('>I', data, 0x1c)[0]
-    if not 0 < expected <= 32 * 1024 * 1024:
-        raise ValueError('Invalid DCX uncompressed size')
-    stream = zlib.decompressobj()
-    raw = stream.decompress(data[dca + skip:], expected + 1)
-    if len(raw) != expected or not stream.eof or stream.unused_data:
+    begin = dca + struct.unpack_from('>I', data, dca + 4)[0]
+    size = struct.unpack_from('>I', data, 0x1c)[0]
+    if not dca + 8 <= begin < len(data) or not 0 < size <= DCX_LARGEST:
+        raise ValueError('Invalid DCX header')
+    inflater = zlib.decompressobj()
+    raw = inflater.decompress(data[begin:], size + 1)
+    if len(raw) != size or not inflater.eof or inflater.unused_data:
         raise ValueError('Invalid DCX compressed data or size')
     return raw
 
 
 def dcx_pack(raw):
-    # Same DFLT header/level as bbhost; sizes at DCS +4 / +8 are big-endian.
-    header = bytearray.fromhex(
-        '44435800000100000000001800000024000000440000004c'
-        '4443530000000000000000004443500044464c5400000020'
-        '09000000000000000000000000000000000001014443410000000008')
     packed = zlib.compress(raw, 9)
+    header = bytearray(DCX_HEADER)
     struct.pack_into('>II', header, 0x1c, len(raw), len(packed))
     return bytes(header) + packed
 
 
+MIRROR_PART, MIRROR_SLOT, FIRST_ENEMY = 807, 742, 736
+KIND_ENEMY, KIND_DUMMY_ENEMY = 2, 10
+EVENT_PART_FIELDS = (0x48, 0x50, 0x5c)
+PART_PART_FIELDS = (0x128, 0x13c, 0x144, 0x178, 0x180, 0x188)
+
+
 def mirror_layout(raw):
+    """The Dream's layout with the mirror stand-in as an enemy; only from the verified 1.09 file."""
     if sha(raw) != INPUT_SHA:
         raise ValueError('Dream mirror requires the original 1.09 Dream layout')
     b = bytearray(raw)
-    lists = []
-    at = 0x10
-    for index in range(4):
+    tables, at = [], 0x10
+    for n in range(4):
         if not 0 <= at <= len(b) - 16:
             raise ValueError('Invalid MSB list header')
         count = struct.unpack_from('<i', b, at + 4)[0]
         if not 1 <= count <= (len(b) - at - 16) // 8:
             raise ValueError('Invalid MSB list size')
-        offsets = struct.unpack_from(f'<{count}q', b, at + 16)
-        if any(not 0 < value < len(b) for value in offsets[:-1]):
+        *entries, following = struct.unpack_from(f'<{count}q', b, at + 16)
+        if any(not 0 < e < len(b) for e in entries) or (n < 3 and not 0 < following < len(b)):
             raise ValueError('Invalid MSB entry')
-        lists.append((at + 16, offsets[:-1]))
-        at = offsets[-1]
-        if index < 3 and not 0 < at < len(b):
-            raise ValueError('Invalid next MSB list')
-    events, (table, parts) = lists[1][1], lists[3]
-    source, target, first_enemy = 807, 742, 736
-    if len(parts) <= source + 1:
-        raise ValueError('Dream layout contains too few parts')
-    starts = sorted(offset for _, entries in lists for offset in entries)
-
-    def remap(slot):
-        return target if slot == source else slot + 1 if target <= slot < source else slot
-
-    # Every part reference must follow the moved entry, including the moved part itself.
-    for entries, fields in ((events, (0x48, 0x50, 0x5c)),
-                            (parts, (0x128, 0x13c, 0x144, 0x178, 0x180, 0x188))):
-        for entry in entries:
-            end = next((x for x in starts if x > entry), len(b))
-            for field in fields:
-                if entry + field + 4 > end:
-                    continue
-                slot = struct.unpack_from('<i', b, entry + field)[0]
-                if slot >= 0 and remap(slot) != slot:
-                    struct.pack_into('<i', b, entry + field, remap(slot))
-    for i, entry in enumerate(parts):
-        kind, number = struct.unpack_from('<ii', b, entry + 0x14)
-        if kind == 2 and i >= target:
-            struct.pack_into('<i', b, entry + 0x18, number + 1)
-        if kind == 10 and i > source:
-            struct.pack_into('<i', b, entry + 0x18, number - 1)
-    moved = parts[source]
-    if struct.unpack_from('<i', b, moved + 0x14)[0] != 10:
+        tables.append((at + 16, list(entries)))
+        at = following
+    events = tables[1][1]
+    parts_table, parts = tables[3]
+    if len(parts) <= MIRROR_PART + 1 or not parts[MIRROR_SLOT] < parts[MIRROR_PART] < parts[MIRROR_PART + 1]:
+        raise ValueError('Dream layout parts are not as expected')
+    if struct.unpack_from('<i', b, parts[MIRROR_PART] + 0x14)[0] != KIND_DUMMY_ENEMY:
         raise ValueError('Mirror stand-in is not a DummyEnemy')
-    struct.pack_into('<ii', b, moved + 0x14, 2, target - first_enemy)
-    start, old, end = parts[target], parts[source], parts[source + 1]
-    if not start < old < end:
-        raise ValueError('Dream parts are not ordered')
-    b[start:end] = b[old:end] + b[start:old]
-    size = end - old
-    for i in range(target, source):
-        struct.pack_into('<q', b, table + 8 * (i + 1), parts[i] + size)
-    struct.pack_into('<q', b, table + 8 * target, start)
+
+    def moved(index):
+        if index == MIRROR_PART:
+            return MIRROR_SLOT
+        return index + 1 if MIRROR_SLOT <= index < MIRROR_PART else index
+
+    boundaries = sorted(e for _, entries in tables for e in entries) + [len(b)]
+    for entries, fields in ((events, EVENT_PART_FIELDS), (parts, PART_PART_FIELDS)):
+        for entry in entries:
+            end = next(x for x in boundaries if x > entry)
+            for field in fields:
+                if entry + field + 4 <= end:
+                    index = struct.unpack_from('<i', b, entry + field)[0]
+                    if index >= 0 and moved(index) != index:
+                        struct.pack_into('<i', b, entry + field, moved(index))
+    for index, entry in enumerate(parts):
+        kind, number = struct.unpack_from('<ii', b, entry + 0x14)
+        if kind == KIND_ENEMY and index >= MIRROR_SLOT:
+            struct.pack_into('<i', b, entry + 0x18, number + 1)
+        elif kind == KIND_DUMMY_ENEMY and index > MIRROR_PART:
+            struct.pack_into('<i', b, entry + 0x18, number - 1)
+    struct.pack_into('<ii', b, parts[MIRROR_PART] + 0x14, KIND_ENEMY, MIRROR_SLOT - FIRST_ENEMY)
+    first, stand_in, after = parts[MIRROR_SLOT], parts[MIRROR_PART], parts[MIRROR_PART + 1]
+    b[first:after] = b[stand_in:after] + b[first:stand_in]
+    size = after - stand_in
+    struct.pack_into('<q', b, parts_table + 8 * MIRROR_SLOT, first)
+    for index in range(MIRROR_SLOT, MIRROR_PART):
+        struct.pack_into('<q', b, parts_table + 8 * (index + 1), parts[index] + size)
     if sha(b) != OUTPUT_SHA:
         raise ValueError('Mirror layout does not match the verified result')
     return bytes(b)
 
 
 def verify_executable(elf_path):
-    # The two full-file identities have identical loadable 1.09 code. A version string
-    # alone, or BB_SKIP_GAME_CHECK, never enables address-based hooks.
     elf = Path(elf_path).read_bytes()
     if sha(elf) not in EBOOT_SHA:
         raise ValueError('Mirror hooks require the verified 1.09 executable')
@@ -147,7 +145,6 @@ def prepare_mirror(game, elf_path, cache):
     raw = dcx_unpack((Path(game) / LAYOUT).read_bytes())
     rewritten = mirror_layout(raw)
     destination = Path(cache) / 'dream-mirror' / LAYOUT
-    # Verify cached output as well; no stale marker bypasses either input check.
     try:
         if sha(dcx_unpack(destination.read_bytes())) == OUTPUT_SHA:
             return destination.resolve()
@@ -161,19 +158,11 @@ def prepare_mirror(game, elf_path, cache):
 
 
 SFX = Path('dvdroot_ps4/sfx')
-# Ebrietas' trail effect, f001251720.fxr, in Upper Cathedral Ward's effects (m24_02) and in the
-# chalice dungeons' (m29a, her chalice fight): on the engine its rock particles pile up to
-# thousands of draws a frame in her rock attacks (90 to 40 FPS; with the game's 160 MiB GPU range
-# allocator, the device lost before 0.9.37 beta 8). Nexus mod 41 ("SFX Fix") replaces it with a
-# byte copy of f001454436.fxr from the Fishing Hamlet's effects (m36); this makes the same change
-# from the player's own files. Each binder is the 1.09 one (the .dcx as shipped, or its unpacked
-# bytes) or is left as it is: a mod that changes it wins.
 EFFECT_NAME = 'f001251720.fxr'
 EFFECT_SHA = '988c55ba0f689bc0b4f8e7a9f9b184ef8cd9bcd4601b2c925387ff5ce3fc9f0b'
 EFFECT_SOURCE = (SFX / 'frpg_sfxbnd_m36.ffxbnd.dcx', 'f001454436.fxr',
                  '990644087f325191d34fd2f4b633a9f7c6a63ce9d71786c4289a7cae5cdfb4e0')
 EFFECT_FIXES = (
-    # binder; sha256 of the 1.09 .dcx, of it unpacked, and of the result unpacked
     (SFX / 'frpg_sfxbnd_m24_02.ffxbnd.dcx',
      '6cab7031c5fafba95ed71c4ddb86e590b77b2d669988e8b53bed159e1dbc1015',
      'b0bd083145a753a667c4021a3f817879646b1f8b84201e2774daa17e1c5b0e99',
@@ -183,7 +172,7 @@ EFFECT_FIXES = (
      '085f2d3d60d54e50fa981c7aad89ca42f47b3a733a78b40ee98f572883ce122b',
      '8348b2b7f110feb7ca0a444e8331886b85fe24ba422b8b9909cdc5d551ffcb07'),
 )
-BND4_ENTRY = 0x24  # flags, -1, packed and unpacked size (i64), data offset (u32), id, name offset
+BND4_ENTRY = 0x24
 
 
 def binder_entries(bnd):
@@ -238,7 +227,7 @@ def prepare_effect_fixes(game, cache, log=print):
         try:
             packed = (game / relative).read_bytes()
         except OSError:
-            continue  # not installed
+            continue
         raw = None
         if sha(packed) != packed_sha:
             raw = dcx_unpack(packed)

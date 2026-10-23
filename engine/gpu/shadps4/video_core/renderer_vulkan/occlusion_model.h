@@ -1,94 +1,173 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: the PS4 depth-block counter model behind real occlusion results (vk_occlusion.h),
-// without Vulkan, so the arithmetic is unit-tested (tests/test_occlusion.cpp).
+// SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
+#include <optional>
 
 namespace OcclusionModel {
-
 constexpr std::uint64_t ValidBit = 1ull << 63;
-/// What a draw without a usable result adds: plainly visible (the old fake's step), so any
-/// begin/end pair around it reads visible, never occluded.
-constexpr std::uint64_t Unmeasured = 0x2FFFFFFull;
-constexpr std::uint32_t MaxPipes = 16;
+constexpr std::uint32_t MaxDbs = 16;
+constexpr std::uint64_t PlainlyVisible = 0x2FFFFFFull;
 
-/// DB `k`'s share of the running total: the shares sum to `total` and each grows with it, so the
-/// game's sum of end - begin over the DBs is exactly the samples in between.
-constexpr std::uint64_t Share(std::uint64_t total, std::uint32_t pipes, std::uint32_t k) {
-    return total / pipes + (k < total % pipes ? 1 : 0);
+constexpr std::uint64_t DbPart(std::uint64_t count, std::uint32_t dbs, std::uint32_t db) {
+    const std::uint64_t each = count / dbs;
+    return db < count % dbs ? each + 1 : each;
 }
 
-enum class Block : std::uint32_t { Occluded = 0, Visible = 1, NotReady = 2 };
-
-/// A Gnm block ({begin, end} per DB, 16 bytes apart) as the game reads it.
-inline Block ReadBlock(const std::uint64_t* words, std::uint32_t pipes) {
-    std::uint64_t sum = 0;
-    for (std::uint32_t k = 0; k < pipes; ++k) {
-        const std::uint64_t b = words[2 * k], e = words[2 * k + 1];
-        if (!(b & ValidBit) || !(e & ValidBit)) {
-            return Block::NotReady;
-        }
-        sum += (e & ~ValidBit) - (b & ~ValidBit);
+inline void FillBlock(std::uint64_t* words, std::uint32_t dbs, std::uint64_t base,
+                      std::uint64_t samples) {
+    for (std::uint32_t db = 0; db < dbs; ++db) {
+        words[2 * db] = DbPart(base, dbs, db) | ValidBit;
+        words[2 * db + 1] = DbPart(base + samples, dbs, db) | ValidBit;
     }
-    return sum != 0 ? Block::Visible : Block::Occluded;
 }
 
-/// 16.16 factor taking samples counted at `width` x `height` (reduced scene targets) back to the
-/// PS4's 1920x1080; never below 1.
-constexpr std::uint32_t SampleScale(std::uint32_t width, std::uint32_t height) {
-    const std::uint64_t pixels = std::uint64_t(width) * height;
+enum class Answer : std::uint8_t { Hidden, Seen, Pending };
+
+inline Answer ReadAnswer(const std::uint64_t* words, std::uint32_t dbs) {
+    std::uint64_t passed = 0;
+    for (std::uint32_t i = 0; i < 2 * dbs; i += 2) {
+        if ((words[i] & words[i + 1] & ValidBit) == 0) {
+            return Answer::Pending;
+        }
+        passed += (words[i + 1] & ~ValidBit) - (words[i] & ~ValidBit);
+    }
+    return passed == 0 ? Answer::Hidden : Answer::Seen;
+}
+
+constexpr std::uint32_t ScaleToNative(std::uint32_t width, std::uint32_t height) {
     constexpr std::uint64_t native = 1920ull * 1080ull;
-    if (pixels == 0 || pixels >= native) {
-        return 1u << 16;
-    }
-    return static_cast<std::uint32_t>((native << 16) / pixels);
+    const std::uint64_t area = std::uint64_t(width) * height;
+    return area == 0 || area >= native ? 1u << 16
+                                       : static_cast<std::uint32_t>((native << 16) / area);
 }
 
-/// One query's contribution: unavailable reads visible; an imprecise device's nonzero result
-/// (0/1 on NVIDIA) reads plainly visible; a precise count is scaled, rounding up.
-constexpr std::uint64_t Samples(std::uint64_t value, bool available, bool precise,
-                                std::uint32_t scale) {
-    if (!available) {
-        return Unmeasured;
+constexpr std::uint64_t QueryCount(std::uint64_t raw, bool available, bool precise,
+                                   std::uint32_t scale) {
+    if (!available || (!precise && raw != 0)) {
+        return PlainlyVisible;
     }
-    if (!precise) {
-        return value ? Unmeasured : 0;
-    }
-    return std::max<std::uint64_t>((value * scale + 0xFFFF) >> 16, value);
+    const std::uint64_t scaled = (raw * scale + 0xFFFFu) >> 16;
+    return scaled < raw ? raw : scaled;
 }
 
-/// SET_PREDICATION's outcome for the draws up to its clear: unknown draws (a wrong "occluded"
-/// makes geometry vanish), else draw when the visibility is the one asked for.
-constexpr bool PredicatedDraws(bool visible, bool unknown, bool draw_if_visible) {
-    return unknown || visible == draw_if_visible;
+constexpr bool DrawPredicated(bool any_seen, bool any_unknown, bool draw_when_seen) {
+    return any_unknown || any_seen == draw_when_seen;
 }
 
-/// Hysteresis per Gnm block against flicker (lamps and their glare at the edge of occluders:
-/// sample counts of small proxies going 0/N/0 with the jittered, reduced scene; candles in the
-/// Nightmare of Mensis still flickered with three): a block
-/// reports the largest of its last `Depth` measured counts. It reads occluded only after Depth
-/// results in a row found no samples, visible as soon as one finds any. Results it has not seen
-/// count as `UnknownPast`: visible, with the smallest count (a count-scaled effect stays dark
-/// rather than flashing).
-struct BlockHistory {
-    static constexpr std::uint32_t Depth = 5;
-    static constexpr std::uint64_t UnknownPast = 1;
-    std::uint64_t previous[Depth - 1] = {UnknownPast, UnknownPast, UnknownPast, UnknownPast};
+class SteadyCount {
+public:
+    static constexpr std::uint32_t Window = 5;
+    static constexpr std::uint64_t Unseen = 1;
 
-    /// The count to report for the block's new result `measured`, which is remembered.
-    constexpr std::uint64_t Report(std::uint64_t measured) {
-        std::uint64_t reported = measured;
-        for (const std::uint64_t p : previous) {
-            reported = std::max(reported, p);
+    constexpr std::uint64_t Add(std::uint64_t count) {
+        recent[slot] = count;
+        slot = slot + 1 == Window ? 0 : slot + 1;
+        std::uint64_t largest = 0;
+        for (const std::uint64_t c : recent) {
+            largest = std::max(largest, c);
         }
-        for (std::uint32_t i = Depth - 2; i > 0; --i) {
-            previous[i] = previous[i - 1];
-        }
-        previous[0] = measured;
-        return reported;
+        return largest;
     }
+
+private:
+    std::array<std::uint64_t, Window> recent{Unseen, Unseen, Unseen, Unseen, Unseen};
+    std::uint32_t slot = 0;
 };
 
-} // namespace OcclusionModel
+struct OpenBlock {
+    std::uint64_t block;
+    std::uint64_t issued;
+    std::uint64_t first_query;
+    std::uint64_t frame;
+};
+
+struct ClosedBlock {
+    std::uint64_t first_query;
+    std::uint64_t queries;
+    std::uint64_t frame;
+    bool complete;
+};
+
+class OpenBlocks {
+public:
+    static constexpr std::uint32_t Capacity = 64;
+
+    [[nodiscard]] bool Empty() const noexcept {
+        return size == 0;
+    }
+    [[nodiscard]] std::uint32_t Size() const noexcept {
+        return size;
+    }
+
+    [[nodiscard]] bool WantsQuery(std::uint64_t next_query, std::uint64_t budget) const noexcept {
+        for (std::uint32_t i = 0; i < size; ++i) {
+            if (next_query - open[i].first_query < budget) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void Begin(std::uint64_t block, std::uint64_t issued, std::uint64_t next_query,
+               std::uint64_t frame) noexcept {
+        Remove(block);
+        if (size == Capacity) {
+            RemoveAt(0);
+        }
+        open[size++] = {block, issued, next_query, frame};
+    }
+
+    std::optional<ClosedBlock> End(std::uint64_t block, std::uint64_t issued,
+                                   std::uint64_t next_query) noexcept {
+        for (std::uint32_t i = 0; i < size; ++i) {
+            if (open[i].block != block) {
+                continue;
+            }
+            const OpenBlock b = open[i];
+            RemoveAt(i);
+            const std::uint64_t queries = next_query - b.first_query;
+            return ClosedBlock{b.first_query, queries, b.frame, issued - b.issued == queries};
+        }
+        return std::nullopt;
+    }
+
+    void Expire(std::uint64_t now, std::uint64_t frames) noexcept {
+        std::uint32_t kept = 0;
+        for (std::uint32_t i = 0; i < size; ++i) {
+            if (now - open[i].frame <= frames) {
+                open[kept++] = open[i];
+            }
+        }
+        size = kept;
+    }
+
+    [[nodiscard]] std::uint64_t FirstNeeded(std::uint64_t next_query) const noexcept {
+        std::uint64_t first = next_query;
+        for (std::uint32_t i = 0; i < size; ++i) {
+            first = std::min(first, open[i].first_query);
+        }
+        return first;
+    }
+
+private:
+    void Remove(std::uint64_t block) noexcept {
+        for (std::uint32_t i = 0; i < size; ++i) {
+            if (open[i].block == block) {
+                RemoveAt(i);
+                return;
+            }
+        }
+    }
+    void RemoveAt(std::uint32_t i) noexcept {
+        std::copy(open.begin() + i + 1, open.begin() + size, open.begin() + i);
+        --size;
+    }
+
+    std::array<OpenBlock, Capacity> open{};
+    std::uint32_t size = 0;
+};
+
+}

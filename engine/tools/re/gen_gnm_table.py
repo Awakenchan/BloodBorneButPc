@@ -40,8 +40,6 @@ def main():
         fn, size, sites, ext = int(p[0], 16), int(p[2]), int(p[4]), int(p[6])
         if size < 16:
             continue
-        # Command buffer methods are hooked even when only libGnm itself calls them (a caller in
-        # Gnmx may not be hooked); other functions only when the engine calls them.
         cb = any(re.search(r'call\s+QWORD PTR \[r\w+\+0x18\]', code[x][1])
                  for x in range(fn, fn + size) if x in code)
         if ext == 0 and not cb:

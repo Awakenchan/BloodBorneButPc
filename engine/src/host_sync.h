@@ -1,6 +1,3 @@
-/* The runtime's own locks, condition variables, threads and clocks. Linux: pthreads and
- * clock_gettime, as before. Windows: the native primitives directly (slim reader/writer locks,
- * condition variables, CRT threads, QueryPerformanceCounter) — no POSIX layer in between. */
 #ifndef BB_HOST_SYNC_H
 #define BB_HOST_SYNC_H
 #include <stdint.h>
@@ -23,7 +20,6 @@ static inline void host_lock(HostMutex *m) { AcquireSRWLockExclusive(m); }
 static inline int host_trylock(HostMutex *m) { return TryAcquireSRWLockExclusive(m) != 0; }
 static inline void host_unlock(HostMutex *m) { ReleaseSRWLockExclusive(m); }
 
-/* SRW locks are not recursive: the owner and depth make this one so. */
 typedef struct { SRWLOCK lock; DWORD owner; unsigned depth; } HostRecursiveMutex;
 #define HOST_RECURSIVE_MUTEX_INIT {SRWLOCK_INIT, 0, 0}
 static inline void host_recursive_lock(HostRecursiveMutex *m) {
@@ -53,8 +49,6 @@ typedef CONDITION_VARIABLE HostCond;
 #define HOST_COND_INIT CONDITION_VARIABLE_INIT
 static inline void host_cond_init(HostCond *c) { InitializeConditionVariable(c); }
 static inline void host_cond_wait(HostCond *c, HostMutex *m) { SleepConditionVariableSRW(c, m, INFINITE, 0); }
-/* 0 when woken (spuriously too), ETIMEDOUT once at least ns passed: Windows waits in whole
- * milliseconds, so the timeout is rounded up. */
 static inline int host_cond_timedwait(HostCond *c, HostMutex *m, uint64_t ns) {
     uint64_t ms = (ns + 999999) / 1000000;
     if (SleepConditionVariableSRW(c, m, ms >= INFINITE ? INFINITE - 1 : (DWORD)ms, 0)) return 0;
@@ -67,7 +61,6 @@ typedef uint64_t HostThreadId;
 static inline HostThreadId host_thread_id(void) { return GetCurrentThreadId(); }
 static inline int host_thread_equal(HostThreadId a, HostThreadId b) { return a == b; }
 static inline void host_yield(void) { SwitchToThread(); }
-/* The calling thread above the others (1) or back at normal priority (0). */
 static inline void host_thread_set_high_priority(int high) {
     SetThreadPriority(GetCurrentThread(), high ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_NORMAL);
 }
@@ -109,18 +102,14 @@ typedef pthread_t HostThreadId;
 static inline HostThreadId host_thread_id(void) { return pthread_self(); }
 static inline int host_thread_equal(HostThreadId a, HostThreadId b) { return pthread_equal(a, b); }
 static inline void host_yield(void) { sched_yield(); }
-/* Raising a thread's priority needs privileges on Linux: left to the scheduler. */
 static inline void host_thread_set_high_priority(int high) { (void)high; }
 typedef pthread_t HostThread;
 #endif
 
-/* A thread of the runtime (not a guest thread: runtime_thread.c creates those). stack: bytes,
- * 0 for the default. Returns 0 or an errno value. */
 int host_thread_start(HostThread *thread, size_t stack, void *(*entry)(void *), void *argument);
 int host_thread_join(HostThread thread);
 void host_thread_detach(HostThread thread);
 
-/* Clocks: monotonic (steady, arbitrary origin) and realtime (since 1970), in nanoseconds. */
 uint64_t host_monotonic_ns(void);
 uint64_t host_realtime_ns(void);
 void host_sleep_ns(uint64_t ns);

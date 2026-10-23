@@ -1,4 +1,3 @@
-// bbport: SDL3 window for the Vulkan swapchain (X11, Wayland or Win32).
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -60,7 +59,6 @@ static void ApplyBloodborneWindowIcon(void* hwnd_ptr, void*& big_storage, void*&
 namespace {
 std::atomic<u32> display_refresh_hz{0};
 
-// Window thread only (SDL video calls belong to the thread that made the window).
 void UpdateDisplayRefresh(SDL_Window* window) {
     const SDL_DisplayID display = SDL_GetDisplayForWindow(window);
     const SDL_DisplayMode* mode = display ? SDL_GetCurrentDisplayMode(display) : nullptr;
@@ -68,7 +66,6 @@ void UpdateDisplayRefresh(SDL_Window* window) {
         display_refresh_hz.store(u32(mode->refresh_rate + 0.5f), std::memory_order_relaxed);
     }
 #ifdef _WIN32
-    // The display's vblanks, for flips locked to them (lantern_pacing.h, driver.cpp).
     const HWND hwnd = static_cast<HWND>(
         SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
     MONITORINFOEXW info{};
@@ -79,12 +76,8 @@ void UpdateDisplayRefresh(SDL_Window* window) {
     }
 #endif
 }
-} // namespace
+}
 
-// bbport: the peak brightness Windows reports for the window's display (HDR output's peak when
-// hdr_peak_auto is on): DXGI's MaxLuminance of the output on the window's monitor, which is the
-// Windows HDR Calibration app's value once it has run, else the display's own (EDID). dxgi.dll is
-// loaded here, not linked. Window thread; 0 when unknown (not Windows, no such output).
 static void UpdateDisplayPeak(SDL_Window* window) {
     float peak = 0.0f;
 #ifdef _WIN32
@@ -131,19 +124,14 @@ u32 DisplayRefreshHz() {
 }
 
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
-    // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         UNREACHABLE_MSG("Failed to initialize SDL video: {}", SDL_GetError());
     }
-    // bbport: SDL makes a focused fullscreen window topmost, which put the launcher's trophy
-    // notification (a topmost window of its own) under the game: its sound played, nothing showed.
     SDL_SetHint(SDL_HINT_WINDOW_ALLOW_TOPMOST, "0");
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
-    // The launcher resolves the saved Windows monitor on every launch. Select it before
-    // creating the HWND and Vulkan surface, so fullscreen and HDR start on that display.
     if (const char* selection = std::getenv("BB_MONITOR_BOUNDS"); selection && *selection) {
         int x, y, w, h;
         char trailing;
@@ -196,9 +184,6 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
         window_info.type = WindowSystemType::Wayland;
         window_info.display_connection = SDL_GetPointerProperty(wp, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
         window_info.render_surface = SDL_GetPointerProperty(wp, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
-        // bbport: the compositor's first configure before Vulkan attaches a buffer to the surface
-        // ("xdg_surface: attached a buffer before configure event" ended the connection with
-        // NVIDIA 615 drivers on KDE Plasma, 0.9.37 beta 5).
         if (!SDL_SyncWindow(window)) {
             std::printf("Display: the Wayland compositor has not configured the window yet: %s\n", SDL_GetError());
         }
@@ -228,7 +213,7 @@ WindowSDL::~WindowSDL() {
 
 namespace {
 std::atomic<bool> window_unfocused{false}, window_minimized{false};
-} // namespace
+}
 
 bool WindowInBackground() {
     return window_unfocused.load(std::memory_order_relaxed) ||
@@ -238,7 +223,7 @@ bool WindowInBackground() {
 u32 BackgroundFrameLimit() {
     static const u32 limit = [] {
         const char* online = std::getenv("BB_ONLINE");
-        if (online && online[0] == '1') return 0u; // co-op and invasions keep their pace
+        if (online && online[0] == '1') return 0u;
         const char* env = std::getenv("BB_BACKGROUND_FPS");
         return env && env[0] ? u32(std::clamp(std::atoi(env), 0, 240)) : 30u;
     }();
@@ -248,8 +233,6 @@ u32 BackgroundFrameLimit() {
 void WindowSDL::BeginTextInput(const std::string& initial, const std::string& prompt) {
     std::scoped_lock lock{text_mutex};
     text = initial;
-    // The text the field starts with (the player name, or what the game put there) is selected:
-    // the first key typed replaces it (GitHub issue 54), Enter or Cross still accepts it.
     text_selected = !initial.empty();
     text_prompt = prompt;
     text_state = 0;
@@ -273,7 +256,7 @@ void WindowSDL::UpdateTextTitle() {
 bool WindowSDL::PollEvents() {
     {
         std::scoped_lock lock{text_mutex};
-        if (text_requested) { // SDL text input must be toggled from the window thread
+        if (text_requested) {
             text_requested = false;
             text_active = true;
             SDL_StartTextInput(window);
@@ -313,7 +296,7 @@ bool WindowSDL::PollEvents() {
                 text.clear();
                 text_selected = false;
             } else if (event.key.key == SDLK_BACKSPACE && !text.empty()) {
-                size_t cut = text.size() - 1; // drop one UTF-8 code point
+                size_t cut = text.size() - 1;
                 while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
                 text.erase(cut);
             } else if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER || event.key.key == SDLK_ESCAPE) {
@@ -324,8 +307,6 @@ bool WindowSDL::PollEvents() {
             UpdateTextTitle();
             continue;
         }
-        // The controller finishes the text dialog too: Cross (South) accepts, Circle (East)
-        // cancels. From Supermedo/bloodborne_pc 1d34202.
         if (text_active && event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
             (event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH ||
              event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST)) {
@@ -367,7 +348,6 @@ bool WindowSDL::PollEvents() {
             break;
         }
         case SDL_EVENT_KEY_DOWN:
-            // F11: borderless fullscreen at the desktop size, or back to the window.
             if (event.key.key == SDLK_F11 && !event.key.repeat) {
                 SDL_SetWindowFullscreen(window, !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN));
             }
@@ -380,9 +360,6 @@ bool WindowSDL::PollEvents() {
             break;
         }
     }
-    // bbport: the background state read from the window too: a focus or restore event the window
-    // never got (another screen used, then the game again) kept the game at the background FPS
-    // until a restart (0.9.37 beta 4).
     {
         const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
         bool unfocused = !(flags & SDL_WINDOW_INPUT_FOCUS);
@@ -402,13 +379,9 @@ bool WindowSDL::PollEvents() {
     return is_open;
 }
 
-// Issue #3: the OS cursor over the game. bbport: with hide_cursor (Settings, on by default) it
-// goes 2 s after the mouse last moved and comes back when it moves - a controller player never
-// sees it, a mouse player in the menus has it while using it - and it is always shown while the
-// settings menu is open. The mouse camera (relative mode) hides it itself (input/input.cpp).
 void WindowSDL::UpdateCursor() {
     if (SDL_GetWindowRelativeMouseMode(window)) {
-        cursor_hidden = false; // input.cpp shows it again when the mouse camera ends
+        cursor_hidden = false;
         return;
     }
     const bool hide = BbSettings::Get().hide_cursor && !BbOverlay::MenuOpen() &&
@@ -419,4 +392,4 @@ void WindowSDL::UpdateCursor() {
     }
 }
 
-} // namespace Frontend
+}

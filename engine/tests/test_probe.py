@@ -21,7 +21,6 @@ def package(code, relocs=(), names=(), capabilities=None):
 
 def native_package(name='fixture-native', binding_address=4112, binding_kind=1,
                    lib_flags=5, init=b'\x31\xc0\xc3', native=b'\xc3', metadata=None):
-    # Main calls an import then tail-jumps to the terminal diagnostic import.
     code = b'\x48\x83\xec\x08\xff\x15\x16\0\0\0\x48\x83\xc4\x08\xff\x25\x14\0\0\0'
     image = code.ljust(4096,b'\0') + init.ljust(16,b'\0') + native
     image = image.ljust(12288,b'\0')
@@ -54,7 +53,6 @@ class LoaderTests(unittest.TestCase):
                                   capture_output=True, text=True, timeout=5)
 
     def test_original_instruction_reaches_named_import(self):
-        # jmp [rip+2]; two padding bytes; relocated function pointer at +8
         r = self.run_image(package(b'\xff\x25\x02\0\0\0\x90\x90', [(8, 1, 0, 0)], ['fixture-import']))
         self.assertEqual(r.returncode, 20, r.stderr)
         self.assertIn('first unsupported PS4 import: fixture-import', r.stdout)
@@ -97,7 +95,6 @@ class LoaderTests(unittest.TestCase):
         self.assertNotIn('Entering original',r.stdout)
 
     def test_base_relative_address_is_relocated(self):
-        # jump via a relative relocation to code at +16, then to an import at +24
         code = b'\xff\x25\x02\0\0\0\x90\x90' + b'\0'*8 + b'\xff\x25\x02\0\0\0\x90\x90'
         r = self.run_image(package(code, [(8, 0, 16, 0), (24, 1, 0, 0)], ['after-relative-jump']))
         self.assertEqual(r.returncode, 20, r.stderr)
@@ -119,7 +116,6 @@ class LoaderTests(unittest.TestCase):
         self.assertIn('at guest offset 0x0,', r.stderr)
 
     def test_runtime_returns_from_verified_init_env(self):
-        # Align stack, call _init_env through +32, then tail-jump to unknown +40.
         code = b'\x48\x83\xec\x08\xff\x15\x16\0\0\0\x48\x83\xc4\x08\xff\x25\x14\0\0\0'
         data = package(code, [(32,1,0,0),(40,1,1,0)], ['bzQExy189ZI#q#q','after-init'], 1)
         r = self.run_image(data)

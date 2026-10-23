@@ -1,107 +1,80 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from bbhost src/engine/rebirth_script.cpp at 7c790536.
 #include "rebirth_script.h"
 
-#include "sha256.h"
 #include "esd.h"
-
-#include <cstring>
-#include <initializer_list>
+#include "sha256.h"
 
 namespace {
+constexpr const char* kGameScript = "e56163a1bb8f46ae59368160e522e11f970e2268f6d356b823e4d72a7c969ff1";
+constexpr const char* kOurScript = "94a2a6be1e92ba835be681f77f58ead254f65ca74c346b8a34993899838c63c9";
+constexpr std::int64_t kFillList = 2147483640, kTalk = 2147483641;
+constexpr std::int64_t kListEnd = 3;
+constexpr std::int64_t kChoice = 1, kEnd = 6;
 
-constexpr const char* kInputSha256 = "e56163a1bb8f46ae59368160e522e11f970e2268f6d356b823e4d72a7c969ff1";
-constexpr const char* kOutputSha256 = "e726dec68e8d73c5d5b6ba1875fabd6a85320b6b14f95ca3d6729143a3c362b2";
-constexpr std::int64_t kBuildGroup = 2147483640;   // fills the talk list
-constexpr std::int64_t kHandleGroup = 2147483641;  // shows it and acts on the choice
-
-using Code = std::vector<std::uint8_t>;
-
-Code cat(std::initializer_list<Code> parts) {
-    Code out;
-    for (const Code& p : parts) out.insert(out.end(), p.begin(), p.end());
-    return out;
+esd::Command Cmd(std::int32_t id, std::vector<std::int64_t> args = {}) {
+    esd::Command c{1, id, {}};
+    for (const std::int64_t a : args) c.args.push_back(esd::End(esd::Int(a)));
+    return c;
 }
-const Code kEq{0x95}, kReg0{0xaf};
-Code eq(const Code& lhs, std::int64_t rhs) { return esd::done(cat({lhs, esd::lit(rhs), kEq})); }
-Code arg(std::int64_t v) { return esd::done(esd::lit(v)); }
-
-}  // namespace
+esd::Command Wait() { return {1, 68, {esd::End(esd::Real(0.33))}}; }
+esd::Command Message(std::int32_t text) { return Cmd(17, {7, text, 1, 0, 1}); }
+esd::Bytes Flag(std::uint32_t flag, std::int64_t value) { return esd::Equals(esd::Call(15, {flag}), value); }
+}
 
 bool rebirth_script(std::vector<std::uint8_t>& bytes, std::string* why) {
     const auto fail = [&](const char* reason) {
         if (why) *why = reason;
         return false;
     };
-    if (sha256_hex(bytes.data(), bytes.size()) != kInputSha256) return fail("not the 1.09 t242307 (the Altar of Despair)");
-    esd::Script s;
-    if (!esd::parse(bytes, s, why)) return false;
-    esd::Group* build = s.group(kBuildGroup);
-    esd::Group* handle = s.group(kHandleGroup);
-    if (!build || !handle) return fail("the altar's menu groups are missing");
-    const int list_rest = s.state_in(*build, 3), choice = s.state_in(*handle, 1), end = s.state_in(*handle, 6);
-    if (list_rest < 0 || choice < 0 || end < 0) return fail("the altar's menu states are missing");
-    auto cmd = [&](std::int32_t id, std::initializer_list<std::int64_t> args) {
-        std::vector<Code> a;
-        for (const std::int64_t v : args) a.push_back(arg(v));
-        return s.cmd(1, id, a);
-    };
+    if (sha256_hex(bytes.data(), bytes.size()) != kGameScript) return fail("not 1.09's t242307 (the Altar of Despair)");
+    auto script = esd::Script::Read(bytes, why);
+    if (!script) return false;
+    esd::Script& s = *script;
+    const esd::Ref list_end = s.State(kFillList, kListEnd), choice = s.State(kTalk, kChoice), end = s.State(kTalk, kEnd);
+    if (list_end == esd::kNone || choice == esd::kNone || end == esd::kNone) return fail("the altar's menu states are missing");
     using namespace rebirth;
 
-    // The entry, ahead of "Do Nothing".
-    {
-        std::vector<int> items{cmd(19, {3, kTextOption, -1})};
-        const auto& old = s.runs[static_cast<std::size_t>(s.states[static_cast<std::size_t>(list_rest)].entry)].items;
-        items.insert(items.end(), old.begin(), old.end());
-        s.states[static_cast<std::size_t>(list_rest)].entry = s.run(items);
-    }
-    // The new states, 7..15 of the handling group.
-    int st[16];
-    for (int id = 7; id <= 15; ++id) {
-        st[id] = s.state(id);
-        handle = s.group(kHandleGroup);
-        handle->states.push_back(st[id]);
-    }
-    auto set = [&](int state, int conds, int entry, int whiles) {
-        esd::State& x = s.states[static_cast<std::size_t>(state)];
-        if (conds >= 0) x.conds = conds;
-        if (entry >= 0) x.entry = entry;
-        if (whiles >= 0) x.whiles = whiles;
+    s.SetStateList(list_end, 1, s.NewCommands({Cmd(19, {3, kTextOption, -1})}, s.Commands(s.StateList(list_end, 1))));
+
+    enum { kChosen = 7, kNoStone, kReset, kFailed, kLevelUp, kAcceptUndo, kUndo };
+    esd::Ref st[kUndo + 1]{};
+    for (int id = kChosen; id <= kUndo; ++id) st[id] = s.NewState(kTalk, id);
+    const auto conds = [&](esd::Ref state, std::vector<std::pair<esd::Ref, esd::Bytes>> to) {
+        std::vector<esd::Ref> list;
+        for (auto& [target, expression] : to) list.push_back(s.NewCondition(target, expression));
+        s.SetStateList(state, 0, s.NewConditions(list));
     };
-    Code wait_arg{0x81, 0, 0, 0, 0, 0, 0, 0, 0, 0xa1};  // the altar's own while-command, c1_68(0.33)
-    const double secs = 0.33;
-    std::memcpy(wait_arg.data() + 1, &secs, 8);
-    const int wait = s.cmd(1, 68, {wait_arg});
-    const Code truth = esd::done(esd::lit(1));
-    const Code dialog_closed = eq(esd::call(58, {0}), 0);
+    const auto entry = [&](esd::Ref state, std::vector<esd::Command> c) { s.SetStateList(state, 1, s.NewCommands(c)); };
+    const auto waits = [&](esd::Ref state) { s.SetStateList(state, 3, s.NewCommands({Wait()})); };
+    const esd::Bytes box_closed = esd::Equals(esd::Call(58, {0}), 0);
 
-    // Chosen: the stone, or a message.
-    set(st[7], s.run({s.cond(st[9], eq(esd::call(47, {3, kStone, 5, 0, 0}), 1)), s.cond(st[8], truth)}), -1, -1);
-    set(st[8], s.run({s.cond(end, dialog_closed)}), s.run({cmd(17, {7, kTextNoStone, 1, 0, 1})}), -1);
-    // The host's reset.
-    set(st[9], s.run({s.cond(st[10], eq(esd::call(15, {kReqReset}), 0))}), s.run({cmd(11, {kFail, 0}), cmd(11, {kReqReset, 1})}), s.run({wait}));
-    set(st[10], s.run({s.cond(st[11], eq(esd::call(15, {kFail}), 1)), s.cond(st[12], truth)}), -1, -1);
-    set(st[11], s.run({s.cond(end, dialog_closed)}), s.run({cmd(11, {kFail, 0}), cmd(17, {7, kTextFail, 1, 0, 1})}), -1);
-    // The level-up menu, until the host says it has closed.
-    set(st[12], s.run({s.cond(st[13], eq(esd::call(15, {kMenu}), 0))}), s.run({cmd(11, {kMenu, 1}), s.cmd(1, 31, {})}), -1);
-    // Leaving it: accept or undo; closing the choice goes back to the menu.
-    set(st[13], s.run({s.cond(st[14], truth)}), s.run({s.cmd(1, 20, {}), cmd(19, {1, kTextAccept, -1}), cmd(19, {2, kTextUndo, -1})}), -1);
-    set(st[14],
-        s.run({s.cond(end, esd::done(cat({esd::lit(23), Code{0x84, 0xa7}, esd::lit(1), kEq}))),  // reg0 = f23(); reg0 == 1: accept
-               s.cond(st[15], eq(kReg0, 2)),                                                     // undo
-               s.cond(st[12], eq(esd::call(53, {}), 0))}),                                       // the choice closed: back to the menu
-        s.run({s.cmd(1, 76, {})}), s.run({wait}));
-    set(st[15], s.run({s.cond(end, eq(esd::call(15, {kReqUndo}), 0))}), s.run({cmd(11, {kReqUndo, 1})}), s.run({wait}));
+    conds(st[kChosen], {{st[kReset], esd::Equals(esd::Call(47, {3, kStone, 5, 0, 0}), 1)}, {st[kNoStone], esd::True()}});
+    entry(st[kNoStone], {Message(kTextNoStone)});
+    conds(st[kNoStone], {{end, box_closed}});
+    entry(st[kReset], {Cmd(11, {kFail, 0}), Cmd(11, {kReqReset, 1})});
+    waits(st[kReset]);
+    conds(st[kReset], {{st[kFailed], Flag(kFail, 1)}, {st[kLevelUp], Flag(kReqReset, 0)}});
+    entry(st[kFailed], {Cmd(11, {kFail, 0}), Message(kTextFail)});
+    conds(st[kFailed], {{end, box_closed}});
+    entry(st[kLevelUp], {Cmd(11, {kMenu, 1}), Cmd(31)});
+    conds(st[kLevelUp], {{st[kAcceptUndo], Flag(kMenu, 0)}});
+    entry(st[kAcceptUndo], {Cmd(20), Cmd(19, {1, kTextAccept, -1}), Cmd(19, {2, kTextUndo, -1}), Cmd(76)});
+    waits(st[kAcceptUndo]);
+    conds(st[kAcceptUndo], {{end, esd::Equals(esd::Call(23, {}, true), 1)},
+                            {st[kUndo], esd::Equals(esd::Register0(), 2)},
+                            {st[kLevelUp], esd::Equals(esd::Call(53, {}), 0)}});
+    entry(st[kUndo], {Cmd(11, {kReqUndo, 1})});
+    waits(st[kUndo]);
+    conds(st[kUndo], {{end, Flag(kReqUndo, 0)}});
 
-    // The choice: entry 3 goes to the new states, ahead of "Do Nothing / closed".
-    {
-        const auto old = s.runs[static_cast<std::size_t>(s.states[static_cast<std::size_t>(choice)].conds)].items;
-        std::vector<int> items{old.front(), s.cond(st[7], eq(kReg0, 3))};
-        items.insert(items.end(), old.begin() + 1, old.end());
-        s.states[static_cast<std::size_t>(choice)].conds = s.run(items);
-    }
-    std::vector<std::uint8_t> out = esd::serialize(s);
-    if (sha256_hex(out.data(), out.size()) != kOutputSha256) return fail("the rewrite is not the known result");
+    std::vector<esd::Ref> choices = s.Conditions(s.StateList(choice, 0));
+    if (choices.empty()) return fail("the altar's choice has no conditions");
+    choices.insert(choices.begin() + 1, s.NewCondition(st[kChosen], esd::Equals(esd::Register0(), 3)));
+    s.SetStateList(choice, 0, s.NewConditions(choices));
+
+    std::vector<std::uint8_t> out = s.Write();
+    if (!esd::Script::Read(out, why)) return false;
+    if (sha256_hex(out.data(), out.size()) != kOurScript) return fail("the edited script is not the known result");
     bytes = std::move(out);
     return true;
 }

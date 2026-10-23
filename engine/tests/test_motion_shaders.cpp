@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Exercise the actual SPIR-V backend without opening a window or loading the game.
-// Output is validated by spirv-val (see docs/upscaler.md).
 #include <cstdlib>
 #include <cassert>
 #include <filesystem>
@@ -29,7 +27,7 @@ static void CheckMetadata() {
         const auto hash = HashCombine(original.pgm_hash, u64{2});
         Serialization::Archive output;
         Serialization::Writer writer{output};
-        writer.Write(u32{7}); // Unchanged metadata schema.
+        writer.Write(u32{7});
         writer.Write(version);
         writer.Write(hash);
         writer.Write(size_t{2});
@@ -49,8 +47,8 @@ static void CheckMetadata() {
         }
         return loaded;
     };
-    assert(!load(true, 7)); // Only baked-address motion binaries must be invalidated.
-    assert(load(true, 8));  // Restores without ObjectMotion or any Vulkan allocation.
+    assert(!load(true, 7));
+    assert(load(true, 8));
     assert(load(false, 7));
     assert(!load(false, 8));
     assert(!load(true, 99));
@@ -80,7 +78,6 @@ static void CheckMotionInterface(const std::vector<u32>& code, bool vertex_motio
             storage[code[i + 2]] = code[i + 3];
         }
         if (op == spv::Op::OpConstant && int64_types.contains(code[i + 1])) {
-            // This minimal shader needs only small offsets/strides, never allocation addresses.
             assert(count == 5 && code[i + 4] == 0 && code[i + 3] <= 32);
         }
         atomic_stores += op == spv::Op::OpAtomicExchange;

@@ -11,10 +11,8 @@ struct alignas(16) RuntimeRecoverBuf {
 #else
 typedef sigjmp_buf RuntimeRecoverBuf;
 #endif
-// Renderer tests have no guest process. Clock/host-thread services work; guest accesses abort.
 extern "C" {
 void* runtime_low_map(size_t, int) { return nullptr; }
-// Engine asset mounts belong to the runtime; GPU-only tests never install them.
 int runtime_file_mount(const char*, const char*) { return -1; }
 void runtime_file_unmount(const char*) {}
 __thread RuntimeRecoverBuf* runtime_fault_recover = nullptr;
@@ -51,7 +49,7 @@ unsigned char* runtime_memory_backing(uint64_t* direct_size) {
     return nullptr;
 }
 #ifdef _WIN32
-int win_mem_commit(uint64_t, uint64_t) { return 0; } // src/win32_memory.c (BB_POOL_LAZY)
+int win_mem_commit(uint64_t, uint64_t) { return 0; }
 #endif
 int runtime_memory_vma_info(uintptr_t, int*, int*, uintptr_t*) { std::abort(); }
 int runtime_memory_direct_phys(uintptr_t, uint64_t*, uintptr_t*) { std::abort(); }

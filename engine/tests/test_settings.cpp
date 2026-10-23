@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport_settings.cpp: the menu saves its keys into lantern.ini and keeps the launcher's (controls).
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -42,8 +41,6 @@ int main() {
     BbSettings::Save();
 
     const std::string saved = Read(path);
-    // The launcher's controls, its other keys and comments stay; the menu's keys are replaced
-    // in place, new ones appended.
     assert(saved.find("# launcher\nupscaler=fsr411\nkey.cross=X, Space\npad.circle=a\nshow_fps=1\n"
                       "fullscreen_hint=1\n") == 0);
     assert(saved.find("menu_pos=0.6250,0.1250\n") != std::string::npos);
@@ -54,7 +51,6 @@ int main() {
     s.menu_y = -1.0f;
     BbSettings::Load();
     assert(s.menu_x == 0.625f && s.menu_y == 0.125f && s.upscaler == BbSettings::UpscalerFsr411);
-    // Replacing an existing file works on Windows too, and must not erase key bindings.
     s.upscaler = BbSettings::UpscalerDlss;
     BbSettings::Save();
     assert(Read(path).find("upscaler=dlss\n") != std::string::npos);
@@ -64,7 +60,6 @@ int main() {
     s.upscaler = BbSettings::UpscalerDlss;
     BbSettings::ConfigureUpscalerSupport(false, false, true);
     assert(s.upscaler == BbSettings::UpscalerDlss && s.dlss_supported);
-    // FSR 4.1.1 without its dot products, on a GPU with FSR 4: FSR 4, not 3.1.
     s.upscaler = BbSettings::UpscalerFsr411;
     BbSettings::ConfigureUpscalerSupport(true, false, false);
     assert(s.upscaler == BbSettings::UpscalerFsr4);
@@ -87,12 +82,9 @@ int main() {
     s.rebirth=false;s.graphics_bloom=1.0f;
     BbSettings::Load();
     assert(s.change_appearance && s.rebirth && s.graphics_controls && s.graphics_bloom==0.7f && s.graphics_shadow_scale==1.4f);
-    // Edited configs must not feed infinite/NaN camera transforms to the engine.
     { std::ofstream file(path); file << "camera_fov_scale=nan\ncamera_distance_scale=-10\ncamera_height_scale=inf\n"; }
     BbSettings::Load();
     assert(s.camera_fov_scale == 1.0f && s.camera_distance_scale == 0.5f && s.camera_height_scale == 1.0f);
-    // Menu languages: the code is read and written back; the added languages translate by the
-    // English text and fall back to it; Russian keeps its own text.
     { std::ofstream file(path); file << "menu_language=pt_BR\n"; }
     BbSettings::Load();
     assert(s.menu_language == BbSettings::MenuLanguage::PortugueseBrazil);
@@ -104,7 +96,6 @@ int main() {
     assert(std::string(BbSettings::MenuText("Close", "Закрыть")) == "Kapat");
     s.menu_language = BbSettings::MenuLanguage::Russian;
     assert(std::string(BbSettings::MenuText("Close", "Закрыть")) == "Закрыть");
-    // Cheats: off, infinite or an amount 1-99, written back as read; anything else is off.
     { std::ofstream file(path); file << "cheat_vials=infinite\ncheat_bullets=50\n"; }
     BbSettings::Load();
     assert(s.cheat_vials == BbSettings::CheatInfinite && s.cheat_bullets == 50);
@@ -116,8 +107,6 @@ int main() {
     assert(s.cheat_vials == BbSettings::CheatOff && s.cheat_bullets == BbSettings::CheatOff);
     BbSettings::Save();
     assert(Read(path).find("cheat_vials=off\n") != std::string::npos);
-    // The other cheats: 0/1 switches, firearm range off/150/200/300, echo multiplier 1/2/5/10;
-    // written back as read, anything else the game's own.
     assert(Read(path).find("cheat_gun_range=off\n") != std::string::npos);
     assert(Read(path).find("cheat_echo_multiplier=1\n") != std::string::npos);
     assert(Read(path).find("cheat_stamina=0\n") != std::string::npos);
@@ -151,14 +140,10 @@ int main() {
     BbSettings::Save();
     assert(Read(path).find("cheat_gun_range=off\n") != std::string::npos);
     assert(Read(path).find("cheat_echo_multiplier=1\n") != std::string::npos);
-    // HDR output: hdr 0/1 (applied at start), paper white 10-500 and peak 10-4000 nits, boost
-    // 0-1; written back as read; anything else clamped or the default.
     assert(Read(path).find("hdr=0\n") != std::string::npos);
     assert(Read(path).find("hdr_paper_white=200\n") != std::string::npos);
     assert(Read(path).find("hdr_peak=1000\n") != std::string::npos);
     assert(Read(path).find("hdr_boost=0.25\n") != std::string::npos);
-    // hdr_mode: native (the default: highlights from the game's HDR scene) or expand (from the
-    // SDR picture); live, so it is not a startup setting.
     assert(s.hdr_mode == BbSettings::HdrModeNative);
     assert(Read(path).find("hdr_mode=native\n") != std::string::npos);
     { std::ofstream file(path); file << "hdr=1\nhdr_paper_white=250\nhdr_peak=20000\nhdr_boost=0.75\n"
@@ -183,7 +168,6 @@ int main() {
     { std::ofstream file(path); file << "hdr_mode=native\n"; }
     BbSettings::Load();
     assert(s.hdr_mode == BbSettings::HdrModeNative);
-    // BB_HDR* override the file.
 #ifdef _WIN32
     _putenv_s("BB_HDR", "1");
     _putenv_s("BB_HDR_PEAK", "600");
@@ -207,15 +191,13 @@ int main() {
 #endif
     BbSettings::Load();
     assert(s.hdr_mode == BbSettings::HdrModeNative);
-    // hdr_peak_auto: the peak the display reports (window.cpp sets hdr_display_peak) when it
-    // reports one, else hdr_peak; BB_HDR_PEAK (a peak for this run) turns it off.
-    assert(!s.hdr_peak_auto); // BB_HDR_PEAK was set above
+    assert(!s.hdr_peak_auto);
     { std::ofstream file(path); file << "hdr_peak=800\nhdr_peak_auto=1\n"; }
     BbSettings::Load();
     assert(s.hdr_peak_auto && s.hdr_peak == 800.0f);
     s.hdr_display_peak = 450.0f;
     assert(BbSettings::HdrPeakNits(s) == 450.0f);
-    s.hdr_display_peak = 5.0f; // nothing usable reported
+    s.hdr_display_peak = 5.0f;
     assert(BbSettings::HdrPeakNits(s) == 800.0f);
     s.hdr_display_peak = 9000.0f;
     assert(BbSettings::HdrPeakNits(s) == BbSettings::HdrPeakMax);
@@ -229,13 +211,11 @@ int main() {
     assert(s.hdr_peak_auto);
     BbSettings::Save();
     assert(Read(path).find("hdr_peak_auto=1\n") != std::string::npos);
-    // The menu's comparison is not saved.
     s.hdr_compare = true;
     BbSettings::Save();
     assert(Read(path).find("hdr_compare") == std::string::npos);
     s.hdr_compare = false;
     s.hdr_display_peak = 0.0f;
-    // The DLSS model and its mip bias (live in the menu), the OptiScaler switches (read at start).
     {
         std::ofstream file(path);
         file << "dlss_preset=e\ndlss_mip_bias=0\noptiscaler_compat=0\noptiscaler_sync_submit=1\n";
@@ -255,7 +235,7 @@ int main() {
         assert(text.find("optiscaler_compat=1\n") != std::string::npos);
         assert(text.find("optiscaler_sync_submit=auto\n") != std::string::npos);
     }
-    assert(!s.startup_optiscaler.compat); // the menu's change waits for a restart
+    assert(!s.startup_optiscaler.compat);
 #ifdef _WIN32
     _putenv_s("BB_DLSS_PRESET", "K");
 #else
@@ -270,11 +250,9 @@ int main() {
 #endif
     assert(BbSettings::DlssPresetFromText("m") == 13 && std::string(BbSettings::DlssPresetText(13)) == "m");
     assert(std::string(BbSettings::DlssPresetText(BbSettings::DlssPresetDefault)) == "default");
-    // Letters DLSS 310.9 removed (A-D) or ignores (G-I, N, O): K.
     assert(BbSettings::DlssPresetFromText("a") == BbSettings::DlssPresetK);
     assert(BbSettings::DlssPresetFromText("h") == BbSettings::DlssPresetK);
     assert(BbSettings::DlssPresetFromText("j") == 10 && BbSettings::DlssPresetFromText("f") == 6);
-    // DLSS Frame Generation, Reflex, the Custom preset's ratio, the mip bias offset.
     {
         std::ofstream file(path);
         file << "frame_gen=dlss\nframe_gen_frames=9\nreflex=boost\npreset=5\nrender_scale=1.3\n"

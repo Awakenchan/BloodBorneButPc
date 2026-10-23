@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Execute production camera motion SPIR-V: distant geometry, sky and stale object vectors.
 #include <array>
 #include <cassert>
 #include <cmath>

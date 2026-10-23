@@ -1,13 +1,10 @@
-/* Exercise actual guest file operations on a linked overlay and writable saves. */
 #include "../src/runtime_file.c"
 #include <assert.h>
 static int32_t guest_errno;
 int32_t *runtime_errno(void) { return &guest_errno; }
 int32_t runtime_guest_errno(int e) { return e; }
-/* Reads into guest memory tell the GPU side (runtime_memory.c); nothing to tell here. */
 void runtime_memory_note_write(uintptr_t address, uint64_t size) { (void)address; (void)size; }
 int runtime_memory_guest_writable(uintptr_t address, uint64_t size) { (void)address; (void)size; return 1; }
-/* Streaming statistics (runtime_thread.c, runtime_host.c): no loader threads here. */
 int runtime_thread_is_loader(void) { return 0; }
 uint64_t host_monotonic_ns(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
@@ -28,7 +25,6 @@ int main(void) {
     assert(!mkdir(game,0755));
     FILE *f=fopen(source,"w"); assert(f); assert(fputs("modded",f)>=0); assert(!fclose(f));
     assert(!symlink(source,link));
-    /* A mod file read in place (BB_MOD_FILES): no link on a drive without them. */
     char added[512],list[512];
     snprintf(added,sizeof(added),"%s/added.bin",root);
     snprintf(list,sizeof(list),"%s/mod-files.txt",root);

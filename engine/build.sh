@@ -133,6 +133,9 @@ if [[ -n $windows ]]; then
     link=(-Wl,--disable-dynamicbase,--disable-high-entropy-va -lwinmm -lws2_32 -lpsapi -flto=thin
           -Wl,--thinlto-cache-dir="$PWD/out/thinlto-cache" -Wl,--thinlto-jobs="${BB_JOBS:-all}"
           -Wl,--thinlto-cache-policy=cache_size_bytes=6g:prune_after=1209600s)
+    # Windows names the executables by this (firewall prompts, Task Manager): Lantern Engine.
+    llvm-windres src/lantern.rc -O coff -o out/lantern.res
+    link+=(out/lantern.res)
 fi
 # Third-party decoders: compiled once, without this project's -Werror policy.
 atrac9=(third_party/LibAtrac9/C/src/*.c)
@@ -162,19 +165,19 @@ echo "Built $PWD/out/bb-probe"
 fi
 # The native start (Windows): boot image, mods, patches, engine assets, then bb-probe. One static
 # program: it runs before bb-probe's DLLs are found, and replaces the Python scripts.
-if [[ -n $windows ]] && [[ ! -f out/bb-start.exe || -n $(find start -newer out/bb-start.exe -print -quit) ]]; then
+if [[ -n $windows ]] && [[ ! -f out/bb-start.exe || -n $(find start src/lantern.rc -newer out/bb-start.exe -print -quit) ]]; then
     "${CXX:-clang++}" -std=c++20 -O2 -Wall -Wextra -Wno-deprecated-declarations -Wno-missing-field-initializers \
-        -municode -static start/*.cpp -lz -lexpat -lbcrypt -o out/bb-start.exe
+        -municode -static start/*.cpp out/lantern.res -lz -lexpat -lbcrypt -o out/bb-start.exe
     echo "Built $PWD/out/bb-start.exe"
 fi
 if [[ ${1:-} == --test ]]; then
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_pad.c "${libraries[@]}" -o out/pad-test
     out/pad-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
+    "$CC" -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_runtime.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
     out/runtime-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_file_mods.c -o out/file-mods-test
     out/file-mods-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_sema.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/sema-test
+    "$CC" -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_sema.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/sema-test
     out/sema-test
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test

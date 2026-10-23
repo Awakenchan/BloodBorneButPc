@@ -4,7 +4,6 @@
 #include "../src/runtime_pad.c"
 
 static int capture, menu;
-// The runtime clock (src/runtime_host.c), not linked into this test.
 uint64_t host_monotonic_ns(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -34,7 +33,6 @@ int main(void) {
     assert(fd>=0);
     close(fd);
     setenv("BB_PAD_FILE",path,1);
-    /* lantern.ini controls: buttons moved, a trigger as a button and a button as a trigger. */
     char config[]="/tmp/bbport-pad-config-XXXXXX";
     int config_fd=mkstemp(config);
     assert(config_fd>=0);
@@ -44,7 +42,6 @@ int main(void) {
     close(config_fd);
     setenv("BB_CONFIG",config,1);
     setenv("SDL_VIDEODRIVER","dummy",1);
-    /* Only the virtual test controller is a gamepad, whatever is plugged in. */
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT,"0x1d50/0x6189");
     assert(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMEPAD));
     assert(pad_init()==0 && pad_open(1,0,0,NULL)==1);
@@ -52,7 +49,6 @@ int main(void) {
     inject(path,"cross l3 touchpad_left");
     assert(pad_read_state(1,&data)==0);
     assert((data.buttons & (BTN_CROSS|BTN_L3|BTN_TOUCHPAD))==(BTN_CROSS|BTN_L3|BTN_TOUCHPAD));
-    /* A new touch gets a new id (1..127), as from a DualShock 4: the game ignores id 0. */
     assert(data.touch_count==1 && data.touches[0].x==480 && data.touches[0].y==471 && data.touches[0].id==1);
     inject(path,"touchpad_right");
     assert(pad_read_state(1,&data)==0 && data.touch_count==1 && data.touches[0].x==1440);
@@ -94,8 +90,6 @@ int main(void) {
     SDL_UpdateGamepads();
     assert(pad_read_state(1,&data)==0 && data.touch_count==1 && data.touches[0].x==480);
     assert(SDL_SetJoystickVirtualButton(joystick,SDL_GAMEPAD_BUTTON_TOUCHPAD,false));
-    /* Everything let go of once: buttons held through the overlay's capture stay hidden until
-     * then (hold_after_capture). */
     SDL_UpdateJoysticks();
     SDL_UpdateGamepads();
     assert(pad_read_state(1,&data)==0 && data.buttons==0);
@@ -106,12 +100,10 @@ int main(void) {
     SDL_UpdateGamepads();
     assert(pad_read_state(1,&data)==0);
     assert(data.buttons==(BTN_CROSS|BTN_R2|BTN_R1) && data.r2==255);
-    /* pad.menu_back=b: in a menu, B goes back (Circle) and no longer gives its world input (Cross). */
     menu=1;
     assert(pad_read_state(1,&data)==0);
     assert((data.buttons & (BTN_CROSS|BTN_CIRCLE))==BTN_CIRCLE);
     menu=0;
-    /* Still held as the menu closed: no Cross in the world until B is let go of. */
     assert(pad_read_state(1,&data)==0 && !(data.buttons & (BTN_CROSS|BTN_CIRCLE)));
     assert(bindings[IN_CROSS].key_count==2 && bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X &&
            bindings[IN_CROSS].keys[1]==SDL_SCANCODE_SPACE);

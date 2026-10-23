@@ -4,6 +4,14 @@ Reported with v0.9.37 beta 9 (`lantern-fps93`) on an RX 7900 XT (20 GiB), Ryzen 
 9900X, Mesa/RADV 26.2.5, and Linux 7.2.11. Output and scene were 2560x1440, using
 FSR 4 Native AA and FSR 3.1 frame generation (90 game FPS, 180 displayed FPS), HDR off.
 
+Compatibility was also checked against v0.9.37 (`lantern-fps94`), upstream commit
+`d901fbd`. Its Linux startup still omits online configuration and its indirect clamp
+still uses only the advertised device limits. The source changes retain that release's
+GPL-3.0-or-later notices and its other engine changes. On fps94 the reporter says torch
+fire works with the original clamp shader; crash stability is still being tested. The
+local GPU workaround was left off for that comparison. The lighting observations below
+remain beta 9 observations; their status on fps94 has not been confirmed.
+
 ## Linux online startup
 
 Discord sign-in completed in the launcher, but the game remained offline. The launcher
@@ -11,10 +19,11 @@ already passes the account to the child; `run.sh` did not call the shared config
 used by `run_windows.py`. It therefore lacked the backend flags and game-host redirects.
 
 With the startup handoff restored, a real Linux session reached The Hunter's Dream
-matching context callback and opened the P2P/relay path. This confirms the previous
-offline-only startup was resolved; co-op, invasions, and a connection to another player
-have not been verified by this investigation. Authentication tokens and server acceptance
-remain controlled by the existing online backend.
+matching context callback and opened the P2P/relay path. This confirms the backend
+initialization path is reached. The backend emits that callback even when the server
+does not answer, so it does not establish successful authentication. Co-op, invasions,
+and a connection to another player have not been verified by this investigation.
+Authentication tokens and server acceptance remain controlled by the existing backend.
 
 ## Indirect dispatch hangs
 

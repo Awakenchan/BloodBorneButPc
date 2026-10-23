@@ -1,18 +1,3 @@
-/* libSceAudioOut on SDL3 audio streams. sceAudioOutOutput returns once per
- * buffer period on a steady clock, like PS4 hardware: FMOD's output thread
- * reads 256-frame slots out of its mixer's 512-frame ring, and returning in
- * bursts (whenever the device pulls a quantum) lets it overtake the mixer and
- * play stale halves - a click every 10.7 ms. The lowest SDL queue level of
- * each window is steered to two buffers (silence prefill on underrun, cadence
- * corrections), which also absorbs device clock drift. Without an audio device (headless runs, BB_AUDIO=none)
- * ports only follow the clock.
- * bbport: some devices take noticeably less than 48 kHz of what they are given (89-91% seen on
- * one PC): the correction is proportional (up to 25% slower) instead of a fixed 3%, which let
- * the queue - the sound's delay - grow by a second every minute, and a queue far over the
- * target is dropped back to it at once.
- * bbport: the device's own thread (SDL's mixer) is watched too: a postmix callback counts what it
- * writes and when (BB_AUDIO_STATS) - a thread that comes late is a gap in the sound - and
- * BB_AUDIO_THREAD_PRIORITY raises it when the system left it at normal priority. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -38,20 +23,20 @@
 
 typedef struct {
     int used, type, channels, is_float, frames, sample_bytes, std_layout;
-    int out_channels;               /* what the stream takes: 2 when 7.1 is folded down here */
+    int out_channels;
     int32_t volume[8];
     SDL_AudioStream *stream;
-    uint64_t next_deadline_ns; /* next return of sceAudioOutOutput */
-    int64_t adjust_ns; int window_min, window_count; /* queue level control */
+    uint64_t next_deadline_ns;
+    int64_t adjust_ns; int window_min, window_count;
     uint64_t last_output_us;
     HostMutex lock;
-    FILE *dump;                     /* BB_AUDIO_DUMP: raw converted PCM per port */
+    FILE *dump;
     int stats;
-    uint64_t stat_start_ns, stat_last_ns, stat_max_gap_ns; /* BB_AUDIO_STATS */
+    uint64_t stat_start_ns, stat_last_ns, stat_max_gap_ns;
     unsigned stat_starved, stat_buffers; int stat_min_queued;
-    int stat_start_queued; uint64_t stat_bytes; /* the device's rate: what it took of what was given */
-    unsigned resets;                /* queues dropped back to the target */
-    float fold_gain;                /* the stereo fold's limiter (0: not started, as 1) */
+    int stat_start_queued; uint64_t stat_bytes;
+    unsigned resets;
+    float fold_gain;
 } Port;
 typedef struct { uint16_t output; uint8_t channel, reserved; int16_t volume; uint16_t reroute; uint64_t flag, reserved64[2]; } PortState;
 _Static_assert(sizeof(PortState)==32,"AudioOut port state layout");
@@ -71,10 +56,7 @@ static int sdl_audio(void) {
     }
     return sdl_ready;
 }
-/* As runtime_thread.c reads it: off only when it starts with 0. */
 static int audio_priority(void) { const char *e=getenv("BB_AUDIO_THREAD_PRIORITY"); return !(e && e[0]=='0'); }
-/* The device thread, seen from the first port's postmix callback: written frames, mixes and
-   the longest wait between two, read and reset by that port's statistics. */
 static struct { uint64_t last_ns, max_gap_ns, frames; unsigned calls; int freq, seen; } device_thread;
 static Port *device_port;
 static void SDLCALL device_mixed(void *userdata, const SDL_AudioSpec *spec, float *buffer, int buflen) {
@@ -88,8 +70,6 @@ static void SDLCALL device_mixed(void *userdata, const SDL_AudioSpec *spec, floa
     if (!device_thread.seen) {
         device_thread.seen=1;
 #ifdef _WIN32
-        /* WASAPI asks Windows for "Pro Audio" scheduling (MMCSS); where that is missing the
-           thread runs at normal priority, behind the game's busy threads. */
         const int before=GetThreadPriority(GetCurrentThread());
         const int raise=before<THREAD_PRIORITY_HIGHEST && audio_priority();
         if (raise) SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_TIME_CRITICAL);
@@ -112,13 +92,13 @@ static void watch_device(Port *p) {
 }
 static int port_range(int type, int *first, int *last) {
     switch (type) {
-    case 0: *first=0; *last=7; return 1;      /* main */
-    case 1: *first=8; *last=8; return 1;      /* bgm */
-    case 2: *first=9; *last=12; return 1;     /* voice */
-    case 3: *first=13; *last=16; return 1;    /* personal */
-    case 4: *first=17; *last=20; return 1;    /* pad speaker */
-    case 126: *first=21; *last=22; return 1;  /* audio3d */
-    case 127: *first=23; *last=24; return 1;  /* aux */
+    case 0: *first=0; *last=7; return 1;
+    case 1: *first=8; *last=8; return 1;
+    case 2: *first=9; *last=12; return 1;
+    case 3: *first=13; *last=16; return 1;
+    case 4: *first=17; *last=20; return 1;
+    case 126: *first=21; *last=22; return 1;
+    case 127: *first=23; *last=24; return 1;
     default: return 0;
     }
 }
@@ -158,11 +138,6 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
     for (int c=0;c<8;++c) p->volume[c]=VOLUME_0DB;
     p->out_channels=p->channels;
     if (sdl_audio()) {
-        /* bbport: 7.1 on a stereo device is folded down here, the front pair at full level (ITU:
-           centre and surrounds at -3 dB, LFE left out). SDL's own 7.1-to-stereo matrix scales
-           every channel by about 0.21 so that nothing can clip; with most of the game's sound in
-           the front pair that played it about 13 dB quieter than shadPS4 (#27).
-           BB_AUDIO_SDL_DOWNMIX=1 leaves it to SDL again. */
         SDL_AudioSpec device; int device_frames=0;
         const char *sdl_downmix=getenv("BB_AUDIO_SDL_DOWNMIX");
         if (p->channels==8 && !(sdl_downmix && sdl_downmix[0]=='1') &&
@@ -203,7 +178,6 @@ static ABI int32_t audio_close(int32_t handle) {
     host_unlock(&table_lock);
     return p ? 0 : error;
 }
-/* `pace`: wait for this port's next period. sceAudioOutOutputs waits once for all its ports. */
 static int32_t output_port(int32_t handle, const void *data, int pace) {
     int32_t error=0;
     host_lock(&table_lock);
@@ -214,7 +188,6 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
     size_t samples=(size_t)p->frames*(size_t)p->out_channels, bytes=samples*(size_t)p->sample_bytes;
     uint64_t period=(uint64_t)p->frames*1000000000u/48000u;
     if (data) {
-        /* Apply per-channel volume and map PS4 8ch (L R C LFE SL SR BL BR) to SDL 7.1 order. */
         unsigned char converted[2048*8*4];
         static const int remap[8]={0,1,2,3,6,7,4,5};
         for (size_t f=0;f<(size_t)p->frames;++f) for (int c=0;c<p->channels;++c) {
@@ -225,11 +198,6 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             else { int16_t v; memcpy(&v,(const char *)data+from*2,2); v=(int16_t)((float)v*gain); memcpy(converted+to*2,&v,2); }
         }
         if (p->out_channels==2 && p->channels==8) {
-            /* SDL's 7.1 order by now (FL FR FC LFE BL BR SL SR); each stereo frame is written over
-               the start of the buffer, behind the 7.1 frame it is made of. */
-            /* bbport: loud moments (centre and surrounds busy with the front pair) sum past full
-               scale; clipped flat they crackled. A limiter turns the fold down at once where a
-               frame would clip and back up over ~50 ms, so the level stays as before otherwise. */
             const float k=0.70710678f, full=p->is_float ? 1.0f : 32767.0f, ceiling=0.97f*full;
             const float release=1.0f/(0.05f*48000.0f);
             float gain=p->fold_gain>0.0f ? p->fold_gain : 1.0f;
@@ -271,7 +239,6 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
                 if (queued==0) ++p->stat_starved;
             }
             if (now-p->stat_start_ns>=5000000000u) {
-                /* What the device took in this window, against 48 kHz (100%: it keeps up). */
                 const int queued_now=p->stream ? SDL_GetAudioStreamQueued(p->stream) : 0;
                 const double taken=(double)p->stat_bytes-(double)(queued_now-p->stat_start_queued);
                 const double nominal=(double)(now-p->stat_start_ns)/1e9*48000.0*p->out_channels*p->sample_bytes;
@@ -292,21 +259,17 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
         }
         if (pace) {
             uint64_t now=now_ns();
-            if (!p->next_deadline_ns || now>p->next_deadline_ns+8*period) p->next_deadline_ns=now; /* start or stall: restart cadence */
+            if (!p->next_deadline_ns || now>p->next_deadline_ns+8*period) p->next_deadline_ns=now;
             else sleep_until(p->next_deadline_ns);
             p->next_deadline_ns+=period;
         }
         if (p->stream) {
-            /* The device drains the queue in quanta (21 ms on PipeWire), so the level
-               is a sawtooth: its minimum over ~32 buffers is what gets controlled. */
             static const unsigned char silence[2048*8*4];
             int low=2*(int)bytes, queued=SDL_GetAudioStreamQueued(p->stream);
             if (queued<(int)bytes) {
                 SDL_PutAudioStreamData(p->stream,silence,low-queued<(int)bytes ? low-queued : (int)bytes);
                 queued=low;
             }
-            /* Far over the target (a device taking less than the correction covers, or a burst):
-               the delay would only grow. Back to the target at once: one skip, not seconds of lag. */
             if (queued>low+32*(int)bytes) {
                 SDL_ClearAudioStream(p->stream);
                 SDL_PutAudioStreamData(p->stream,silence,(int)bytes);
@@ -318,8 +281,6 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             }
             if (!p->window_count || queued<p->window_min) p->window_min=queued;
             if (++p->window_count==32) {
-                /* Proportional to the excess (a 32nd of a period per buffer of it, at most a quarter
-                   slower): a device at 90% settles about 3.5 buffers over the target. */
                 const int excess=p->window_min-(low+2*(int)bytes);
                 int64_t adjust=excess>0 ? (int64_t)period*excess/(32*(int64_t)bytes) : p->window_min<low ? -(int64_t)(period/32) : 0;
                 if (adjust>(int64_t)(period/4)) adjust=(int64_t)(period/4);
@@ -341,8 +302,6 @@ static ABI int32_t audio_outputs(const OutputParam *params, uint32_t count) {
     if (!params) return ERR_INVALID_POINTER;
     if (!count || count>PORTS) return ERR_PORT_FULL;
     int32_t result=0;
-    /* One period per call for all ports (FMOD feeds main and BGM together): pacing every
-       port would halve the rate and starve both. */
     for (uint32_t i=0;i<count;++i) { int32_t r=output_port(params[i].handle,params[i].data,i==0); if (r<0) return r; result=r; }
     return result;
 }
@@ -370,8 +329,8 @@ static ABI int32_t audio_state(int32_t handle, PortState *state) {
     if (!state) return ERR_INVALID_POINTER;
     memset(state,0,sizeof(*state));
     switch (p->type) {
-    case 2: case 3: state->output=0x40; state->channel=1; break;          /* headphone */
-    case 4: state->output=0x04; state->channel=1; state->volume=127; break; /* pad speaker */
+    case 2: case 3: state->output=0x40; state->channel=1; break;
+    case 4: state->output=0x04; state->channel=1; state->volume=127; break;
     default: state->output=0x01; state->channel=(uint8_t)(p->channels>2 ? 2 : p->channels); break;
     }
     return 0;

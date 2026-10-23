@@ -1,4 +1,3 @@
-/* Minimal x86-64 native loader experiment. Not a PS4 emulator or game port. */
 #define _GNU_SOURCE
 #include <stdint.h>
 #include <stdio.h>
@@ -49,10 +48,6 @@ int vulkan_smoke(void);
 
 static __attribute__((noreturn)) void fail(const char *message) { fprintf(stderr, "ERROR: %s\n", message); exit(1); }
 
-/* The game's code was compiled for the PS4's CPU (AMD Jaguar) and runs as it is: AVX, BMI1
- * (andn/bextr/blsr/tzcnt), MOVBE, LZCNT and POPCNT, thousands of each in eboot.bin. A CPU without
- * them stops at the first one with SIGILL (exit code 132, issue #26), and lzcnt/tzcnt even run as
- * bsr/bsf there, with other results. Said before the game starts; BB_SKIP_CPU_CHECK=1 skips it. */
 static void check_cpu(void) {
     const char *skip = getenv("BB_SKIP_CPU_CHECK");
     if (skip && !strcmp(skip, "1")) return;
@@ -64,7 +59,7 @@ static void check_cpu(void) {
     if (avx) {
         unsigned lo, hi;
         __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
-        avx = (lo & 6) == 6; /* the OS saves SSE and AVX state */
+        avx = (lo & 6) == 6;
     }
     const struct { int present; const char *name; } features[] = {
         {avx, "AVX"}, {(leaf7_b & bit_BMI) != 0, "BMI1"}, {(leaf1_c & bit_MOVBE) != 0, "MOVBE"},
@@ -131,10 +126,9 @@ static ABI __attribute__((noreturn)) void unresolved(uint32_t id, uintptr_t argu
     puts(entered_game ? "Original guest entry instructions executed; game initialization is incomplete." :
                         "Native libc initialization is incomplete; game entry has not run.");
     fflush(NULL);
-    _exit(20); /* no destructors: GPU, audio and guest threads are still running */
+    _exit(20);
 }
 #ifndef _WIN32
-/* enter_on_stack(entry, arg0, arg1, stack_top): call entry(arg0,arg1) on a new stack. */
 void enter_on_stack(void *entry, void *arg0, void *arg1, void *top);
 __asm__(".text\n.globl enter_on_stack\nenter_on_stack:\n"
         " push %rbp\n mov %rsp,%rbp\n and $-16,%rcx\n mov %rcx,%rsp\n"
@@ -144,9 +138,7 @@ __asm__(".text\n.globl enter_on_stack\nenter_on_stack:\n"
 static ABI void guest_exit(void) { puts("Runtime: process finalizer callback reached"); }
 #ifndef _WIN32
 static void fault(int sig, siginfo_t *info, void *context) {
-    /* GPU page tracking (write-protected guest pages) is resolved first. */
     if (gpu_enabled && sig == SIGSEGV && bbgpu_handle_fault(context, info->si_addr)) return;
-    /* A speculative guest memory read (runtime_memory.c) failed: resume its recovery point. */
     if ((sig == SIGSEGV || sig == SIGBUS) && runtime_fault_recover) {
         sigjmp_buf *recover = runtime_fault_recover;
         runtime_fault_recover = NULL;
@@ -156,7 +148,6 @@ static void fault(int sig, siginfo_t *info, void *context) {
         pthread_sigmask(SIG_UNBLOCK, &unblock, NULL);
         siglongjmp(*recover, 1);
     }
-    /* The process is terminating: dladdr/snprintf are acceptable here. */
     ucontext_t *uc = context;
     uintptr_t rip = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
     char line[512];
@@ -171,8 +162,6 @@ static void fault(int sig, siginfo_t *info, void *context) {
         snprintf(line, sizeof(line), "Fault (signal %d) at RIP %p, address %p\n", sig, (void *)rip, info->si_addr);
     { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
     if (gpu_enabled) bbgpu_dump_guest_writes(context);
-    /* Outside the image and any shared object (generated code, a freed mapping): the mapping
-     * from /proc/self/maps, and the thread. */
     if (rip - (uintptr_t)image >= 0x10000000 && !(dladdr((void *)rip, &where) && where.dli_fname)) {
         char thread[32] = "?";
         pthread_getname_np(pthread_self(), thread, sizeof(thread));
@@ -191,7 +180,6 @@ static void fault(int sig, siginfo_t *info, void *context) {
         if (maps) fclose(maps);
         if (!found) { ssize_t written_=write(2, "none\n", 5); (void)written_; }
     }
-    /* Host call chain (frames with unwind info; guest frames end it). */
     void *frames[32];
     int depth = backtrace(frames, 32);
     for (int i = 2; i < depth; ++i) {
@@ -206,9 +194,6 @@ static void fault(int sig, siginfo_t *info, void *context) {
 }
 #endif
 #ifdef _WIN32
-/* Windows: one vectored handler takes the roles of the SIGSEGV handler. GPU page tracking
- * first, then the recovery point of a speculative guest memory read, then crash reports for
- * faults in guest code (it has no unwind data, so frame-based handlers cannot see it). */
 static unsigned char *traps_base;
 static size_t traps_size, image_size;
 static void recover_jump(void) {
@@ -219,7 +204,6 @@ static void recover_jump(void) {
 static int guest_address(uintptr_t a) {
     return (image && a - (uintptr_t)image < image_size) || (traps_base && a - (uintptr_t)traps_base < traps_size);
 }
-/* Module+offset without the loader lock (another thread may hold it while this one crashed). */
 static void describe(char *out, size_t size, uintptr_t a) {
     MEMORY_BASIC_INFORMATION info;
     char path[MAX_PATH];
@@ -230,7 +214,6 @@ static void describe(char *out, size_t size, uintptr_t a) {
         snprintf(out, size, "%s+0x%llx", name ? name + 1 : path, (unsigned long long)(a - (uintptr_t)info.AllocationBase));
     } else snprintf(out, size, "0x%llx", (unsigned long long)a);
 }
-/* No DLL detach or CRT teardown: other threads may hold the locks those need. */
 static __attribute__((noreturn)) void terminate(unsigned code) {
     fflush(NULL);
     TerminateProcess(GetCurrentProcess(), code);
@@ -256,7 +239,6 @@ static void report_exception(EXCEPTION_POINTERS *e) {
     fprintf(stderr, " (thread %lu %s)\n", GetCurrentThreadId(), thread_name);
     fprintf(stderr, "  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax, c->Rbx, c->Rcx, c->Rdx, c->Rsi, c->Rdi, c->Rbp, c->Rsp);
-    /* rbp frame chain; ReadProcessMemory so a bad frame cannot fault again. */
     uintptr_t rbp = c->Rbp;
     for (int depth = 0; depth < 24 && rbp; ++depth) {
         uintptr_t frame[2];
@@ -266,7 +248,6 @@ static void report_exception(EXCEPTION_POINTERS *e) {
         fprintf(stderr, "  #%d %s\n", depth, where);
         rbp = frame[0];
     }
-    /* The host call chain from unwind data (the rbp chain above often stops in host code). */
     void *frames[48];
     USHORT depth = RtlCaptureStackBackTrace(0, 48, frames, NULL);
     for (USHORT i = 0; i < depth; ++i) {
@@ -276,10 +257,6 @@ static void report_exception(EXCEPTION_POINTERS *e) {
     if (gpu_enabled && r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) bbgpu_dump_guest_writes(e);
     fflush(NULL);
 }
-/* Thread dump on request: SetEvent on "Local\bbport-dump-<pid>" prints every thread's call
- * chain. Threads are suspended only to copy their registers (a suspended thread may hold the
- * heap or loader lock); the stacks are walked afterwards with a fault recovery point. Host
- * frames unwind by their unwind data, guest frames by the rbp chain. */
 enum { DUMP_THREADS = 512 };
 static struct { DWORD id; CONTEXT context; } dumped[DUMP_THREADS];
 static void dump_chain(CONTEXT c) {
@@ -294,10 +271,10 @@ static void dump_chain(CONTEXT c) {
             DWORD64 frame;
             RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, c.Rip, function, &c, &handler_data, &frame, NULL);
         } else if (guest_address((uintptr_t)c.Rip) && c.Rbp > c.Rsp) {
-            uintptr_t *frame = (uintptr_t *)c.Rbp; /* [rbp] caller's rbp, [rbp+8] return address */
+            uintptr_t *frame = (uintptr_t *)c.Rbp;
             c.Rip = frame[1]; c.Rsp = c.Rbp + 16; c.Rbp = frame[0];
         } else {
-            c.Rip = *(DWORD64 *)c.Rsp; c.Rsp += 8; /* leaf without unwind data (JIT code, thunks) */
+            c.Rip = *(DWORD64 *)c.Rsp; c.Rsp += 8;
         }
     }
 }
@@ -351,9 +328,6 @@ static void start_dump_thread(void) {
     HANDLE event = CreateEventW(NULL, FALSE, FALSE, name);
     if (event) CloseHandle((HANDLE)_beginthreadex(NULL, 0, dump_thread, event, 0, NULL));
 }
-/* BB_HW_WATCH=<file holding a hex address, "r" first for reads too>: a hardware watchpoint (DR0, 4 bytes) on every
- * thread. The file is re-read and the threads set again every 200 ms (new threads, new address);
- * each distinct writing instruction is printed once per address. */
 static volatile uintptr_t hw_watch;
 static volatile char hw_mode = 'w';
 static const char *hw_watch_file;
@@ -408,7 +382,6 @@ static unsigned __stdcall hw_watch_thread(void *unused) {
             if (!thread) continue;
             if (SuspendThread(thread) != (DWORD)-1) {
                 CONTEXT c = {.ContextFlags = CONTEXT_DEBUG_REGISTERS};
-                /* L0; execute (RW=00, LEN=00), write (01) or read/write (11) of 4 bytes */
                 DWORD64 dr7 = !hw_watch ? 0 : hw_mode == 'x' ? 1 : 1 | ((hw_mode == 'r' ? 3u : 1u) << 16) | (3u << 18);
                 if (GetThreadContext(thread, &c) && (c.Dr0 != hw_watch || (c.Dr7 & 0xf0003) != dr7)) {
                     c.Dr0 = hw_watch;
@@ -438,11 +411,6 @@ static int fatal(DWORD code) {
         return 0;
     }
 }
-/* A fault in host code, before any handler of its own runs. On a guest thread the handler
- * search has to cross guest frames, which have no unwind data: Windows then ends the process
- * with the fault's code and the unhandled filter never runs, so this note is the only trace.
- * Every one on guest threads; the first few elsewhere (a driver may fault on purpose). No stdio
- * locks (the faulting thread may hold them). */
 static void note_host_fault(EXCEPTION_POINTERS *e) {
     static volatile LONG notes;
     EXCEPTION_RECORD *r = e->ExceptionRecord;
@@ -465,7 +433,6 @@ static void note_host_fault(EXCEPTION_POINTERS *e) {
     HANDLE out = GetStdHandle(STD_ERROR_HANDLE);
     DWORD written;
     WriteFile(out, line, (DWORD)strlen(line), &written, NULL);
-    /* The host call chain: this handler, the dispatcher, then the faulting frames. */
     void *frames[32];
     USHORT depth = RtlCaptureStackBackTrace(0, 32, frames, NULL);
     for (USHORT i = 0; i < depth; ++i) {
@@ -474,19 +441,12 @@ static void note_host_fault(EXCEPTION_POINTERS *e) {
         WriteFile(out, line, (DWORD)strlen(line), &written, NULL);
     }
 }
-/* The engine's own folder (out\: bb-probe.exe and the CLANG64 DLLs) as a mapped file name. */
 static char own_dir[MAX_PATH];
 static void find_own_dir(void) {
     if (!GetMappedFileNameA(GetCurrentProcess(), (void *)find_own_dir, own_dir, sizeof(own_dir))) own_dir[0] = 0;
     char *slash = strrchr(own_dir, '\\');
     if (slash) slash[1] = 0;
 }
-/* Whether Windows' handler search can get past this host fault. It walks the frames by their
- * unwind data; at a guest frame (none) it gives up and ends the process with the fault's code,
- * without the unhandled filter. The same walk here: a frame with a handler of its own on the
- * way (a driver's or Windows' __try) may still handle it; the engine's own frames only have the
- * C++ personality routine, which leaves faults alone. A fault during the walk (a broken stack):
- * not decided, the search goes on. */
 static int host_fault_dead_end(const CONTEXT *fault) {
     if (!own_dir[0]) return 0;
     CONTEXT c = *fault;
@@ -498,7 +458,7 @@ static int host_fault_dead_end(const CONTEXT *fault) {
         if (guest_address((uintptr_t)c.Rip)) { dead_end = 1; break; }
         DWORD64 base = 0;
         RUNTIME_FUNCTION *function = RtlLookupFunctionEntry(c.Rip, &base, NULL);
-        if (!function) { c.Rip = *(DWORD64 *)c.Rsp; c.Rsp += 8; continue; } /* leaf */
+        if (!function) { c.Rip = *(DWORD64 *)c.Rsp; c.Rsp += 8; continue; }
         void *handler_data;
         DWORD64 frame;
         PEXCEPTION_ROUTINE handler = RtlVirtualUnwind(UNW_FLAG_EHANDLER, base, c.Rip, function, &c, &handler_data, &frame, NULL);
@@ -509,11 +469,6 @@ static int host_fault_dead_end(const CONTEXT *fault) {
     runtime_fault_recover = NULL;
     return dead_end;
 }
-/* Crash dump (logs\crash.dmp, beside the session log) and the unhandled filter's upkeep, on a
- * helper thread. MiniDumpWriteDump cannot walk the thread that calls it reliably: the crashing
- * thread wakes this one and waits for it, bounded (a lock the dump needs may be held by the
- * crashed thread). dbghelp is loaded only then. Every second meanwhile the unhandled filter is
- * set again: overlays (Steam, RTSS, Discord) replace it, and theirs end the process silently. */
 static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *e);
 static HANDLE crash_dump_request, crash_dump_done;
 static EXCEPTION_POINTERS *volatile crash_dump_exception;
@@ -548,7 +503,6 @@ static unsigned __stdcall crash_helper_thread(void *unused) {
     return 0;
 }
 static void start_crash_helper(void) {
-    /* The session log's folder (BB_LOG_FILE, set by the launcher), else logs\ here. */
     const char *log = getenv("BB_LOG_FILE");
     const char *slash = log ? strrchr(log, '\\') : NULL, *other = log ? strrchr(log, '/') : NULL;
     if (other > slash) slash = other;
@@ -564,7 +518,6 @@ static void start_crash_helper(void) {
     if (thread) CloseHandle(thread);
     else crash_dump_request = NULL;
 }
-/* Called once (report_exception lets one thread through), before terminate(). */
 static void write_crash_dump(EXCEPTION_POINTERS *e) {
     if (!crash_dump_request) return;
     crash_dump_exception = e;
@@ -580,19 +533,14 @@ static void write_crash_dump(EXCEPTION_POINTERS *e) {
 static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *e) {
     EXCEPTION_RECORD *r = e->ExceptionRecord;
     if (r->ExceptionCode == EXCEPTION_SINGLE_STEP && hw_watch_file && (e->ContextRecord->Dr6 & 1)) {
-        /* A thread may still hold the previous address (or a cleared watch) until the watch
-         * thread updates it: report only hits on the current address. */
         if (hw_watch && e->ContextRecord->Dr0 == hw_watch) hw_watch_hit(e->ContextRecord);
         e->ContextRecord->Dr6 = 0;
-        /* An execute breakpoint (this thread's DR0 RW bits 00) fires before the instruction: RF
-         * lets it run. Decided per thread, which may still hold an older mode. */
         if (!(e->ContextRecord->Dr7 & (3u << 16))) e->ContextRecord->EFlags |= 0x10000;
         return EXCEPTION_CONTINUE_EXECUTION;
     }
     if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r->NumberParameters >= 2) {
         if (gpu_enabled && bbgpu_handle_fault(e, (void *)r->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
         if (runtime_fault_recover) {
-            /* Resume in recover_jump as if called there, below the interrupted frame's red zone. */
             CONTEXT *c = e->ContextRecord;
             c->Rsp = ((c->Rsp - 512) & ~(DWORD64)15) - 8;
             c->Rip = (DWORD64)(uintptr_t)recover_jump;
@@ -600,7 +548,6 @@ static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *e) {
         }
     }
     if (!fatal(r->ExceptionCode)) return EXCEPTION_CONTINUE_SEARCH;
-    /* Host code may handle its own exceptions (drivers probe memory under __try): only noted. */
     if (!guest_address((uintptr_t)e->ContextRecord->Rip) && !host_fault_dead_end(e->ContextRecord)) {
         note_host_fault(e);
         return EXCEPTION_CONTINUE_SEARCH;
@@ -614,11 +561,6 @@ static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *e) {
     write_crash_dump(e);
     terminate(128 + 11);
 }
-/* link_modules.py rewrote the guest's `mov rax, fs:[0]` into `mov rax, gs:[0]`. GS is the TEB
- * on Windows, and the thread's guest TCB is in a TLS slot (runtime_thread.c). A slot below 64
- * is one load: the displacement becomes TEB.TlsSlots[slot]. A later slot (the DLLs loaded
- * before main took the first 64) needs two loads, through TEB.TlsExpansionSlots: the site
- * jumps to a stub of its own (no call: the guest may keep data below rsp) and back. */
 static uint64_t patch_tls_reads(const Segment *segments, uint64_t count) {
     static const unsigned char gs_load[9] = {0x65, 0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0};
     const uint32_t slot = runtime_win_tls_slot();
@@ -642,7 +584,7 @@ static uint64_t patch_tls_reads(const Segment *segments, uint64_t count) {
         for (size_t i = 0; i < found; ++i) memcpy(sites[i] + 5, &displacement, 4);
     } else if (found) {
         enum { STUB = 21 };
-        static const unsigned char expansion[9] = {0x65, 0x48, 0x8b, 0x04, 0x25, 0x80, 0x17, 0, 0}; /* mov rax, gs:[0x1780] */
+        static const unsigned char expansion[9] = {0x65, 0x48, 0x8b, 0x04, 0x25, 0x80, 0x17, 0, 0};
         size_t bytes = round_page(found * STUB);
         unsigned char *stubs = allocate(bytes);
         uint32_t index = (slot - 64) * 8;
@@ -652,9 +594,9 @@ static uint64_t patch_tls_reads(const Segment *segments, uint64_t count) {
             if (back != (int32_t)back || there != (int32_t)there) fail("TLS stub out of jump range");
             int32_t back32 = (int32_t)back, there32 = (int32_t)there;
             memcpy(stub, expansion, 9);
-            stub[9] = 0x48; stub[10] = 0x8b; stub[11] = 0x80; memcpy(stub + 12, &index, 4); /* mov rax, [rax + index] */
-            stub[16] = 0xe9; memcpy(stub + 17, &back32, 4);                                 /* jmp site + 9 */
-            site[0] = 0xe9; memcpy(site + 1, &there32, 4); memset(site + 5, 0x90, 4);         /* jmp stub */
+            stub[9] = 0x48; stub[10] = 0x8b; stub[11] = 0x80; memcpy(stub + 12, &index, 4);
+            stub[16] = 0xe9; memcpy(stub + 17, &back32, 4);
+            site[0] = 0xe9; memcpy(site + 1, &there32, 4); memset(site + 5, 0x90, 4);
         }
         protect(stubs, bytes, 5);
     }
@@ -662,8 +604,6 @@ static uint64_t patch_tls_reads(const Segment *segments, uint64_t count) {
     return found;
 }
 #else
-/* Watchdog: dump RIP and the rbp frame chain of every thread (guest offsets
- * when inside the image). Reads use process_vm_readv so bad frames cannot fault. */
 static uintptr_t exe_base;
 static void write_hex(char *out, uint64_t v) {
     const char digits[] = "0123456789abcdef";
@@ -673,7 +613,6 @@ static void dump_frames(ucontext_t *uc) {
     char line[] = "  tid=0000000000000000 rip=0000000000000000 image-relative=0000000000000000 host-relative=0000000000000000\n";
     uintptr_t rip=(uintptr_t)uc->uc_mcontext.gregs[REG_RIP], rbp=(uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
     uint64_t tid=(uint64_t)gettid();
-    /* First argument register: the lock address when a thread waits on a futex. */
     char arg[]="  tid=0000000000000000 rdi=0000000000000000\n";
     write_hex(arg+6,tid); write_hex(arg+27,(uint64_t)uc->uc_mcontext.gregs[REG_RDI]);
     { ssize_t written_=write(2,arg,sizeof(arg)-1); (void)written_; }
@@ -708,7 +647,6 @@ static void watchdog(int sig, siginfo_t *info, void *context) {
     _exit(128 + sig);
 }
 #endif
-/* param.sfo lookup: string or integer value of key, 0 when absent. */
 static int sfo_value(const char *path, const char *key, char *text, size_t text_size, uint32_t *number) {
     FILE *f=fopen(path,"rb");
     if (!f) return 0;
@@ -737,9 +675,6 @@ static int mapped(Segment *segments, uint64_t count, uint64_t address, uint64_t 
             address - segments[i].address <= segments[i].size - bytes) return 1;
     return 0;
 }
-/* BBPATCH2 (patches.py): the patches' image base, then byte writes at image offsets, applied
- * after relocation. A write may replace a whole base-relative pointer slot (60/90 FPS++ swap
- * function pointers): the patch holds the address at the patches' base, rebased here. */
 static void apply_patches(const char *path, Segment *segments, uint64_t ns, const Reloc *relocs, uint64_t nr) {
     FILE *f=fopen(path,"rb");
     char magic[8];
@@ -773,15 +708,10 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
     fclose(f);
     printf("Patches: %" PRIu64 " writes, %" PRIu64 " bytes applied, %" PRIu64 " pointers rebased\n",count,bytes,rebased);
 }
-/* Restarts the game through run.sh (the settings menu: a new render resolution is a patch
- * applied at start). Descriptors are closed first so the old GPU device and its memory are
- * released before the new process opens its own. */
 volatile int runtime_restarting;
 void runtime_restart(void) {
     fflush(NULL);
 #ifdef _WIN32
-    /* scripts/run_windows.py sets its own command line here; the new process prepares the
-     * patches again. Our GPU device goes away with this process. */
     const char *command = getenv("BB_RESTART_COMMAND");
     puts("Runtime: restarting through the launcher");
     if (!command) { fputs("runtime_restart: BB_RESTART_COMMAND is not set\n", stderr); _exit(1); }
@@ -796,8 +726,6 @@ void runtime_restart(void) {
     _exit(0);
 #else
     puts("Runtime: restarting through run.sh");
-    /* The GPU threads still run until exec: their Vulkan calls fail once the device fd is
-     * closed below, and an assertion there must not end the process (exit 23) before exec. */
     runtime_restarting = 1;
     __sync_synchronize();
     syscall(SYS_close_range, 3u, ~0u, 0u);
@@ -808,20 +736,16 @@ void runtime_restart(void) {
 }
 
 #ifdef _WIN32
-/* The guest main thread needs a large committed stack (PS4 code does not touch guard pages
- * in order), so the loader runs on a thread of its own; the process main thread waits. */
 static int loader_main(int argc, char **argv);
 static int main_argc;
 static char **main_argv;
 static unsigned __stdcall loader_thread(void *unused) {
     (void)unused;
-    runtime_win_set_thread_name("main"); /* the game's main loop (BB_SAMPLE_THREADS=main) */
+    runtime_win_set_thread_name("main");
     return (unsigned)loader_main(main_argc, main_argv);
 }
 int main(int argc, char **argv) {
-    timeBeginPeriod(1); /* 1 ms waits for timed locks and sleeps outside runtime_sleep_ns */
-    /* No EcoQoS: Windows 11 otherwise moves the threads of an unfocused window to efficiency
-     * cores (hybrid CPUs), and the GPU command thread sets the frame rate. */
+    timeBeginPeriod(1);
     PROCESS_POWER_THROTTLING_STATE throttling = {PROCESS_POWER_THROTTLING_CURRENT_VERSION,
                                                  PROCESS_POWER_THROTTLING_EXECUTION_SPEED, 0};
     SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &throttling, sizeof(throttling));
@@ -845,8 +769,6 @@ int main(int argc, char **argv) {
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifndef _WIN32
-    /* Keep host heap objects handed to the guest (thread handles, TLS) in the
-       non-PIE brk heap, i.e. below 1 TiB: the guest packs pointers into 40 bits. */
     mallopt(M_ARENA_MAX,1);
     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
 #endif
@@ -892,7 +814,7 @@ int main(int argc, char **argv) {
     bbgpu_register_kernel();
 #ifdef _WIN32
     SYSTEM_INFO system_info; GetSystemInfo(&system_info); page_size = system_info.dwPageSize;
-    (void)timeout_seconds; /* no watchdog on Windows */
+    (void)timeout_seconds;
 #else
     page_size = (size_t)sysconf(_SC_PAGESIZE);
     struct sigaction sa = {0}; sa.sa_sigaction = fault; sa.sa_flags = SA_SIGINFO;
@@ -904,7 +826,7 @@ int main(int argc, char **argv) {
     sigemptyset(&dump.sa_mask); sigaction(SIGUSR2, &dump, NULL);
     struct sigaction alarm_action = {0}; alarm_action.sa_sigaction = watchdog; alarm_action.sa_flags = SA_SIGINFO;
     sigemptyset(&alarm_action.sa_mask); sigaction(SIGALRM, &alarm_action, NULL);
-    alarm(timeout_seconds); /* 0 disables the watchdog */
+    alarm(timeout_seconds);
 #endif
     FILE *f = fopen(argv[1], "rb");
     if (!f) fail("cannot open boot file; run prepare.py first");
@@ -926,7 +848,6 @@ int main(int argc, char **argv) {
     uint64_t *binding_kinds=calloc(import_count ? import_count : 1,sizeof(*binding_kinds));
     if (!bindings || !binding_kinds) fail("allocation failed");
     if (multi) {
-        /* BBPROBE5: procparam, eboot TLS, module table, bindings (link_modules.py). */
         procparam=read64(f);
         for (int i=0;i<4;++i) main_tls[i]=read64(f);
         module_count=read64(f);
@@ -1018,9 +939,9 @@ int main(int argc, char **argv) {
         sfo_value(sfo,"TITLE_ID",serial,sizeof(serial),NULL);
         sfo_value(sfo,"ATTRIBUTE",NULL,0,&attributes);
         uint64_t sdk=0;
-        if (procparam) memcpy(&sdk,image+procparam+16,8); /* procparam: size, magic, count, sdk_version */
+        if (procparam) memcpy(&sdk,image+procparam+16,8);
         BbGpuConfig gpu={title,serial,user_dir ? user_dir : "user",(uint32_t)sdk,attributes,1920,1080};
-        gpu_enabled=1; /* page tracking starts while the rasterizer registers guest memory */
+        gpu_enabled=1;
         if (bbgpu_init(&gpu)) fail("GPU initialization failed");
         printf("GPU: window and Vulkan presenter ready; SDK 0x%08x, %u HLE symbols\n",(unsigned)sdk,bbgpu_symbol_count());
     }
@@ -1032,10 +953,9 @@ int main(int argc, char **argv) {
     protect(data_traps, (import_count + 1) * page_size, 0);
     for (uint64_t i = 0; i < import_count; ++i) {
         unsigned char *t = traps + i * 32;
-        /* SysV: mov edi, index; movabs rax, handler; jmp rax. No fake return values. */
         uint32_t index = (uint32_t)i;
         uintptr_t handler = (uintptr_t)unresolved;
-        t[0] = 0x48; t[1] = 0x89; t[2] = 0xfe; /* mov rsi,rdi: preserve arg0 */
+        t[0] = 0x48; t[1] = 0x89; t[2] = 0xfe;
         t[3] = 0xbf; memcpy(t + 4, &index, 4);
         t[8] = 0x48; t[9] = 0xb8; memcpy(t + 10, &handler, 8);
         t[18] = 0xff; t[19] = 0xe0;
@@ -1056,7 +976,6 @@ int main(int argc, char **argv) {
         memcpy(image + relocs[i].target, &value, 8);
     }
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
-    /* AwesomeObserver 149972b: no 12-second minimum loading time after death. */
     if (!cpu_only) {
         const char *respawn_fix = getenv("BB_RESPAWN_DELAY_FIX");
         if (respawn_fix && !strcmp(respawn_fix, "0")) {
@@ -1096,7 +1015,6 @@ int main(int argc, char **argv) {
         runtime_set_main_tls(image+main_tls[0],main_tls[1],main_tls[2],main_tls[3]);
         runtime_thread_attach_main();
         runtime_set_procparam(image+procparam);
-        /* Dependencies start in link order (libc first), as the PS4 dynamic linker does. */
         for (uint64_t m=0;m<module_count;++m) {
             printf("Starting linked module %" PRIu64 " at image offset 0x%" PRIx64 "; native bindings=%" PRIu64 "\n",m,modules[m].init,nb);
             typedef int (ABI *ModuleInit)(uint64_t,void *,void *);
@@ -1106,7 +1024,6 @@ int main(int argc, char **argv) {
         }
     }
 #ifdef _WIN32
-    /* Libraries loaded since main (GPU driver, SDL) may have installed their own. */
     SetUnhandledExceptionFilter(unhandled_filter);
 #endif
     if (!cpu_only) bbgpu_start_online();
@@ -1117,7 +1034,6 @@ int main(int argc, char **argv) {
     typedef void (ABI *Entry)(void *, void (ABI *)(void));
     ((Entry)(image + entry))(&params, guest_exit);
 #else
-    /* The guest main thread runs on a stack below 1 TiB like PS4 stacks. */
     enum { MAIN_STACK=8*1024*1024 };
     unsigned char *stack=runtime_low_map(MAIN_STACK,PROT_READ|PROT_WRITE);
     if (!stack) fail("cannot allocate guest main stack");

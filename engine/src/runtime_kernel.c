@@ -1,6 +1,3 @@
-/* libkernel/libScePosix process services: clocks, sleeping, errno mapping,
- * pthread once/keys, signal bookkeeping and a narrow sysctl. Guest values
- * use FreeBSD numbering; host errno values never reach the guest directly. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdatomic.h>
@@ -45,17 +42,14 @@ int32_t runtime_guest_errno(int e) {
     case EMLINK: return 31; case EPIPE: return 32; case ERANGE: return 34; case EAGAIN: return 35;
     case ENAMETOOLONG: return 63; case ENOTEMPTY: return 66; case ETIMEDOUT: return 60;
     case ELOOP: return 62; case ENOSYS: return 78; case EOVERFLOW: return 84; case ECANCELED: return 85;
-    default: return 5; /* EIO: unmapped host error */
+    default: return 5;
     }
 }
 static int32_t fail_posix(int e) { *runtime_errno()=runtime_guest_errno(e); return -1; }
 
-/* ---- clocks and sleeping ---- */
 static uint64_t process_start;
 __attribute__((constructor)) static void remember_start(void) { process_start=host_monotonic_ns(); }
 #ifdef _WIN32
-/* Windows: realtime and monotonic from host_sync.h (GetSystemTimePreciseAsFileTime,
- * QueryPerformanceCounter), CPU times from GetThreadTimes/GetProcessTimes. */
 typedef enum { REALTIME, MONOTONIC, THREAD_CPU, PROCESS_CPU } HostClock;
 #define HOST_CLOCK(linux_id, windows_id) windows_id
 #else
@@ -64,12 +58,12 @@ typedef clockid_t HostClock;
 #endif
 static int host_clock(uint32_t id,HostClock *out) {
     switch (id) {
-    case 0: case 9: case 10: *out=HOST_CLOCK(CLOCK_REALTIME,REALTIME); return 1;  /* REALTIME(_PRECISE/_FAST) */
-    case 4: case 11: case 12: case 5: case 7: case 8: *out=HOST_CLOCK(CLOCK_MONOTONIC,MONOTONIC); return 1; /* MONOTONIC/UPTIME */
-    case 13: *out=HOST_CLOCK(CLOCK_REALTIME_COARSE,REALTIME); return 1;          /* SECOND */
+    case 0: case 9: case 10: *out=HOST_CLOCK(CLOCK_REALTIME,REALTIME); return 1;
+    case 4: case 11: case 12: case 5: case 7: case 8: *out=HOST_CLOCK(CLOCK_MONOTONIC,MONOTONIC); return 1;
+    case 13: *out=HOST_CLOCK(CLOCK_REALTIME_COARSE,REALTIME); return 1;
     case 14: *out=HOST_CLOCK(CLOCK_THREAD_CPUTIME_ID,THREAD_CPU); return 1;
-    case 2: case 15: *out=HOST_CLOCK(CLOCK_PROCESS_CPUTIME_ID,PROCESS_CPU); return 1; /* PROF/PROCTIME */
-    case 16: case 17: case 18: case 19: *out=HOST_CLOCK(CLOCK_MONOTONIC,MONOTONIC); return 1; /* PS4 network clocks */
+    case 2: case 15: *out=HOST_CLOCK(CLOCK_PROCESS_CPUTIME_ID,PROCESS_CPU); return 1;
+    case 16: case 17: case 18: case 19: *out=HOST_CLOCK(CLOCK_MONOTONIC,MONOTONIC); return 1;
     default: return 0;
     }
 }
@@ -100,7 +94,7 @@ static ABI int32_t posix_clock_getres(uint32_t id,GuestTimespec *ts) {
     HostClock host;
     if (!host_clock(id,&host)) return fail_posix(EINVAL);
 #ifdef _WIN32
-    if (ts) { ts->sec=0; ts->nsec=100; } /* FILETIME and QueryPerformanceCounter units */
+    if (ts) { ts->sec=0; ts->nsec=100; }
 #else
     struct timespec t;
     if (clock_getres(host,&t)) return fail_posix(errno);
@@ -122,13 +116,10 @@ static ABI uint64_t tsc_frequency(void) {
     }
     return tsc_hz;
 }
-/* Shared with the GPU library so flip/label timestamps use the guest's clock. */
 uint64_t runtime_process_time_us(void) { return process_time(); }
 uint64_t runtime_process_time_counter(void) { return process_time_counter(); }
 uint64_t runtime_tsc_frequency(void) { return tsc_frequency(); }
 static _Atomic uint64_t sleep_calls, sleep_total_ns;
-/* Called once per frame-stats window (BB_FRAME_STATS, videoout driver.cpp): the runtime's other
- * per-window line (file streaming) goes out from here too. */
 void runtime_sleep_stats(uint64_t *calls, uint64_t *ns) {
     *calls=atomic_exchange(&sleep_calls,0); *ns=atomic_exchange(&sleep_total_ns,0);
     runtime_file_stream_report();
@@ -177,7 +168,6 @@ static ABI int32_t kernel_gettimeofday(GuestTimeval *tv) {
 }
 static ABI int64_t posix_time(int64_t *out) { int64_t t=(int64_t)time(NULL); if (out) *out=t; return t; }
 
-/* ---- process ---- */
 static ABI int32_t get_pagesize(void) { return PAGE; }
 static ABI int32_t get_pid(void) { return 1000; }
 static ABI int32_t yield(void) { host_yield(); return 0; }
@@ -200,7 +190,7 @@ typedef struct { uint32_t bits[4]; } GuestSigset;
 static _Thread_local GuestSigset signal_mask;
 static uintptr_t handlers[128];
 static ABI uintptr_t guest_signal(int sig,uintptr_t handler) {
-    if (sig<=0 || sig>=128) { *runtime_errno()=22; return (uintptr_t)-1; } /* SIG_ERR */
+    if (sig<=0 || sig>=128) { *runtime_errno()=22; return (uintptr_t)-1; }
     uintptr_t old=handlers[sig]; handlers[sig]=handler;
     printf("Runtime: guest signal(%d) handler recorded (host signals are not forwarded)\n",sig);
     return old;
@@ -209,9 +199,9 @@ static ABI int32_t guest_sigprocmask(int how,const GuestSigset *set,GuestSigset 
     if (old) *old=signal_mask;
     if (!set) return 0;
     for (int i=0;i<4;++i) {
-        if (how==1) signal_mask.bits[i]|=set->bits[i];        /* SIG_BLOCK */
-        else if (how==2) signal_mask.bits[i]&=~set->bits[i];  /* SIG_UNBLOCK */
-        else if (how==3) signal_mask.bits[i]=set->bits[i];    /* SIG_SETMASK */
+        if (how==1) signal_mask.bits[i]|=set->bits[i];
+        else if (how==2) signal_mask.bits[i]&=~set->bits[i];
+        else if (how==3) signal_mask.bits[i]=set->bits[i];
         else return fail_posix(EINVAL);
     }
     return 0;
@@ -238,7 +228,7 @@ static ABI int32_t guest_getrusage(int who,GuestRusage *out) {
 static ABI int32_t guest_sysctl(const int32_t *name,uint32_t namelen,void *old,uint64_t *oldlen,const void *new_value,uint64_t newlen) {
     (void)newlen;
     if (!name || namelen<2 || new_value) return fail_posix(EINVAL);
-    if (name[0]==1 && name[1]==37) { /* kern.arandom */
+    if (name[0]==1 && name[1]==37) {
         if (!old || !oldlen) return fail_posix(EINVAL);
 #ifdef _WIN32
         if (runtime_random(old,(size_t)*oldlen)<0) return fail_posix(errno);
@@ -247,13 +237,12 @@ static ABI int32_t guest_sysctl(const int32_t *name,uint32_t namelen,void *old,u
 #endif
         return 0;
     }
-    if (name[0]==6 && (name[1]==7 || name[1]==3)) { /* hw.pagesize / hw.ncpu */
+    if (name[0]==6 && (name[1]==7 || name[1]==3)) {
         if (!oldlen) return fail_posix(EINVAL);
         int32_t value=name[1]==7 ? PAGE : 7;
         if (old) { if (*oldlen<4) return fail_posix(ENOMEM); memcpy(old,&value,4); }
         *oldlen=4; return 0;
     }
-    /* bbport: unknown names fail as on FreeBSD (ENOENT) instead of ending the game (exit 21). */
     static unsigned notes;
     if (__atomic_fetch_add(&notes,1,__ATOMIC_RELAXED)<8) {
         fprintf(stderr,"Runtime: unsupported sysctl mib");
@@ -263,7 +252,6 @@ static ABI int32_t guest_sysctl(const int32_t *name,uint32_t namelen,void *old,u
     return fail_posix(ENOENT);
 }
 
-/* ---- pthread_once and thread-specific data ---- */
 static ABI int32_t thread_once(int32_t *once,void (ABI *routine)(void)) {
     if (!once || !routine) return ERR(22);
     for (;;) {
@@ -353,14 +341,10 @@ uintptr_t runtime_kernel_resolve(const char *name) { return RUNTIME_LOOKUP(expor
 static void sample_start(void);
 static void sample_report(void);
 
-/* bbport (frame stats): time guest threads spend blocked in the runtime (condition variables,
- * mutexes, semaphores, sleeps), by thread and guest call site: the first return address into the
- * game's code on the stack. Shows where the game waits for the GPU (labels, frame pacing). */
 typedef struct { _Atomic uint64_t key; uint64_t site, site2, site3; int tid, kind; char name[16]; _Atomic uint64_t count, ns; } WaitSite;
 static WaitSite wait_sites[512];
 static _Thread_local int wait_tid;
 void runtime_guest_call_sites(uint64_t out[3]);
-/* The first three return addresses into the game's code on this thread's stack (guest offsets). */
 static void guest_call_sites(uint64_t out[3]) {
     const uintptr_t text_lo=0x800000000ull, text_hi=0x800000000ull+0x50d96dcull;
     static _Thread_local uintptr_t stack_hi;
@@ -420,9 +404,6 @@ void runtime_wait_report(double frames) {
     printf("\n");
 }
 
-/* bbport BB_SAMPLE_THREAD=<name> (with frame stats): where that thread runs, sampled with SIGPROF
- * every 0.5 ms; reported with the wait profile. A thread that never blocks but waits for the GPU
- * shows up spinning in its polling loop. */
 static _Atomic uint64_t sample_keys[1024], sample_counts[1024];
 static uint64_t sample_rips[1024], sample_callers[1024];
 static _Atomic uint64_t samples_total;
@@ -431,7 +412,6 @@ static void sample_handler(int sig, siginfo_t *info, void *context) {
     const ucontext_t *uc=(const ucontext_t *)context;
     uint64_t rip=(uint64_t)uc->uc_mcontext.gregs[REG_RIP];
     const uint64_t text_lo=0x800000000ull, text_hi=0x800000000ull+0x50d96dcull;
-    /* Host code: keyed with its guest caller, the first return address into the game on the stack. */
     uint64_t caller=0;
     if (rip<text_lo || rip>=text_hi) {
         uint64_t stack[256]={0};
@@ -494,7 +474,7 @@ static void sample_report(void) {
     static int got_dumped;
     if (!got_dumped) {
         got_dumped=1;
-        const char *got=getenv("BB_DUMP_GOT"); /* a guest GOT slot (offset): which host function it calls */
+        const char *got=getenv("BB_DUMP_GOT");
         if (got && *got) {
             const uint64_t target=*(const uint64_t *)(0x800000000ull+strtoull(got,NULL,0));
             Dl_info dl={0};
@@ -524,7 +504,6 @@ static void sample_report(void) {
     }
     printf("\n");
 }
-/* The first three return addresses into the game's code on the calling thread's stack. */
 void runtime_guest_call_sites(uint64_t out[3]) { guest_call_sites(out); }
 #else
 void runtime_wait_note(int kind, uint64_t ns) { (void)kind; (void)ns; }

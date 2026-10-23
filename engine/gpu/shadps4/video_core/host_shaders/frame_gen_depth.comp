@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: frame generation (vk_frame_generation.h): the scene depth copied into the R32F image
 // FSR's frame interpolation reads (a depth format cannot be copied into a colour one directly).
 #version 450

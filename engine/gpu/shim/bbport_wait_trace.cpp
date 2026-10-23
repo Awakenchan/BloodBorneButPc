@@ -19,8 +19,8 @@
 
 namespace BbWaitTrace {
 namespace {
-constexpr int Skip = 1; // Scope::Scope itself
-constexpr int Kept = 6; // frames that identify a stack
+constexpr int Skip = 1;
+constexpr int Kept = 6;
 
 struct Key {
     std::array<void*, Kept> frames{};
@@ -65,7 +65,7 @@ std::string Describe(void* address) {
     return text;
 #endif
 }
-} // namespace
+}
 
 bool Enabled() {
     static const bool enabled = [] {
@@ -135,4 +135,4 @@ void Report(double window_s) {
         std::printf("\n");
     }
 }
-} // namespace BbWaitTrace
+}

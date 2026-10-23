@@ -19,7 +19,6 @@ OPCODES = {0x10:'NOP',0x12:'CLEAR_STATE',0x15:'DISPATCH_DIRECT',0x16:'DISPATCH_I
 
 def main(path):
     f = open(path,'rb').read()
-    # program headers
     phoff, = struct.unpack_from('<Q', f, 0x20); phnum, = struct.unpack_from('<H', f, 0x38)
     segs = []
     for i in range(phnum):
@@ -29,18 +28,16 @@ def main(path):
     ehh = next(s for s in segs if s[0]==0x6474e550)
     toff, tva, tsz = text[2], text[3], text[4]
     def va2off(va): return va - tva + toff
-    # eh_frame_hdr: version, eh_frame_ptr_enc, fde_count_enc, table_enc
     h = ehh[2]; hva = ehh[3]
     ver, pe, ce, te = f[h:h+4]
-    assert ver == 1 and te == 0x3b, (ver, pe, ce, te)  # datarel sdata4
+    assert ver == 1 and te == 0x3b, (ver, pe, ce, te)
     pos = h+4
-    pos += 4  # eh_frame_ptr (sdata4 pcrel)
+    pos += 4
     count, = struct.unpack_from('<i', f, pos); pos += 4
     funcs = []
     for i in range(count):
         loc, fde = struct.unpack_from('<ii', f, pos+8*i)
         start = hva + loc; fde_off = va2off(hva + fde)
-        # FDE: length, CIE ptr, pc_begin (pcrel sdata4 assumed), pc_range
         pc_range, = struct.unpack_from('<i', f, fde_off+12)
         funcs.append((start, pc_range))
     funcs.sort()
@@ -50,12 +47,11 @@ def main(path):
     hits = collections.defaultdict(collections.Counter)
     total = collections.Counter()
     i = code.find(b'\xc0', 3)
-    # scan every 4-byte window whose top byte is 0xC0 (type 3, predicate 0, shader type 0/1 in bit 1)
     for m in range(3, len(code)):
         b3 = code[m]
         if b3 != 0xc0 and b3 != 0xc1: continue
         b0 = code[m-3]
-        if b0 not in (0, 2): continue          # bit 1 = shader type (compute)
+        if b0 not in (0, 2): continue
         op = code[m-2]
         if op not in OPCODES: continue
         cnt = code[m-1]
@@ -76,7 +72,6 @@ def main(path):
         total[OPCODES[op]] += 1
     print(f'functions (eh_frame): {len(funcs)}; functions with PM4 header immediates: {len(hits)}')
     print('by opcode:', ', '.join(f'{k} {v}' for k,v in total.most_common()))
-    # per-opcode: how many functions
     per = collections.Counter()
     for fn,c in hits.items():
         for k in c: per[k] += 1

@@ -4,10 +4,6 @@ using BloodborneLauncher.Core;
 
 namespace BloodborneLauncher.Views
 {
-    /// <summary>
-    /// Online play with The Hunter's Dream. The engine reads these from lantern.ini (online_*,
-    /// scripts/online.py); only the password stays out of it and is passed when the game starts.
-    /// </summary>
     public sealed class OnlinePage : LauncherPage
     {
         private readonly ToggleSwitch _online;
@@ -19,10 +15,8 @@ namespace BloodborneLauncher.Views
             L.T("3. In the game, choose online at the title screen: The Hunter's Dream's welcome message means you are online. ") +
             L.T("Everyone needs game version 1.09."))
         {
-            // One server now: the bbbridge pool and custom servers are gone (scripts/online.py defaults).
             foreach (var key in new[] { "online_host", "online_port", "online_webapi", "online_game_api", "online_thd_account" })
                 if (Ini.Get(key).Length > 0) Ini.Set(key, "");
-            // With a Hunter's Dream account: its own co-op (the engine's thd backend, with bbhost players).
             Ini.Set("online_pool", S.HuntersDreamToken.Length > 0 && S.Str("hd_name").Length > 0 ? "huntersdream" : "");
 
             if (HuntersDream.OnlinePaused)
@@ -62,7 +56,6 @@ namespace BloodborneLauncher.Views
         {
             var name = S.Str("hd_name");
             var linked = name.Length > 0 && S.HuntersDreamToken.Length > 0;
-            // Refused by the server in a game (Workspace, from the session log): marked until a new sign-in.
             var refused = linked ? S.HuntersDreamRefused : "";
             SetHint(_hdHint, !linked ? L.T("Not connected. Connect with Discord, or create an account here without it")
                 : refused.Length > 0 ? L.F($"The Hunter's Dream refused the sign-in as {name} ({refused}). Sign in again: until then nobody can summon or invite you")
@@ -71,8 +64,6 @@ namespace BloodborneLauncher.Views
             if (_linking is null) _hdButton.Text = !linked ? L.T("Connect") : refused.Length > 0 ? L.T("Sign in again") : L.T("Disconnect");
         }
 
-        /// <summary>The Hunter's Dream account without Discord (#37): created with a name, or recovered
-        /// with the name and its recovery code. A new recovery code is shown once.</summary>
         private async Task AccountWithoutDiscordAsync(bool recover)
         {
             var fields = recover
@@ -110,8 +101,6 @@ namespace BloodborneLauncher.Views
             }
         }
 
-        /// <summary>The device link: the code goes to the clipboard and the website opens; pressing the
-        /// button again while it waits cancels. Connected, the button disconnects.</summary>
         private async Task LinkAsync()
         {
             if (_linking is { } running)
@@ -119,8 +108,6 @@ namespace BloodborneLauncher.Views
                 running.Cancel();
                 return;
             }
-            // A refused sign-in signs in again instead: its token is only replaced once the new sign-in
-            // works (an account without Discord gets back in only with its recovery code).
             if (S.HuntersDreamToken is { Length: > 0 } token && S.HuntersDreamRefused.Length == 0)
             {
                 await HuntersDream.LogoutAsync(token);
@@ -176,8 +163,6 @@ namespace BloodborneLauncher.Views
         public override void OnShown()
         {
             _online.IsChecked = Ini.Get("online_enabled") == "1";
-            // A game since the page was last shown may have had the sign-in refused (not while a link
-            // waits: its hint shows the code to enter).
             if (_linking is null) ShowLink();
         }
 

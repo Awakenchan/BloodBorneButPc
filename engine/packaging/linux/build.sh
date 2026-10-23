@@ -53,7 +53,7 @@ for item in fsr4_shaders shader-catalog gamecontrollerdb.txt; do
     [[ ! -e $template/engine/$item ]] || cp -r "$template/engine/$item" "$root/engine/"
 done
 cp "$template/lantern.ini" "$root/engine/lantern.default.ini"
-cp "$template/lantern.ini" "$template/LICENSE" "$root/"
+cp "$template/lantern.ini" "$template/LICENSE" "$template/NOTICE" "$root/"
 install -m755 packaging/linux/lantern.sh "$root/lantern.sh"
 cp packaging/linux/README-linux.txt "$root/README.txt"
 if [[ -n $launcher ]]; then

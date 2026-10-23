@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Runs indirect_clamp.comp with the production dispatch limits. Inspect adversarial counts
 // without executing them; only the known one-workgroup case feeds vkCmdDispatchIndirect.
 // Plain Vulkan 1.3 compute with VK_KHR_push_descriptor; run under the validation layer.

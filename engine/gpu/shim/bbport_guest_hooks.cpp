@@ -22,33 +22,19 @@ namespace {
 using u64 = std::uint64_t;
 constexpr u64 ImageBase = 0x800000000ull;
 
-/// The return of the game's GPU memory range allocator 0x26aa070 (rdi allocator, rsi size,
-/// rdx alignment; it returns a node: [node + 8] the start, [[node + 0x18] + 8] the end, the next
-/// node's start): `add rsp, 0x18` in its epilogue, reached by its own branches only.
 constexpr u64 AllocReturn = 0x26aa255;
 constexpr unsigned char AllocReturnCode[4] = {0x48, 0x83, 0xc4, 0x18};
 RangeCallback on_range_allocated = nullptr;
 
-/// The game's other GPU memory heap (TLSF-like, headers in the memory: free at 0x20858a0, alloc at
-/// 0x2085a60), reached through a pointer at 0x54b9f38 set at startup. Its only three callers
-/// (wrappers that record {address, size} in a map) pass r8 = rbp - 0x50 for the size handed out and
-/// follow the call with `mov rbx, rax` (rax: the address).
 constexpr std::array<u64, 3> HeapAllocReturns = {0x11e6629, 0x11e6736, 0x11e6846};
 constexpr unsigned char HeapAllocReturnCode[3] = {0x48, 0x89, 0xc3};
 
-/// BB_FRAME_STATS: the range allocator's collector (0x26aa860, `push rbp`; rdi the allocator): its
-/// live range count [+0xc8] and byte count [+0xd0] are noted for the frame stats.
 constexpr u64 CollectorEntry = 0x26aa860;
 constexpr unsigned char CollectorEntryCode[1] = {0x55};
 
-/// BB_HEAP_SITES=1: the game's deferred object release (0xbb5f10) skips the destruction when the
-/// registry check (0xbf0790) fails: `js 0xbb5fc7` there, its result counted (eax).
 constexpr u64 ReleaseCheck = 0xbb5fb0;
 constexpr unsigned char ReleaseCheckCode[2] = {0x78, 0x15};
 
-/// `call memcpy` (0x261a1b0: rdi destination, rsi source, rdx size) in the resource loaders:
-/// 0x216d420 and 0x2171d60 copy texture and buffer data into GPU memory (most of the write
-/// faults while areas stream in).
 struct CallSite {
     u64 offset;
     unsigned char code[5];
@@ -59,7 +45,6 @@ constexpr std::array<CallSite, 2> MemcpySites = {{
 }};
 std::array<std::atomic<u64>, MemcpySites.size()> hits{};
 
-/// The game's memcpy at those sites: the copy, then the GPU side is told of the data now there.
 void* LoaderCopy(void* dst, const void* src, std::size_t size) {
     std::memcpy(dst, src, size);
     runtime_memory_note_write(reinterpret_cast<u64>(dst), size);
@@ -69,7 +54,7 @@ struct sigaction previous_action {};
 
 void OnTrap(int sig, siginfo_t* info, void* context) {
     auto* g = static_cast<ucontext_t*>(context)->uc_mcontext.gregs;
-    const u64 rip = u64(g[REG_RIP]) - 1; // past the int3
+    const u64 rip = u64(g[REG_RIP]) - 1;
     if (rip == ImageBase + ReleaseCheck) {
         const auto result = static_cast<std::int32_t>(g[REG_RAX] & 0xffffffff);
         BbHeapSites::NoteReleaseCheck(std::uint32_t(result));
@@ -89,7 +74,7 @@ void OnTrap(int sig, siginfo_t* info, void* context) {
                 break;
             }
         }
-        g[REG_RSP] -= 8; // push rbp
+        g[REG_RSP] -= 8;
         *reinterpret_cast<u64*>(g[REG_RSP]) = u64(g[REG_RBP]);
         g[REG_RIP] = greg_t(ImageBase + CollectorEntry + 1);
         return;
@@ -126,7 +111,6 @@ void OnTrap(int sig, siginfo_t* info, void* context) {
             continue;
         }
         hits[i].fetch_add(1, std::memory_order_relaxed);
-        // The call, to LoaderCopy instead of the game's memcpy: push the return address, jump.
         const u64 ret = ImageBase + site.offset + 5;
         g[REG_RSP] -= 8;
         *reinterpret_cast<u64*>(g[REG_RSP]) = ret;
@@ -165,7 +149,7 @@ bool Patch(u64 address, const unsigned char* expected, std::size_t size) {
     mprotect(page, span, PROT_READ | PROT_EXEC);
     return true;
 }
-} // namespace
+}
 
 void Install(RangeCallback on_gpu_range_allocated) {
     static std::atomic<bool> installed{false};
@@ -185,7 +169,6 @@ void Install(RangeCallback on_gpu_range_allocated) {
                 patched, MemcpySites.size());
     on_range_allocated = on_gpu_range_allocated;
     const bool allocator = Patch(ImageBase + AllocReturn, AllocReturnCode, sizeof(AllocReturnCode));
-    // BB_HEAP_HOOKS=0 (bisecting): the heap's ranges are not reported.
     const char* heap_env = std::getenv("BB_HEAP_HOOKS");
     const bool heap_hooks = !heap_env || heap_env[0] != '0';
     if (BbStats::enabled) {
@@ -206,4 +189,4 @@ void Install(RangeCallback on_gpu_range_allocated) {
         Patch(ImageBase + ReleaseCheck, ReleaseCheckCode, sizeof(ReleaseCheckCode));
     }
 }
-} // namespace BbGuestHooks
+}

@@ -2,7 +2,6 @@
 #include "runtime.h"
 #include <stdlib.h>
 
-/* The settings menu of the GPU library restarts through probe.c, which tests do not link. */
 void runtime_restart(void) { abort(); }
 #include <assert.h>
 #include <pthread.h>
@@ -86,8 +85,6 @@ static void concurrency(void) {
     assert(runtime_sema_waiters(id)==1 && (uint32_t)poll_sem(id,1)==0x80020010);
     assert(signal_sem(id,1)==0);
     assert(pthread_join(second,NULL)==0 && b.result==0);
-    /* A request that fits can pass an earlier larger request, matching the
-       researched kernel semaphore model. No tokens are partially consumed. */
     a=(Task){id,2,99,5000000}; b=(Task){id,1,99,5000000};
     assert(pthread_create(&first,NULL,waiter,&a)==0); enrolled(id,1);
     assert(pthread_create(&second,NULL,waiter,&b)==0); enrolled(id,2);
@@ -121,7 +118,6 @@ static void cancellation(void) {
 int main(int argc,char **argv) {
     setup();
     if (argc>1 && !strcmp(argv[1],"--priority")) {
-        /* Priority semaphores block and are woken in FIFO order. */
         uint32_t id; assert(create(&id,"priority",2,0,1,NULL)==0);
         Task a={id,1,99,5000000}; pthread_t t;
         assert(pthread_create(&t,NULL,waiter,&a)==0); enrolled(id,1);

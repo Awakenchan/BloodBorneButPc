@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// 0.4's optional Linux dma-buf / SIGTRAP experiments cannot run on section-backed Windows
-// memory. The established Windows renderer and vectored fault reports remain active.
 #ifdef _WIN32
 #include <cstdio>
 #include <cstdlib>
@@ -10,7 +8,6 @@
 #include "bbport_free_check.h"
 #include "bbport_heap_sites.h"
 
-// BbGuestMemory and BbGuestHooks: bbport_guest_memory_win.cpp and bbport_guest_hooks_win.cpp.
 namespace BbFreeCheck {
 bool Enabled() { return false; }
 void Check(std::uint64_t, std::uint64_t, const void*, Source, std::uint64_t) {}

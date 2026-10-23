@@ -1,140 +1,292 @@
-// The depth-block counter model behind real occlusion results (occlusion_model.h).
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 #include "gpu/shadps4/video_core/renderer_vulkan/occlusion_model.h"
 
 using namespace OcclusionModel;
 
 namespace {
-// The words two dumps write into a block: the begin dump at +0, the end dump at +8.
-void Dump(std::uint64_t* block, std::uint32_t pipes, std::uint64_t total, bool end) {
-    for (std::uint32_t k = 0; k < pipes; ++k) {
-        block[2 * k + (end ? 1 : 0)] = Share(total, pipes, k) | ValidBit;
-    }
-}
+constexpr std::uint32_t Native = 1u << 16;
 
-std::uint64_t SumOfDifferences(const std::uint64_t* block, std::uint32_t pipes) {
+struct Pipe {
+    std::uint64_t budget = 64;
+    std::uint64_t issued = 0;
+    std::uint64_t next_query = 0;
+    std::uint64_t frame = 0;
+    std::vector<std::uint64_t> samples;
+    OpenBlocks open;
+
+    void Draw(std::uint64_t count, bool dropped = false) {
+        ++issued;
+        if (dropped || !open.WantsQuery(next_query, budget)) {
+            return;
+        }
+        samples.push_back(count);
+        ++next_query;
+    }
+    void Begin(std::uint64_t block) {
+        open.Begin(block, issued, next_query, frame);
+    }
+    std::uint64_t End(std::uint64_t block) {
+        const auto closed = open.End(block, issued, next_query);
+        if (!closed || !closed->complete) {
+            return PlainlyVisible;
+        }
+        std::uint64_t sum = 0;
+        for (std::uint64_t q = closed->first_query; q < closed->first_query + closed->queries;
+             ++q) {
+            sum += samples[q];
+        }
+        return sum;
+    }
+};
+
+std::uint64_t Passed(const std::uint64_t* words, std::uint32_t dbs) {
     std::uint64_t sum = 0;
-    for (std::uint32_t k = 0; k < pipes; ++k) {
-        sum += (block[2 * k + 1] & ~ValidBit) - (block[2 * k] & ~ValidBit);
+    for (std::uint32_t db = 0; db < dbs; ++db) {
+        sum += (words[2 * db + 1] & ~ValidBit) - (words[2 * db] & ~ValidBit);
     }
     return sum;
 }
-} // namespace
+
+void BlockWords() {
+    for (const std::uint32_t dbs : {1u, 8u, 16u}) {
+        for (std::uint64_t count = 0; count < 300; ++count) {
+            std::uint64_t sum = 0;
+            for (std::uint32_t db = 0; db < dbs; ++db) {
+                sum += DbPart(count, dbs, db);
+                assert(DbPart(count + 1, dbs, db) >= DbPart(count, dbs, db));
+            }
+            assert(sum == count);
+        }
+        for (const std::uint64_t base : {0ull, 5ull, 987654321ull}) {
+            for (const std::uint64_t samples : {0ull, 1ull, 7ull, 5000ull, PlainlyVisible}) {
+                std::uint64_t words[2 * MaxDbs] = {};
+                assert(ReadAnswer(words, dbs) == Answer::Pending);
+                FillBlock(words, dbs, base, samples);
+                assert(Passed(words, dbs) == samples);
+                assert(ReadAnswer(words, dbs) == (samples ? Answer::Seen : Answer::Hidden));
+                std::uint64_t half[2 * MaxDbs] = {};
+                for (std::uint32_t db = 0; db < dbs; ++db) {
+                    half[2 * db] = words[2 * db];
+                }
+                assert(ReadAnswer(half, dbs) == Answer::Pending);
+                half[2 * (dbs - 1) + 1] = 0;
+                for (std::uint32_t db = 0; db + 1 < dbs; ++db) {
+                    half[2 * db + 1] = words[2 * db + 1];
+                }
+                assert(ReadAnswer(half, dbs) == Answer::Pending);
+            }
+        }
+    }
+}
+
+void QueryCounts() {
+    assert(QueryCount(0, false, true, Native) == PlainlyVisible);
+    assert(QueryCount(0, false, false, Native) == PlainlyVisible);
+    assert(QueryCount(1, true, false, Native) == PlainlyVisible);
+    assert(QueryCount(0, true, false, Native) == 0);
+    assert(QueryCount(0, true, true, 4 * Native) == 0);
+    assert(QueryCount(10, true, true, Native) == 10);
+    assert(QueryCount(1, true, true, Native + 1) == 2);
+
+    assert(ScaleToNative(1920, 1080) == Native);
+    assert(ScaleToNative(2560, 1440) == Native);
+    assert(ScaleToNative(960, 540) == 4 * Native);
+    assert(ScaleToNative(0, 0) == Native);
+    assert(QueryCount(250, true, true, ScaleToNative(960, 540)) == 1000);
+}
+
+void Predication() {
+    assert(DrawPredicated(false, true, true));
+    assert(DrawPredicated(true, true, false));
+    assert(DrawPredicated(true, false, true));
+    assert(!DrawPredicated(false, false, true));
+    assert(DrawPredicated(false, false, false));
+    assert(!DrawPredicated(true, false, false));
+}
+
+void Steadying() {
+    {
+        SteadyCount fresh;
+        for (std::uint32_t i = 0; i + 1 < SteadyCount::Window; ++i) {
+            assert(fresh.Add(0) == SteadyCount::Unseen);
+        }
+        assert(fresh.Add(0) == 0);
+        assert(fresh.Add(9) == 9);
+        for (std::uint32_t i = 0; i + 1 < SteadyCount::Window; ++i) {
+            assert(fresh.Add(0) == 9);
+        }
+        assert(fresh.Add(0) == 0);
+    }
+    {
+        SteadyCount lamp;
+        for (const std::uint64_t m : {40ull, 0ull, 35ull, 0ull, 0ull, 41ull, 0ull, 38ull}) {
+            assert(lamp.Add(m) >= 35);
+        }
+        SteadyCount fading;
+        for (std::uint32_t i = 0; i < SteadyCount::Window; ++i) {
+            fading.Add(100);
+        }
+        for (std::uint32_t i = 0; i + 1 < SteadyCount::Window; ++i) {
+            assert(fading.Add(10) == 100);
+        }
+        assert(fading.Add(10) == 10);
+        SteadyCount unknown;
+        unknown.Add(0);
+        assert(unknown.Add(PlainlyVisible) == PlainlyVisible);
+        assert(unknown.Add(0) == PlainlyVisible);
+    }
+}
+
+void Measuring() {
+    const std::uint64_t a = 0x1000, b = 0x2000;
+    {
+        Pipe pipe;
+        pipe.Draw(500);
+        assert(pipe.next_query == 0);
+        pipe.Begin(a);
+        pipe.Draw(0);
+        assert(pipe.End(a) == 0);
+        pipe.Draw(500);
+        pipe.Begin(a);
+        pipe.Draw(12);
+        assert(pipe.End(a) == 12);
+        assert(pipe.next_query == 2);
+        assert(pipe.open.Empty());
+    }
+    {
+        Pipe pipe;
+        pipe.Begin(a);
+        pipe.Draw(0);
+        pipe.Begin(b);
+        pipe.Draw(0);
+        assert(pipe.End(b) == 0);
+        pipe.Draw(0);
+        pipe.Draw(0);
+        assert(pipe.End(a) == 0);
+        pipe.Begin(a);
+        pipe.Begin(b);
+        pipe.Draw(3);
+        assert(pipe.End(b) == 3);
+        pipe.Draw(0);
+        assert(pipe.End(a) == 3);
+    }
+    {
+        Pipe pipe;
+        pipe.Begin(a);
+        pipe.Draw(1);
+        pipe.Begin(b);
+        pipe.Draw(0);
+        assert(pipe.End(a) == 1);
+        pipe.Draw(4);
+        assert(pipe.End(b) == 4);
+    }
+    {
+        Pipe pipe;
+        pipe.budget = 3;
+        pipe.Begin(a);
+        for (int i = 0; i < 3; ++i) {
+            pipe.Draw(0);
+        }
+        assert(pipe.End(a) == 0);
+        pipe.Begin(a);
+        for (int i = 0; i < 4; ++i) {
+            pipe.Draw(0);
+        }
+        assert(pipe.End(a) == PlainlyVisible);
+        pipe.Begin(a);
+        for (int i = 0; i < 3; ++i) {
+            pipe.Draw(0);
+        }
+        assert(!pipe.open.WantsQuery(pipe.next_query, pipe.budget));
+        pipe.Begin(b);
+        assert(pipe.open.WantsQuery(pipe.next_query, pipe.budget));
+        pipe.Draw(0);
+        assert(pipe.End(b) == 0);
+        assert(pipe.End(a) == 0);
+    }
+    {
+        Pipe pipe;
+        pipe.Begin(a);
+        pipe.Draw(0);
+        pipe.Draw(0, true);
+        assert(pipe.End(a) == PlainlyVisible);
+        assert(pipe.End(b) == PlainlyVisible);
+        pipe.Begin(a);
+        pipe.Draw(9);
+        pipe.Begin(a);
+        pipe.Draw(0);
+        assert(pipe.End(a) == 0);
+        assert(pipe.open.Empty());
+    }
+    {
+        Pipe pipe;
+        assert(pipe.open.FirstNeeded(pipe.next_query) == 0);
+        pipe.Begin(a);
+        pipe.Draw(1);
+        pipe.Begin(b);
+        pipe.Draw(1);
+        assert(pipe.open.FirstNeeded(pipe.next_query) == 0);
+        pipe.End(a);
+        assert(pipe.open.FirstNeeded(pipe.next_query) == 1);
+        pipe.End(b);
+        assert(pipe.open.FirstNeeded(pipe.next_query) == 2);
+        pipe.Begin(a);
+        pipe.Draw(1);
+        pipe.frame = 10;
+        pipe.open.Expire(pipe.frame, 8);
+        assert(pipe.open.Empty());
+        assert(pipe.open.FirstNeeded(pipe.next_query) == 3);
+        assert(pipe.End(a) == PlainlyVisible);
+        pipe.Begin(a);
+        pipe.frame = 18;
+        pipe.open.Expire(pipe.frame, 8);
+        assert(pipe.open.Size() == 1);
+    }
+    {
+        Pipe pipe;
+        for (std::uint64_t i = 0; i <= OpenBlocks::Capacity; ++i) {
+            pipe.Begin(0x10000 + 16 * i);
+        }
+        assert(pipe.open.Size() == OpenBlocks::Capacity);
+        pipe.Draw(0);
+        assert(pipe.End(0x10000) == PlainlyVisible);
+        assert(pipe.End(0x10000 + 16 * OpenBlocks::Capacity) == 0);
+    }
+}
+
+void Answers() {
+    for (const std::uint32_t dbs : {8u, 16u}) {
+        SteadyCount steady;
+        std::uint64_t counter = 0;
+        const std::uint64_t measured[] = {12, 0, 0, 0, 0, 0, 5, PlainlyVisible, 0};
+        const Answer expected[] = {Answer::Seen, Answer::Seen,   Answer::Seen,
+                                   Answer::Seen, Answer::Seen,   Answer::Hidden,
+                                   Answer::Seen, Answer::Seen,   Answer::Seen};
+        for (std::size_t i = 0; i < sizeof(measured) / sizeof(measured[0]); ++i) {
+            const std::uint64_t report = steady.Add(measured[i]);
+            std::uint64_t words[2 * MaxDbs] = {};
+            FillBlock(words, dbs, counter, report);
+            counter += report;
+            assert(Passed(words, dbs) == report);
+            assert(ReadAnswer(words, dbs) == expected[i]);
+        }
+    }
+}
+
+}
 
 int main() {
-    // The shares add up to the total, and every DB's share grows with it: the game's sum of
-    // end - begin is the samples drawn in between, whatever the split.
-    for (std::uint32_t pipes : {8u, 16u}) {
-        for (std::uint64_t total = 0; total < 200; ++total) {
-            std::uint64_t sum = 0;
-            for (std::uint32_t k = 0; k < pipes; ++k) {
-                sum += Share(total, pipes, k);
-                assert(Share(total + 1, pipes, k) >= Share(total, pipes, k));
-            }
-            assert(sum == total);
-        }
-        for (std::uint64_t begin : {0ull, 7ull, 123456789ull}) {
-            for (std::uint64_t samples : {0ull, 1ull, 5ull, 4000ull}) {
-                std::uint64_t block[2 * MaxPipes] = {};
-                assert(ReadBlock(block, pipes) == Block::NotReady); // zeroed by the game
-                Dump(block, pipes, begin, false);
-                assert(ReadBlock(block, pipes) == Block::NotReady); // only the begin landed
-                Dump(block, pipes, begin + samples, true);
-                assert(SumOfDifferences(block, pipes) == samples);
-                assert(ReadBlock(block, pipes) == (samples ? Block::Visible : Block::Occluded));
-            }
-        }
-    }
-
-    // Anything not measured reads visible, never occluded.
-    assert(Samples(0, false, true, 1u << 16) == Unmeasured);
-    assert(Samples(0, false, false, 1u << 16) == Unmeasured);
-    assert(Samples(1, true, false, 1u << 16) == Unmeasured); // imprecise 0/1: plainly visible
-    assert(Samples(0, true, false, 1u << 16) == 0);
-    assert(Samples(0, true, true, 4u << 16) == 0);           // occluded stays occluded
-    assert(Samples(10, true, true, 1u << 16) == 10);
-    assert(Samples(1, true, true, (1u << 16) + 1) == 2);      // rounds up, never down
-
-    // Reduced scene targets count fewer samples: scaled back to 1920x1080, never below 1.
-    assert(SampleScale(1920, 1080) == 1u << 16);
-    assert(SampleScale(3840, 2160) == 1u << 16);
-    assert(SampleScale(960, 540) == 4u << 16);
-    assert(SampleScale(0, 0) == 1u << 16);
-    assert(Samples(250, true, true, SampleScale(960, 540)) == 1000);
-
-    // SET_PREDICATION: unknown draws; otherwise draws when visibility matches the request.
-    assert(PredicatedDraws(false, true, true));
-    assert(PredicatedDraws(false, true, false));
-    assert(PredicatedDraws(true, false, true));
-    assert(!PredicatedDraws(false, false, true));
-    assert(PredicatedDraws(false, false, false));
-    assert(!PredicatedDraws(true, false, false));
-
-    // Hysteresis: the largest of the last Depth results; occluded only after Depth results in
-    // a row found nothing, visible at once; an unseen past reads visible with the least count.
-    {
-        BlockHistory fresh;
-        for (std::uint32_t i = 0; i + 1 < BlockHistory::Depth; ++i) {
-            assert(fresh.Report(0) == BlockHistory::UnknownPast);
-        }
-        assert(fresh.Report(0) == 0);
-        assert(fresh.Report(0) == 0);
-        assert(fresh.Report(9) == 9); // visible at once
-        for (std::uint32_t i = 0; i + 1 < BlockHistory::Depth; ++i) {
-            assert(fresh.Report(0) == 9);
-        }
-        assert(fresh.Report(0) == 0);
-    }
-    {
-        // A lamp flickering 0/N/0 under jitter reads steadily visible.
-        BlockHistory lamp;
-        const std::uint64_t measured[] = {40, 0, 35, 0, 0, 41, 0, 38};
-        for (const std::uint64_t m : measured) {
-            assert(lamp.Report(m) >= 35);
-        }
-        // The largest of the last Depth: a drop shows after Depth - 1 more results.
-        BlockHistory fading;
-        for (std::uint32_t i = 0; i < BlockHistory::Depth; ++i) {
-            fading.Report(100);
-        }
-        for (std::uint32_t i = 0; i + 1 < BlockHistory::Depth; ++i) {
-            assert(fading.Report(10) == 100);
-        }
-        assert(fading.Report(10) == 10);
-        // Unmeasured (fail-safe visible) counts too.
-        BlockHistory unknown;
-        unknown.Report(0);
-        unknown.Report(0);
-        assert(unknown.Report(Unmeasured) == Unmeasured);
-        assert(unknown.Report(0) == Unmeasured);
-    }
-    {
-        // As the resolver writes it: the held count is added to the running total between the
-        // begin and the end dump, so the game reads the held result from the block.
-        for (std::uint32_t pipes : {8u, 16u}) {
-            BlockHistory history;
-            std::uint64_t total = 1000;
-            const std::uint64_t measured[] = {12, 0, 0, 0, 0, 0, 5};
-            const Block expected[] = {Block::Visible, Block::Visible, Block::Visible,
-                                      Block::Visible, Block::Visible, Block::Occluded,
-                                      Block::Visible};
-            for (std::size_t i = 0; i < sizeof(measured) / sizeof(measured[0]); ++i) {
-                std::uint64_t block[2 * MaxPipes] = {};
-                Dump(block, pipes, total, false);
-                const std::uint64_t begin = total;
-                total += measured[i];
-                const std::uint64_t reported = history.Report(total - begin);
-                total += reported - (total - begin);
-                Dump(block, pipes, total, true);
-                assert(SumOfDifferences(block, pipes) == reported);
-                assert(ReadBlock(block, pipes) == expected[i]);
-            }
-        }
-    }
-
+    BlockWords();
+    QueryCounts();
+    Predication();
+    Steadying();
+    Measuring();
+    Answers();
     std::printf("occlusion model: ok\n");
     return 0;
 }

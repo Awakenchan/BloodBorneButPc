@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: native HDR output (hdr_mode=native, docs/hdr.md). The HDR encode (hdr_output.frag)
 // shows the game's finished SDR frame, UI included; native mode brightens its highlights by how
 // much brighter the game's own linear HDR scene is where the tonemap compressed them, measured

@@ -124,7 +124,6 @@
         public static readonly Choice[] CameraTuning =
         {
             new(L.T("Original (the game's camera)"), "original", L.T("As the game has it, at any frame rate")),
-            new(L.T("FPS++ retune"), "fps++", L.T("Kyo's 60 FPS++ camera: further back and slower to follow")),
         };
 
         public static readonly Choice[] ModelLod =

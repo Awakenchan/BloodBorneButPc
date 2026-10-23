@@ -1,21 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: the shader lab's GPU half. Builds a pipeline for each SPIR-V module the lab wrote
-// (bb-shader-lab --bench <cache> ... --spv-dir DIR) on this PC's Vulkan driver, without the game,
-// and reports what the driver made of it: the time vkCreate*Pipelines took (no pipeline cache, and
-// the module's bytes made unique per run so the driver's own disk cache misses too) and the
-// driver's statistics of each executable (VK_KHR_pipeline_executable_properties: on NVIDIA
-// instruction and register counts). A compiler change is compared by running both module sets.
-//
-// The manifest (tests/shader_gpu_stats.py writes it, one module a line, tab separated):
-//   name  stage(comp|vert|frag)  module.spv  partner.spv|-  bindings  vertex_inputs  color_outputs
-//   bindings      "binding:kind:count;..." kind ub sb si st sa ut stb cis
-//   vertex_inputs "location:VkFormat;..."   color_outputs "location:VkFormat;..."
-// The partner is the other stage of a graphics pipeline: a vertex shader that writes every input
-// the fragment shader reads, or a fragment shader that reads every output of the vertex shader
-// (so the driver cannot drop them).
-//
-//   bb-shader-gpu-stats <manifest> <report.csv> [rounds] [threads]
-// Build: clang++ -std=c++20 -O2 tests/shader_gpu_stats.cpp -lvulkan-1 -o bb-shader-gpu-stats.exe
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
@@ -57,7 +40,6 @@ std::vector<uint32_t> ReadSpv(const std::string& path, uint32_t nonce) {
     std::vector<char> bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
     std::vector<uint32_t> words(bytes.size() / 4);
     std::memcpy(words.data(), bytes.data(), words.size() * 4);
-    // A larger id bound is valid and changes the bytes: the driver's disk cache misses.
     if (words.size() > 5) {
         words[3] += nonce;
     }
@@ -111,7 +93,7 @@ std::vector<Entry> ReadManifest(const char* path) {
         }                                                                                          \
     } while (0)
 
-} // namespace
+}
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -145,7 +127,6 @@ int main(int argc, char** argv) {
     if (!gpu && !gpus.empty()) gpu = gpus[0];
     vkGetPhysicalDeviceProperties(gpu, &props);
 
-    // Every feature the device has (the engine's modules use many of them).
     VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR bary{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR exec{
@@ -155,7 +136,7 @@ int main(int argc, char** argv) {
     VkPhysicalDeviceVulkan11Features f11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &f12};
     VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f11};
     vkGetPhysicalDeviceFeatures2(gpu, &features);
-    features.features.robustBufferAccess = VK_FALSE; // the engine does not turn it on
+    features.features.robustBufferAccess = VK_FALSE;
 
     uint32_t ext_count = 0;
     vkEnumerateDeviceExtensionProperties(gpu, nullptr, &ext_count, nullptr);
@@ -209,7 +190,6 @@ int main(int argc, char** argv) {
             dslci.pBindings = e.bindings.data();
             VkDescriptorSetLayout set_layout;
             if (vkCreateDescriptorSetLayout(device, &dslci, nullptr, &set_layout) != VK_SUCCESS) {
-                // More bindings than push descriptors allow: an ordinary set.
                 dslci.flags = 0;
                 CHECK(vkCreateDescriptorSetLayout(device, &dslci, nullptr, &set_layout));
             }
@@ -349,7 +329,6 @@ int main(int argc, char** argv) {
             vkDestroyPipelineLayout(device, layout, nullptr);
             vkDestroyDescriptorSetLayout(device, set_layout, nullptr);
         };
-        // Each thread takes the next module, as the engine's warm-up threads do.
         std::atomic<size_t> next{0};
         const auto worker = [&] {
             for (size_t k; (k = next.fetch_add(1)) < entries.size();) {

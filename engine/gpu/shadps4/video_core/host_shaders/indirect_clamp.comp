@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: clamp indirect group counts using the bounds from ClampDispatchArgs. Some RADV
 // devices allow UINT32_MAX groups in X: the game's erroneous multi-billion particle counts
 // fit that hardware limit but hang the GPU. The caller also applies a 65535-group safety cap.

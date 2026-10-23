@@ -95,6 +95,9 @@ namespace BloodborneLauncher.Views
                 foreach (var item in EngineSwitches.All.Where(x => x.Group == group))
                     AddSwitch(item);
             }
+            Group(L.T("About"));
+            Body.Children.Add(Text(L.T("Lantern Engine by Awaken (github.com/Awakenchan/LanternEngine). Free software under the GNU GPL v3 or later ") +
+                                   L.T("with additional terms: anything built on it must keep this credit. See NOTICE in the game's folder."), "Faint"));
             ShowChanged();
         }
 

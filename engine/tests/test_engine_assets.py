@@ -101,7 +101,7 @@ class EngineAssetTests(unittest.TestCase):
         bnd = self.binder([('f000000001.fxr', b'first'), ('f001251720.fxr', b'trail effect'), ('f000000003.fxr', b'third')])
         out = engine_assets.replace_entry(bnd, 'f001251720.fxr', b'the replacement effect')
         self.assertEqual(out[:len(bnd)], bnd[:0x40 + 0x24] + out[0x40 + 0x24:0x40 + 0x48] + bnd[0x40 + 0x48:])
-        self.assertEqual(len(out) % 16, 6)  # appended at a 16-byte boundary
+        self.assertEqual(len(out) % 16, 6)
         self.assertEqual(engine_assets.binder_file(out, 'f001251720.fxr'), b'the replacement effect')
         self.assertEqual(engine_assets.binder_file(out, 'f000000001.fxr'), b'first')
         self.assertEqual(engine_assets.binder_file(out, 'f000000003.fxr'), b'third')

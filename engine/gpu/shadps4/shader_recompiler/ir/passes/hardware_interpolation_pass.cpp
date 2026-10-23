@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: hardware interpolation where the shader cannot tell the difference. On NVIDIA every
 // pixel shader input is read per vertex (VK_KHR_fragment_shader_barycentric) and interpolated by
 // GCN's own two steps, v_interp_p1/p2: P0 + I * (P1 - P0) + J * (P2 - P0) (Profile::

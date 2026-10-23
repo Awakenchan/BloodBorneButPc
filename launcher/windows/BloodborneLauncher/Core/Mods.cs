@@ -268,12 +268,43 @@ namespace BloodborneLauncher.Core
             return found;
         }
 
+        private static readonly Dictionary<string, string> RenamedBuiltIns = new(StringComparer.Ordinal)
+        {
+            ["Bloodborne.xml/All languages (region unlock)"] = "Bloodborne.xml/Unlock Game Region",
+            ["Bloodborne.xml/Camera: no auto-turn"] = "Bloodborne.xml/Disable Camera Auto Rotation via Movement",
+            ["Bloodborne.xml/Can't die (HP stops at 1)"] = "Bloodborne.xml/Player No Dead (Read note)",
+        };
+
+        private static bool Rename(HashSet<string> keys)
+        {
+            var old = keys.Where(RenamedBuiltIns.ContainsKey).ToList();
+            foreach (var key in old)
+            {
+                keys.Remove(key);
+                keys.Add(RenamedBuiltIns[key]);
+            }
+            return old.Count > 0;
+        }
+
         public static (HashSet<string> Enabled, HashSet<string> Disabled) LoadProfile()
         {
             try
             {
                 if (File.Exists(ProfilePath) && JsonNode.Parse(File.ReadAllText(ProfilePath)) is JsonObject profile)
-                    return (Set(profile["enabled"]), Set(profile["disabled"]));
+                {
+                    var (enabled, disabled) = (Set(profile["enabled"]), Set(profile["disabled"]));
+                    if (Rename(enabled) | Rename(disabled))
+                    {
+                        try
+                        {
+                            Write(enabled, disabled);
+                        }
+                        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                        {
+                        }
+                    }
+                    return (enabled, disabled);
+                }
             }
             catch
             {
@@ -302,7 +333,11 @@ namespace BloodborneLauncher.Core
                 if (on == patch.DefaultOn) continue;
                 (on ? enabled : disabled).Add(patch.Key);
             }
+            Write(enabled, disabled);
+        }
 
+        private static void Write(HashSet<string> enabled, HashSet<string> disabled)
+        {
             var profile = new JsonObject
             {
                 ["enabled"] = new JsonArray(enabled.OrderBy(k => k, StringComparer.Ordinal).Select(k => (JsonNode?)k).ToArray()),

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Run the production TAA shader on synthetic inputs, including undefined/invalid history.
 #include <cassert>
 #include <algorithm>
 #include <array>
@@ -25,7 +24,6 @@ int main(int argc, char** argv) {
     d.init(instance.GetInstance()); d.init(instance.GetDevice());
     const auto device = instance.GetDevice();
     Scheduler scheduler(instance);
-    // Odd dimensions and a pixel beyond 2000 exercise bounds and subpixel precision.
     constexpr u32 W = 2049, H = 7, N = W * H, X = 2010, center = 3 * W + X;
     std::array<VideoCore::UniqueImage, 7> images;
     std::array<vk::UniqueImageView, 7> views;
@@ -111,14 +109,11 @@ int main(int argc, char** argv) {
                 if (image==1) c[0]=std::clamp(scene_depth+(int(p%W)-int(X))*depth_slope,0.f,1.f);
                 if (image==1 && thin_edge && p%W==X-1) c[0]=0.99f;
                 if (image==3 && poison) c[0]=c[1]=c[2]=std::numeric_limits<float>::quiet_NaN();
-                // A tap of another surface (behind this one) must not blend in.
                 if (image==3 && edge && p%W==X+1) c[3]=0.75f;
-                // A one-pixel line in front in the history only (missed by this jitter phase).
                 if (image==3 && thin_history && p%W!=X) c[3]=scene_depth;
                 if (image==3 && history_edge && p%W!=X) c[0]=c[1]=c[2]=0.25f;
             }
         }
-        // A dark neighbor and a bright neighbor make history clipping measurable.
         pixels[(center-1)*4]=pixels[(center-1)*4+1]=pixels[(center-1)*4+2]=0.f;
         const auto cmd=scheduler.CommandBuffer();
         std::array<vk::ImageMemoryBarrier2,7> transitions{};
@@ -183,8 +178,6 @@ int main(int argc, char** argv) {
     run("temporal accumulation",0,0.75f,0.5f,0,1,0.74f);
     run("motion reduces persistence",0,0.75f,0.5f,4,1,0.7075f);
     run("neighborhood clipping",0,1,0.5f,0,0.3f,0.299f);
-    // Foreground history over this surface without motion (an object that moved away, or a
-    // thin one this jitter phase missed) is kept but clipped to the current neighbourhood.
     run("static disocclusion is clipped",0,0.75f,0.25f,0,0.3f,0.299f);
     run("moving disocclusion is rejected",0,0.75f,0.25f,2,1,0.25f);
     run("out-of-frame motion",0,0.75f,0.5f,50,1,0.25f);
@@ -260,7 +253,7 @@ int main(int argc, char** argv) {
                 vk::PipelineStageFlagBits2::eHost,vk::AccessFlagBits2::eHostRead);
         scheduler.Finish();
         const auto* bytes=static_cast<const char*>(ai.pMappedData);
-        assert(!std::memcmp(bytes,bytes+N*16,N*16)); // Color and depth history remain exact.
+        assert(!std::memcmp(bytes,bytes+N*16,N*16));
         const auto* output=reinterpret_cast<const u16*>(bytes+N*32);
         for (u32 p=0;p<N;++p) {
             for (u32 c=0;c<3;++c) {

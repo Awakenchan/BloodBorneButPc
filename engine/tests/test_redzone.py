@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from link_modules import LEA_DOWN, LEA_UP, protect_red_zones, rewrite_red_zone_functions
 
 SENTINEL = 0x1122334455667788
-STORE = 30  # offset of the faulting store in leaf()
+STORE = 30
 
 
 def leaf(page):
@@ -42,7 +42,7 @@ class TrampolineBytes(unittest.TestCase):
         self.assertEqual(code[len(body):len(body) + 5], b'\xe9' + struct.pack('<i', STORE + 6 - back))
 
     def test_other_instructions_of_a_site_are_copied_unchanged(self):
-        image = bytearray(bytes.fromhex('8b442404' '8946a4' 'c3'))  # mov eax,[rsp+4]; mov [rsi-0x5c],eax
+        image = bytearray(bytes.fromhex('8b442404' '8946a4' 'c3'))
         code, applied = protect_red_zones(image, [[0, '8b4424048946a4', [4, -3]]], 0x40)
         self.assertEqual(applied, 1)
         self.assertTrue(code.startswith(bytes.fromhex('8b442404') + LEA_DOWN + bytes.fromhex('8946a4') + LEA_UP))
@@ -58,8 +58,6 @@ class SiteTable(unittest.TestCase):
     sites = json.loads((ROOT / 'patches' / 'redzone.json').read_text())['sites']
 
     def test_attack_trail_stores_are_covered(self):
-        # 0x28ce7b0 writes trail vertices with live locals at [rsp-0x6c, rsp); 0x28ce9b5 then
-        # loaded a NULL pointer from the overwritten [rsp-0x60].
         covered = set()
         for offset, original, lengths in self.sites:
             pos = offset
@@ -96,16 +94,16 @@ class WholeFunctions(unittest.TestCase):
         self.assertEqual(applied, 1)
         self.assertEqual(image[:5], b'\xe9' + struct.pack('<i', 0x100 - 5))
         expected = (bytes.fromhex('4883ec20') + LEA_DOWN +
-                    bytes.fromhex('4889442440') +            # -0x40 + 0x80, still disp8
-                    bytes.fromhex('48898424f0000000'))       # 0x70 + 0x80: disp32
+                    bytes.fromhex('4889442440') +
+                    bytes.fromhex('48898424f0000000'))
         self.assertEqual(copy[:len(expected)], expected)
         at = len(expected)
-        self.assertEqual(copy[at:at + 2], b'\x0f\x84')    # je, as rel32
+        self.assertEqual(copy[at:at + 2], b'\x0f\x84')
         lea = at + 6
         epilogue = lea + 7
         self.assertEqual(struct.unpack_from('<i', copy, at + 2)[0], epilogue - (at + 6))
         rip = struct.unpack_from('<i', copy, lea + 3)[0]
-        self.assertEqual(0x100 + lea + 7 + rip, 16 + 7 + 0x10)  # the old target
+        self.assertEqual(0x100 + lea + 7 + rip, 16 + 7 + 0x10)
         self.assertEqual(copy[epilogue:epilogue + len(LEA_UP) + 5], LEA_UP + bytes.fromhex('4883c420c3'))
         self.assertEqual(len(copy) % 16, 0)
 
@@ -137,8 +135,8 @@ class WindowsFault(unittest.TestCase):
         k32.VirtualFree.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32)
         k32.AddVectoredExceptionHandler.restype = ctypes.c_void_p
         k32.RemoveVectoredExceptionHandler.argtypes = (ctypes.c_void_p,)
-        page = k32.VirtualAlloc(None, 4096, 0x3000, 0x02)  # MEM_COMMIT|MEM_RESERVE, PAGE_READONLY
-        text = k32.VirtualAlloc(None, 4096, 0x3000, 0x40)  # PAGE_EXECUTE_READWRITE
+        page = k32.VirtualAlloc(None, 4096, 0x3000, 0x02)
+        text = k32.VirtualAlloc(None, 4096, 0x3000, 0x40)
         code, sites = leaf(page)
         image = bytearray(code)
         if protect:
@@ -159,9 +157,9 @@ class WindowsFault(unittest.TestCase):
         def handler(info):
             r = info.contents.record.contents
             if r.code != 0xC0000005 or not page <= r.information[1] < page + 4096:
-                return 0  # EXCEPTION_CONTINUE_SEARCH
+                return 0
             k32.VirtualProtect(page, 4096, 0x04, ctypes.byref(ctypes.c_uint32()))
-            return -1  # EXCEPTION_CONTINUE_EXECUTION
+            return -1
 
         cookie = k32.AddVectoredExceptionHandler(1, handler)
         try:

@@ -53,7 +53,6 @@ def main():
         k = bisect.bisect_right(starts, va) - 1
         return starts[k] if k >= 0 and va < funcs[k][0] + funcs[k][1] else None
 
-    # Constant locations (virtual addresses) in every loaded segment.
     where = {}
     for seg in loads:
         off, va, size = seg[2], seg[3], seg[5]
@@ -69,8 +68,6 @@ def main():
     toff, tva, tsz = text[2], text[3], text[5]
     code = f[toff:toff + tsz]
     sites = []
-    # RIP-relative operands: ModRM mod=00 rm=101, disp32 follows. The instruction ends 4 bytes
-    # after the displacement (no immediate for the float ops looked for here).
     for i in range(len(code) - 8):
         modrm = code[i]
         if modrm & 0xC7 != 0x05:
@@ -81,12 +78,10 @@ def main():
         name = where.get(target)
         if not name:
             continue
-        # The opcode bytes before ModRM: a scalar float op (0F 10/11/51/58/59/5C/5E/5A/2F/2E...).
         op = code[i - 1]
         if op not in (0x10, 0x11, 0x2E, 0x2F, 0x51, 0x58, 0x59, 0x5A, 0x5C, 0x5D, 0x5E, 0x5F):
             continue
         sites.append((tva + i - 1, target, name))
-    # mov dword [..], imm32 of a float constant (C7 /0).
     for raw, name in CONSTANTS.items():
         if len(raw) != 4:
             continue

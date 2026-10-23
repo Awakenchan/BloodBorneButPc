@@ -20,8 +20,6 @@ def log(text):
 
 def lab_run(lab, *args):
     """bb-shader-lab's exit code and output (its log lines on stderr pass through)."""
-    # The lab links the GPU library, which the package keeps in engine/out/gpu (bb-probe finds it
-    # through its RUNPATH; the lab is not patched).
     env = dict(os.environ)
     env['LD_LIBRARY_PATH'] = os.pathsep.join(p for p in (str(lab.parent / 'gpu'), env.get('LD_LIBRARY_PATH', '')) if p)
     try:
@@ -65,7 +63,7 @@ def reset_stale(cache, identity, legacy, lab):
     if stamped is not None:
         if not identity or stamped == identity:
             return
-        if legacy and stamped == legacy:  # an earlier engine built from these same sources
+        if legacy and stamped == legacy:
             stamp.write_text(identity + '\n')
             return
     if cache.is_dir() and recompile(cache, lab):
@@ -121,9 +119,6 @@ def cache_vendor(folder):
 def seed(cache, catalogs, game, eboot, lab):
     if os.environ.get('BB_SHADER_CATALOG', '1') == '0' or not lab.is_file() or not catalogs.is_dir():
         return
-    # A game's catalog per GPU vendor (start/main.cpp SeedGpuCache): shader-catalog/<game> and
-    # shader-catalog/<vendor>/<game>. One per game: of the vendor the engine last ran the cache on,
-    # else of this PC's adapters NVIDIA first, then AMD, then Intel.
     by_game = {}
     for entry in sorted(p for p in catalogs.iterdir() if p.is_dir()):
         if (entry / 'profile.bin').is_file():
@@ -138,9 +133,6 @@ def seed(cache, catalogs, game, eboot, lab):
         catalog = next((c for c in candidates if vendor and catalog_vendor(c) == vendor), None)
         if catalog is None:
             continue
-        # The first start has no cache yet, so no profile of this GPU (the engine writes it): the
-        # catalog's own is used; another GPU of that vendor has its cache started again by the
-        # engine and seeded at the next start.
         if not target.exists():
             target.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(catalog / 'profile.bin', target / 'profile.bin')
@@ -158,7 +150,7 @@ def seed(cache, catalogs, game, eboot, lab):
         last = line_after(output, 'Shader cache:')
         if code == 0 and last is not None:
             log(f'GPU cache {catalog.name}: {last}')
-        marker.write_text(f'{code}\n')  # once per catalog, whatever came of it
+        marker.write_text(f'{code}\n')
 
 
 if __name__ == '__main__':

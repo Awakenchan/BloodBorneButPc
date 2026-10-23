@@ -1,6 +1,3 @@
-/* libSceRtc: calendar time. A tick is one microsecond since 0001-01-01 00:00
- * (proleptic Gregorian), the PS4 convention; the host clock supplies "now"
- * and the host time zone supplies local time. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -26,12 +23,11 @@ static int days_in_month(int y, int m) {
     static const int d[12]={31,28,31,30,31,30,31,31,30,31,30,31};
     return m==2 && leap(y) ? 29 : d[m-1];
 }
-/* Days since 0001-01-01 (H. Hinnant's days_from_civil, shifted epoch). */
 static int64_t days_from_civil(int64_t y, int64_t m, int64_t d) {
     y -= m<=2;
     int64_t era=(y>=0 ? y : y-399)/400;
     int64_t yoe=y-era*400, doy=(153*(m+(m>2 ? -3 : 9))+2)/5+d-1, doe=yoe*365+yoe/4-yoe/100+doy;
-    return era*146097+doe-306; /* 0001-01-01 == 0 */
+    return era*146097+doe-306;
 }
 static void civil_from_days(int64_t z, int *y, int *m, int *d) {
     z+=306;
@@ -65,7 +61,6 @@ static void from_tick(uint64_t tick, DateTime *t) {
 static uint64_t now_utc(void) {
     return UNIX_EPOCH_TICKS+host_realtime_ns()/1000u;
 }
-/* Offset of local time from UTC at the given UTC tick, in microseconds. */
 static int64_t local_offset(uint64_t utc) {
     time_t seconds=(time_t)((int64_t)(utc-UNIX_EPOCH_TICKS)/1000000);
 #ifdef _WIN32
@@ -101,7 +96,7 @@ static ABI int32_t rtc_day_of_week(int32_t year, int32_t month, int32_t day) {
     if (year<1 || year>9999) return ERR_INVALID_YEAR;
     if (month<1 || month>12) return ERR_INVALID_MONTH;
     if (day<1 || day>days_in_month(year,month)) return ERR_INVALID_DAY;
-    return (int32_t)((days_from_civil(year,month,day)+1)%7); /* 0001-01-01 was a Monday */
+    return (int32_t)((days_from_civil(year,month,day)+1)%7);
 }
 static ABI int32_t rtc_get_tick(const DateTime *t, uint64_t *tick) {
     if (!t || !tick) return ERR_INVALID_POINTER;
@@ -116,7 +111,7 @@ static ABI int32_t rtc_set_tick(DateTime *t, const uint64_t *tick) {
 static ABI uint32_t rtc_tick_resolution(void) { return 1000000; }
 static ABI int32_t rtc_set_time_t(DateTime *t, int64_t seconds) {
     if (!t) return ERR_INVALID_POINTER;
-    if (seconds<0) return (int32_t)0x80B50003; /* INVALID_VALUE */
+    if (seconds<0) return (int32_t)0x80B50003;
     from_tick(UNIX_EPOCH_TICKS+(uint64_t)seconds*1000000u,t); return 0;
 }
 static ABI int32_t rtc_get_time_t(const DateTime *t, int64_t *seconds) {
@@ -126,7 +121,6 @@ static ABI int32_t rtc_get_time_t(const DateTime *t, int64_t *seconds) {
     uint64_t tick=to_tick(t);
     *seconds=tick<UNIX_EPOCH_TICKS ? 0 : (int64_t)((tick-UNIX_EPOCH_TICKS)/1000000); return 0;
 }
-/* "Wed, 25 Sep 2026 12:00:00 +0300" for the given UTC tick (NULL = now) in local time. */
 static ABI int32_t rtc_rfc2822_local(char *out, const uint64_t *utc_tick) {
     if (!out) return ERR_INVALID_POINTER;
     uint64_t utc=utc_tick ? *utc_tick : now_utc();
@@ -139,7 +133,7 @@ static ABI int32_t rtc_rfc2822_local(char *out, const uint64_t *utc_tick) {
     snprintf(text,sizeof(text),"%s, %02u %s %04u %02u:%02u:%02u %c%02d%02d",days[rtc_day_of_week(t.year,t.month,t.day)],t.day,
              months[t.month-1],t.year,t.hour,t.minute,t.second,minutes<0 ? '-' : '+',
              (int)((minutes<0 ? -minutes : minutes)/60),(int)((minutes<0 ? -minutes : minutes)%60));
-    memcpy(out,text,strlen(text)+1); /* 31 characters + NUL, the SDK's buffer size */
+    memcpy(out,text,strlen(text)+1);
     return 0;
 }
 

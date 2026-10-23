@@ -5,34 +5,52 @@
 #ifndef __cplusplus
 #include <stdbool.h>
 #endif
+
 #ifdef __cplusplus
+#include "pad.h"
 union SDL_Event;
 struct SDL_Window;
+
+enum class InputDevice { KeyboardMouse, Pad };
+
+InputDevice host_input_device();
+
+void host_log(const char* format, ...) __attribute__((format(printf, 1, 2)));
+
 namespace BbInput {
-bool Install(uint8_t* image,size_t size);
+
+bool Install(uint8_t* image, size_t size);
 bool Enabled();
-void Event(const SDL_Event&,bool blocked);
-void Pump(SDL_Window*,bool text_active);
+
+void Event(const SDL_Event& event, bool blocked);
+
+void Pump(SDL_Window* window, bool text_active);
+
 void Tick();
+
+bool MouseIsMenuPointer();
+bool PointerOnStage(float& x, float& y);
+bool TextEntryOpen();
+
+PadState LastPad();
 }
+
 extern "C" {
 #endif
+
 typedef struct {
     uint32_t buttons;
-    uint8_t lx,ly,rx,ry,l2,r2,touch_count;
-    struct { uint16_t x,y;uint8_t id; } touch[2];
+    uint8_t lx, ly, rx, ry, l2, r2, touch_count;
+    struct { uint16_t x, y; uint8_t id; } touch[2];
 } BbPcPad;
-int bbgpu_pc_input(BbPcPad*,const bool* keys,int nkeys,int gamepad_present);
-/* bbport: whether a game menu has the screen now (menu_pointer_navigating: the front end, an open
- * menu, a list with focus in the last few frames), and the game's confirm and back buttons in it
- * (scePad bits; the game's region decides which is which). For pad.menu_confirm / pad.menu_back. */
-int bbgpu_menu_buttons(uint32_t* confirm,uint32_t* back);
-/* src/runtime_pad.c, for the game's button icons (engine/key_prompts.cpp): the gamepad in use's
- * SDL_GamepadType (SDL_GAMEPAD_TYPE_UNKNOWN without one), and the gamepad button bound to a PS4
- * button (its scePad bit; the touchpad's right side with right_side): an SDL_GamepadButton,
- * SDL_GAMEPAD_BUTTON_COUNT and +1 for the left and right trigger, -1 for none. */
+
+int bbgpu_pc_input(BbPcPad* pad, const bool* keys, int nkeys, int gamepad_present);
+
+int bbgpu_menu_buttons(uint32_t* confirm, uint32_t* back);
+
 int runtime_pad_type(void);
-int runtime_pad_button(uint32_t ps_button,int right_side);
+int runtime_pad_button(uint32_t ps_button, int right_side);
+
 #ifdef __cplusplus
 }
 #endif

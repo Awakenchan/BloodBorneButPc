@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Standalone CPU regression checks; no Vulkan device required.
 #include <cassert>
 #include "gpu/shadps4/video_core/renderer_vulkan/pipeline_cache_blob.h"
 
@@ -23,7 +22,6 @@ int main() {
     other = id; ++other.driver_version; assert(Decode(file, other).empty());
     other = id; ++other.driver_id; assert(Decode(file, other).empty());
     other = id; ++other.uuid[0]; assert(Decode(file, other).empty());
-    // Every single-byte corruption, including the opaque payload, is rejected.
     for (size_t n = 0; n < file.size(); ++n) {
         file[n] ^= 1;
         assert(Decode(file, id).empty());

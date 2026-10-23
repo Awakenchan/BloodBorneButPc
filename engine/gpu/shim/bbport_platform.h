@@ -1,7 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: the few OS facilities the statistics and diagnostics use (thread ids, CPU time and
-// resource usage), for Linux and Windows. Windows versions live in bbport_platform.cpp so that
-// <windows.h> and its macros (near, MemoryBarrier, ...) stay out of the renderer's headers.
 
 #pragma once
 
@@ -18,15 +15,11 @@
 
 namespace BbPlatform {
 
-/// RAM of the game and of the PC (bytes).
 struct Memory {
     std::uint64_t private_bytes = 0, working_set = 0, peak_working_set = 0;
     std::uint64_t free_phys = 0, total_phys = 0, commit_left = 0;
 };
 
-/// Where the game's resident RAM is (bytes): the game's own memory (its PS4 direct and flexible
-/// memory, one mapped section from 0x1000000000), other mapped sections, program and DLL images,
-/// and the private memory of the engine, the driver and the game executable's data.
 struct MemoryBreakdown {
     std::uint64_t game_pool = 0, mapped = 0, images = 0, priv = 0, shared = 0;
 };
@@ -36,25 +29,15 @@ struct Usage {
 };
 
 #ifdef _WIN32
-/// CPU time and scheduling counters of the calling thread (thread = true) or of the process.
-/// Windows has no per-thread context switch or fault counters: those stay 0 for threads.
 bool GetUsage(bool thread, Usage& out);
 bool GetMemory(Memory& out);
 bool GetMemoryBreakdown(MemoryBreakdown& out);
-/// OS id of the calling thread.
 std::uint32_t CurrentThreadId();
-/// A CPU clock of the calling thread that other threads can read (-1: unavailable): a
-/// duplicated thread handle (handles fit in 32 bits).
 int ThreadCpuClock();
-/// CPU time in nanoseconds of the thread behind a ThreadCpuClock() value.
 std::uint64_t ReadThreadCpuClockNs(int clock);
-/// "module+0xoffset" for a code address (diagnostics).
 void DescribeAddress(const void* address, char* out, std::size_t size);
 std::size_t CaptureStack(void** frames, std::size_t count);
 bool ReadProcessMemory(const void* source, void* destination, std::size_t size);
-/// Ends the process at once: TerminateProcess on itself. Unlike exit/_exit (ExitProcess), no
-/// DLL_PROCESS_DETACH runs, so the GPU driver does not tear its device down under threads
-/// that were just killed, and no destructors walk the game's GBs of memory.
 [[noreturn]] void TerminateProcessNow(unsigned code);
 #else
 [[noreturn]] inline void TerminateProcessNow(unsigned code) {
@@ -93,7 +76,6 @@ inline bool ReadProcessMemory(const void* source, void* destination, std::size_t
     return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(size);
 }
 
-/// Linux: the thread's clockid_t.
 inline int ThreadCpuClock() {
     if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0) {
         return static_cast<int>(clock);
@@ -108,4 +90,4 @@ inline std::uint64_t ReadThreadCpuClockNs(int clock) {
 }
 #endif
 
-} // namespace BbPlatform
+}

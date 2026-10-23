@@ -13,9 +13,7 @@ class GpuCacheTests(unittest.TestCase):
             (cache / 'CUSA03173' / 'a.spv').write_bytes(b'x')
             (cache / 'CUSA03173.vkcache').write_bytes(b'x')
             self.assertTrue(reset_stale_gpu_cache(cache, 'engine-2'))
-            # The driver's own cache stays; the engine's records go.
             self.assertEqual(sorted(p.name for p in cache.iterdir()), ['CUSA03173.vkcache', 'engine.txt'])
-            # The same engine keeps what it builds from then on.
             (cache / 'CUSA03173').mkdir()
             self.assertFalse(reset_stale_gpu_cache(cache, 'engine-2'))
             self.assertTrue((cache / 'CUSA03173').is_dir())
@@ -76,10 +74,8 @@ class GpuCacheTests(unittest.TestCase):
                     gpu_cache.seed(cache, catalogs, root / 'game', root / 'eboot.elf', lab)
                 return list(seeded), (cache / 'CUSA03173' / 'profile.bin').read_bytes() if (cache / 'CUSA03173' / 'profile.bin').exists() else None
 
-            # A Ryzen APU beside an RTX card: the NVIDIA catalog, its profile on the first start.
             self.assertEqual(start({0x1002, 0x10DE}), (['shader-catalog/CUSA03173'], b'10DE'))
             self.assertEqual(start({0x1002}), (['amd/CUSA03173'], b'1002'))
-            # The engine last ran this cache on AMD: the AMD one, whatever else is in the PC.
             self.assertEqual(start({0x1002, 0x10DE}, cache_vendor=0x1002)[0], ['amd/CUSA03173'])
             self.assertEqual(start({0x8086}), ([], None))
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: HDR output encode pass (hdr_pass.h), modelled on the post-processing pass.
 
 #include "video_core/renderer_vulkan/host_passes/hdr_pass.h"

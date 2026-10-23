@@ -6,10 +6,6 @@ using BloodborneLauncher.Core;
 
 namespace BloodborneLauncher.Views
 {
-    /// <summary>
-    /// Cheats the engine applies live (lantern.ini cheat_*: off, infinite or an amount kept topped up).
-    /// Turning one off restores the game values it changed; the items you have stay.
-    /// </summary>
     public sealed class CheatsPage : LauncherPage
     {
         private static readonly Choice[] Modes =
@@ -19,9 +15,7 @@ namespace BloodborneLauncher.Views
             new(L.T("Custom amount"), "custom", L.T("Refilled to the amount below whenever it drops")),
         };
 
-        /// <summary>Engine builds from before the cheats module: they ignore the cheat_* keys.</summary>
-        private static readonly string[] EnginesWithoutCheats =
-            { "bbhost-0.4.0-fps1", "bbhost-0.4.0-fps2", "bbhost-0.4.0-fps3", "bbhost-0.4.0-fps4" };
+        private const int FirstEngineWithCheats = 5;
 
         private readonly InfoBar _engine;
         private readonly InfoBar _online;
@@ -38,7 +32,6 @@ namespace BloodborneLauncher.Views
                 Message = L.T("Your engine doesn't apply cheats yet: they arrive with the next engine update. What you pick here is saved and starts working then."),
             };
             Body.Children.Add(_engine);
-            // The engine turns every cheat off in an online session (cheats.cpp SharedWorld).
             _online = new InfoBar
             {
                 IsClosable = false,
@@ -73,7 +66,6 @@ namespace BloodborneLauncher.Views
             Add(Card(SymbolRegular.Add24, L.T("Add echoes or insight"), L.T("In the in-game menu (Insert or L3 + R3): +1,000, +10,000, +100,000 echoes and +1 insight"), null, out _));
         }
 
-        /// <summary>A mode row and its amount slider for one cheat key.</summary>
         private void Cheat(SymbolRegular icon, string title, string key, string amountKey)
         {
             Slider amount = null!;
@@ -99,7 +91,6 @@ namespace BloodborneLauncher.Views
             ShowAmount(amount, Mode() == "custom");
         }
 
-        /// <summary>The amount row only shows for Custom amount.</summary>
         private static void ShowAmount(Slider amount, bool show)
         {
             ILogical? at = amount;
@@ -107,8 +98,15 @@ namespace BloodborneLauncher.Views
             ((Control?)at ?? amount).IsVisible = show;
         }
 
-        /// <summary>The package's engine applies cheats (newer than the builds listed above).</summary>
-        public static bool Supported => Updater.LocalEngine() is { } engine && !EnginesWithoutCheats.Contains(engine);
+        public static bool Supported => Updater.LocalEngine() is { } engine &&
+                                        !(EngineBuild(engine) is { } build && build < FirstEngineWithCheats);
+
+        private static int? EngineBuild(string engine)
+        {
+            var at = engine.LastIndexOf("-fps", StringComparison.Ordinal);
+            return at >= 0 && int.TryParse(engine.AsSpan(at + 4), NumberStyles.None, CultureInfo.InvariantCulture, out var build)
+                ? build : null;
+        }
 
         public override void OnShown()
         {

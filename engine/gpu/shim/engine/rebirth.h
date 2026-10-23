@@ -2,7 +2,8 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+
 namespace BbEngine::Rebirth {
-bool Install(std::uint8_t*,std::size_t);
+bool Install(std::uint8_t* image, std::size_t size);
 void Tick();
 }

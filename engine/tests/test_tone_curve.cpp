@@ -1,15 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// The composite's tone curve extension on the GPU (docs/hdr-scene-path.md, step 2;
-// shader_recompiler/native/tone_curve.h). bb-shader-lab --ramp-modules writes, per captured
-// composite, the game's module and the extended one, both rewritten to take a ramp of scene values
-// over the frame's width (x = 2^(low + stops * frag_x / width)) into the curve and to output the
-// curve's three channels. This draws both over one row and checks:
-//   - extension off (ToneCurvePush.enabled 0): equal everywhere, bit for bit;
-//   - on, below the knee: equal bit for bit;
-//   - on, above it: monotonic, continuous in value and log-log slope at the knee, below the peak
-//     (peak^strength) everywhere: reached only asymptotically.
-//   tone-curve-shader-test <ramp folder>...   (each holding game.spv, hdr.spv, ramp.txt)
-// Plain Vulkan 1.3 graphics (dynamic rendering).
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
@@ -35,7 +24,6 @@ namespace {
         }                                                                                         \
     } while (0)
 
-// shader_recompiler/native/tone_curve.h: after the 128 bytes of Shader::PushData.
 struct ToneCurvePush {
     float knee, peak, strength, enabled;
 };
@@ -98,7 +86,6 @@ Vk MakeVk() {
             break;
         }
     }
-    // The features the engine's modules declare (the capture's profile), as far as offered.
     VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR barycentric{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
     VkPhysicalDeviceVulkan13Features v13{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
@@ -179,7 +166,6 @@ std::vector<uint32_t> ReadWords(const std::string& path) {
     return words;
 }
 
-/// One composite's modules on one device: draws a row with given push values, returns RGBA32F.
 struct Ramp {
     const Vk& vk;
     uint32_t width = 0;
@@ -252,7 +238,6 @@ struct Ramp {
     void Make(const std::vector<uint32_t>& game_code, const std::vector<uint32_t>& hdr_code) {
         const VkDescriptorType type = uniform ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
                                               : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        // Binding 0: the constant buffer (the only resource the ramp modules still read).
         const VkDescriptorSetLayoutBinding binding{0, type, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         const VkDescriptorSetLayoutCreateInfo set_info{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -309,7 +294,6 @@ struct Ramp {
         hdr = Pipeline(hdr_code);
     }
 
-    /// The row the pipeline draws with `tone` after 128 bytes of zero push data.
     std::vector<float> Draw(VkPipeline pipeline, const ToneCurvePush& tone) const {
         VkCommandBuffer cmd;
         const VkCommandBufferAllocateInfo alloc{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -380,7 +364,6 @@ void Fail(const std::string& what) {
     ++failures;
 }
 
-/// One composite with its curve constants `k` and `shoulder`.
 void Check(Ramp& ramp, const std::string& name, uint32_t k_word, uint32_t shoulder_word, float k,
            float shoulder, float low, float stops) {
     auto* words = static_cast<float*>(ramp.constants.mapped);
@@ -433,8 +416,7 @@ void Check(Ramp& ramp, const std::string& name, uint32_t k_word, uint32_t should
             if (!(largest < limit)) {
                 Fail(std::string(label) + ": reaches the peak (" + std::to_string(largest) + ")");
             }
-            // Continuity at the knee: the log-log slope just below and just above it.
-            const float dx = stops / float(w); // log2 per pixel
+            const float dx = stops / float(w);
             const auto slope = [&](uint32_t i) {
                 return (std::log2(on[(i + 1) * 4 + channel]) - std::log2(on[i * 4 + channel])) / dx;
             };
@@ -457,7 +439,7 @@ void Check(Ramp& ramp, const std::string& name, uint32_t k_word, uint32_t should
     }
 }
 
-} // namespace
+}
 
 int main(int argc, char** argv) {
     if (argc < 2) {

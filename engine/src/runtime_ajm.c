@@ -1,8 +1,3 @@
-/* libSceAjm: audio decoder batches. Batches use the SDK chunk format (the
- * builder functions are imports, but games may also build chunks inline), and
- * run synchronously at submission: decoding a batch takes well under a
- * millisecond, so waiting always finds it complete. ATRAC9 is decoded by
- * LibAtrac9 (MIT, third_party/LibAtrac9). MP3/AAC instances stop explicitly. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -33,7 +28,6 @@
 enum { IDENT_JOB=0, IDENT_INPUT_RUN=1, IDENT_INPUT_CONTROL=2, IDENT_CONTROL_FLAGS=3, IDENT_RUN_FLAGS=4,
        IDENT_RETURN_ADDRESS=6, IDENT_INLINE=7, IDENT_OUTPUT_RUN=17, IDENT_OUTPUT_CONTROL=18 };
 enum { FORMAT_S16=0, FORMAT_S32=1, FORMAT_FLOAT=2 };
-/* Job flags: version:3 codec:8 run:2 control:3 reserved:29 sideband:3 */
 #define RUN_CODEC_INFO(f) (((f)>>11)&1)
 #define RUN_MULTIPLE_FRAMES(f) (((f)>>12)&1)
 #define CONTROL_RESET(f) (((f)>>13)&1)
@@ -43,7 +37,7 @@ enum { FORMAT_S16=0, FORMAT_S32=1, FORMAT_FLOAT=2 };
 #define SIDEBAND_FORMAT(f) (((f)>>46)&1)
 #define SIDEBAND_STREAM(f) (((f)>>47)&1)
 
-typedef struct { uint32_t word; uint32_t size; } Chunk;          /* ident:6 payload:20 reserved:6 */
+typedef struct { uint32_t word; uint32_t size; } Chunk;
 typedef struct { uint32_t word; uint32_t size; void *address; } ChunkBuffer;
 typedef struct { int32_t result, internal_result; } SidebandResult;
 typedef struct { int32_t input_consumed, output_written; uint64_t total_decoded_samples; } SidebandStream;
@@ -73,7 +67,6 @@ static Context *contexts[MAX_CONTEXTS+1];
 static Batch batches[MAX_BATCHES];
 static size_t jobs_run, frames_decoded, batches_run;
 
-/* BB_AUDIO_TRACE=1: instance configurations and jobs that return a non-zero result. */
 static int trace_left=-1;
 static int ajm_trace(void) {
     if (trace_left<0) { const char *e=getenv("BB_AUDIO_TRACE"); trace_left=e && e[0]=='1' ? 400 : 0; }
@@ -87,7 +80,6 @@ static uint32_t channel_mask(int channels) {
 }
 static int pcm_size(int format) { return format==FORMAT_S16 ? 2 : 4; }
 
-/* ---- batch builders ---- */
 static unsigned char *put_buffer(unsigned char *p, uint32_t id, const void *address, uint64_t size) {
     ChunkBuffer c={header(id,0),(uint32_t)size,(void *)address}; memcpy(p,&c,sizeof(c)); return p+sizeof(c);
 }
@@ -140,7 +132,6 @@ static ABI void *job_inline(void *buffer, const void *data, uint64_t size, const
     return p+c.size;
 }
 
-/* ---- ATRAC9 decoding ---- */
 static void at9_reset(Instance *in) {
     if (in->handle) Atrac9ReleaseHandle(in->handle);
     in->handle=Atrac9GetHandle();
@@ -180,7 +171,6 @@ static void output_write(Output *o, const unsigned char *data, uint64_t size) {
         if (o->offset==c->size) { ++o->current; o->offset=0; }
     }
 }
-/* One frame; returns result flags. */
 static uint32_t at9_frame(Instance *in, const unsigned char **input, uint64_t *input_size, Output *out,
                           uint32_t *samples_written, int32_t *internal) {
     int channels=in->info.channels, frame=in->info.frameSamples, used=0;
@@ -199,7 +189,6 @@ static uint32_t at9_frame(Instance *in, const unsigned char **input, uint64_t *i
     if (in->gapless_init.total_samples && samples>in->gapless.total_samples) samples=in->gapless.total_samples;
     uint64_t room=output_room(out)/(uint64_t)(channels*pcm_size(in->format));
     if (samples>room) samples=(uint32_t)room;
-    /* Convert (and optionally de-interleave) into the requested encoding. */
     unsigned char converted[256*8*4];
     int non_interleaved=(in->codec_flags>>8)&1;
     for (uint32_t s=0;s<samples;++s) for (int c=0;c<channels;++c) {
@@ -218,7 +207,6 @@ static uint32_t at9_frame(Instance *in, const unsigned char **input, uint64_t *i
         *input+=skip_bytes; *input_size-=skip_bytes;
         in->superframe_remain=(uint32_t)in->info.superframeSize; in->frames=0;
     } else if (gapless_end(in)) {
-        /* Drain the rest of the superframe so the next stream starts aligned. */
         while (in->frames%(uint32_t)in->info.framesInSuperframe && *input_size) {
             if (Atrac9Decode(in->handle,*input,pcm,&used)) break;
             *input+=used; *input_size-=(uint64_t)used; in->superframe_remain-=(uint32_t)used; ++in->frames;
@@ -234,10 +222,10 @@ static void parse_riff(Instance *in, const unsigned char **input, uint64_t *size
     p+=12;
     while (p+8<=end) {
         uint32_t tag, length; memcpy(&tag,p,4); memcpy(&length,p+4,4); p+=8;
-        if (tag==0x61746164) break;                                   /* "data" */
-        if (tag==0x20746d66 && length>=52 && p+52<=end) {             /* "fmt " */
+        if (tag==0x61746164) break;
+        if (tag==0x20746d66 && length>=52 && p+52<=end) {
             memcpy(in->config,p+44,4); at9_reset(in);
-        } else if (tag==0x74636166 && length>=12 && p+12<=end) {      /* "fact" */
+        } else if (tag==0x74636166 && length>=12 && p+12<=end) {
             uint32_t total, delay; memcpy(&total,p,4); memcpy(&delay,p+4,4);
             in->gapless_init.total_samples=total; in->gapless_init.skip_samples=(uint16_t)delay;
             gapless_reset(in);
@@ -247,7 +235,6 @@ static void parse_riff(Instance *in, const unsigned char **input, uint64_t *size
     *size-=(uint64_t)(p-*input); *input=p;
 }
 
-/* ---- job execution ---- */
 typedef struct {
     uint64_t flags; int have_flags;
     ChunkBuffer inputs[16]; int input_count;
@@ -287,7 +274,7 @@ static void run_job(Context *ctx, uint32_t id, Job *job) {
     const unsigned char *control=job->input_control.size ? job->input_control.address : NULL;
     const unsigned char *control_end=control ? control+job->input_control.size : NULL;
     if (CONTROL_RESET(f)) { in->total_samples=0; gapless_reset(in); if (in->initialized) at9_reset(in); }
-    if (control && SIDEBAND_FORMAT(f) && control+24<=control_end) control+=24; /* output format fixed per instance */
+    if (control && SIDEBAND_FORMAT(f) && control+24<=control_end) control+=24;
     if (control && SIDEBAND_GAPLESS(f) && control+8<=control_end) {
         SidebandGapless g; memcpy(&g,control,8); control+=8;
         uint32_t processed=in->gapless_init.total_samples-in->gapless.total_samples;
@@ -313,7 +300,6 @@ static void run_job(Context *ctx, uint32_t id, Job *job) {
     const unsigned char *input=NULL;
     if (job->input_count==1) input=job->inputs[0].address;
     else if (job->input_count>1) {
-        /* The sizes come from the game: a bad job must not take the engine down. */
         joined=in_size<=(UINT64_C(64)<<20) ? malloc(in_size ? in_size : 1) : NULL;
         if (joined) {
             uint64_t at=0;
@@ -344,7 +330,6 @@ static void run_job(Context *ctx, uint32_t id, Job *job) {
                id,(unsigned long long)f,flags_result,internal,(unsigned long long)(in_start-in_size),(unsigned long long)in_start,
                (unsigned long long)(out_start-output_room(&out)),(unsigned long long)out_start,frames);
     if (result) { result->result=(int32_t)flags_result; result->internal_result=internal; }
-    /* Output sideband order: stream, format, gapless, multi-frame, codec info. */
     if (side && SIDEBAND_STREAM(f) && side+16<=side_end) {
         SidebandStream s={(int32_t)(in_start-in_size),(int32_t)(out_start-output_room(&out)),in->total_samples};
         memcpy(side,&s,16); side+=16;
@@ -365,7 +350,6 @@ static void run_job(Context *ctx, uint32_t id, Job *job) {
     }
 }
 
-/* ---- API ---- */
 static Context *context(uint32_t id) { return id && id<=MAX_CONTEXTS ? contexts[id] : NULL; }
 static ABI int32_t ajm_initialize(int64_t reserved, uint32_t *out) {
     if (!out || reserved) return ERR_INVALID_PARAMETER;
@@ -476,7 +460,7 @@ static ABI int32_t ajm_batch_cancel(uint32_t id, uint32_t batch) {
     host_recursive_lock(&lock);
     int32_t r=!context(id) ? ERR_INVALID_CONTEXT : !batch || batch>MAX_BATCHES || !batches[batch-1].used ? ERR_INVALID_BATCH : 0;
     host_recursive_unlock(&lock);
-    return r; /* already processed at submission: nothing to cancel */
+    return r;
 }
 static ABI int32_t ajm_error_dump(void) { return 0; }
 static ABI int32_t ajm_memory_register(uint32_t id, void *p, uint64_t pages) { (void)p; (void)pages; return context(id) ? 0 : ERR_INVALID_CONTEXT; }

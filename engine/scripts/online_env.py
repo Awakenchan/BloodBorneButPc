@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Pass the shared online configuration to the Linux shell without evaluating shell code."""
 import argparse
 import contextlib

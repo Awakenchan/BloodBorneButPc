@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: native HDR output (vk_hdr_native.h, hdr_native.comp, docs/hdr.md).
 
 #include "video_core/renderer_vulkan/vk_hdr_native.h"

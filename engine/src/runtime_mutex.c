@@ -1,6 +1,3 @@
-/* Opaque PS4 mutex and condition variable handles over the host's own primitives: pthread
- * mutexes/condition variables on Linux; on Windows an SRW lock with owner and depth (the PS4
- * error-checking, recursive and normal types) and a condition variable. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -8,7 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
-enum { TYPE_ERRORCHECK = 1, TYPE_RECURSIVE = 2, TYPE_NORMAL = 3 }; /* 4: adaptive, error-checking here */
+enum { TYPE_ERRORCHECK = 1, TYPE_RECURSIVE = 2, TYPE_NORMAL = 3 };
 #ifdef _WIN32
 typedef struct { SRWLOCK lock; DWORD owner; unsigned depth; int type; } NativeMutex;
 typedef CONDITION_VARIABLE NativeCond;
@@ -18,7 +15,6 @@ static int native_init(NativeMutex *m, int type) {
 static int native_destroy(NativeMutex *m) { return __atomic_load_n(&m->owner, __ATOMIC_RELAXED) ? EBUSY : 0; }
 static DWORD owner(const NativeMutex *m) { return __atomic_load_n(&m->owner, __ATOMIC_RELAXED); }
 static void take(NativeMutex *m, DWORD self) { __atomic_store_n(&m->owner, self, __ATOMIC_RELAXED); m->depth = 1; }
-/* Relocking by the owner: recursion, an error, or (normal type) a deadlock as on POSIX. */
 static int relock(NativeMutex *m) {
     if (m->type == TYPE_RECURSIVE) return m->depth == ~0u ? EAGAIN : (++m->depth, 0);
     return m->type == TYPE_NORMAL ? -1 : EDEADLK;
@@ -37,7 +33,6 @@ static int native_trylock(NativeMutex *m) {
     take(m, self);
     return 0;
 }
-/* SRW locks have no timed acquire: retry until the realtime deadline (uncontended in practice). */
 static int native_timedlock(NativeMutex *m, uint64_t deadline) {
     DWORD self = GetCurrentThreadId();
     if (owner(m) == self) { int e = relock(m); if (e >= 0) return e; }
@@ -49,7 +44,6 @@ static int native_timedlock(NativeMutex *m, uint64_t deadline) {
 }
 static int native_unlock(NativeMutex *m) {
     DWORD self = GetCurrentThreadId(), held = owner(m);
-    /* A normal mutex may be unlocked by another thread (glibc does not check its owner). */
     if (held != self && (m->type != TYPE_NORMAL || !held)) return EPERM;
     if (held == self && --m->depth) return 0;
     __atomic_store_n(&m->owner, 0, __ATOMIC_RELAXED); m->depth = 0;
@@ -58,7 +52,6 @@ static int native_unlock(NativeMutex *m) {
 }
 static int native_cond_init(NativeCond *c) { InitializeConditionVariable(c); return 0; }
 static int native_cond_destroy(NativeCond *c) { (void)c; return 0; }
-/* deadline: realtime nanoseconds, 0 for none. The wait gives up the whole recursion. */
 static int native_cond_wait(NativeCond *c, NativeMutex *m, uint64_t deadline) {
     DWORD self = GetCurrentThreadId(), ms = INFINITE;
     if (owner(m) != self) return EPERM;
@@ -111,7 +104,7 @@ static int native_cond_signal(NativeCond *c) { return pthread_cond_signal(c); }
 static int native_cond_broadcast(NativeCond *c) { return pthread_cond_broadcast(c); }
 #endif
 typedef struct { int type; } GuestAttr;
-typedef struct { NativeMutex native; char name[32]; } GuestMutex; /* name: the guest's, for the freeze report */
+typedef struct { NativeMutex native; char name[32]; } GuestMutex;
 static size_t created, locks, unlocks;
 static int32_t orbis_error(int e) {
     if (!e) return 0;
@@ -137,7 +130,6 @@ static ABI int32_t attr_type(GuestAttr **attr, int type) {
     if (!attr || !*attr || type < 1 || type > 4) return orbis_error(EINVAL);
     (*attr)->type = type; return 0;
 }
-/* Priority protocols need a PS4 scheduler; the value is validated and recorded only. */
 static ABI int32_t attr_protocol(GuestAttr **attr, int protocol) {
     if (!attr || !*attr || protocol < 0 || protocol > 2) return orbis_error(EINVAL);
     return 0;
@@ -158,7 +150,6 @@ static ABI int32_t mutex_init(GuestMutex **out, GuestAttr **attr, const char *na
     *out = mutex; ++created; return 0;
 }
 static HostMutex static_init = HOST_MUTEX_INIT;
-/* Statically initialized handles (0/1) are created once, even under contention. */
 static int32_t ensure_mutex(GuestMutex **mutex) {
     if (!mutex) return orbis_error(EINVAL);
     uintptr_t value = __atomic_load_n((uintptr_t *)mutex, __ATOMIC_ACQUIRE);
@@ -210,7 +201,6 @@ static ABI int32_t mutex_destroy(GuestMutex **mutex) {
     if (!e) { free(*mutex); *mutex = (GuestMutex *)(uintptr_t)2; }
     return orbis_error(e);
 }
-/* Deadlines are realtime nanoseconds (FreeBSD's default condition variable clock). */
 static uint64_t deadline_after(uint64_t usec) { return host_realtime_ns() + usec * 1000; }
 static int32_t timed_error(int e) { return e == ETIMEDOUT ? (int32_t)UINT32_C(0x8002003c) : orbis_error(e); }
 static ABI int32_t mutex_timedlock(GuestMutex **mutex, uint32_t usec) {
@@ -220,8 +210,6 @@ static ABI int32_t mutex_timedlock(GuestMutex **mutex, uint32_t usec) {
     if (!e) ++locks;
     return e;
 }
-/* Condition variables: opaque handles over the host condition variable (realtime deadlines,
- * like FreeBSD's default), sharing the host mutex behind GuestMutex. */
 typedef struct { NativeCond native; } GuestCond;
 static size_t conds, waits, wakeups;
 static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
@@ -288,13 +276,11 @@ static ABI int32_t cond_broadcast(GuestCond **cond) {
     if (e) return e;
     ++wakeups; return orbis_error(native_cond_broadcast(&(*cond)->native));
 }
-/* PS4 struct timespec is {int64 sec, int64 nsec}, identical to Linux x86-64. */
 typedef struct { int64_t sec, nsec; } GuestTimespec;
 static ABI int32_t cond_abs_timedwait(GuestCond **cond, GuestMutex **mutex, const GuestTimespec *abs) {
     if (!abs || abs->nsec < 0 || abs->nsec >= 1000000000 || abs->sec < 0) return orbis_error(EINVAL);
     return cond_wait_until(cond, mutex, (uint64_t)abs->sec * 1000000000 + (uint64_t)abs->nsec);
 }
-/* POSIX pthread APIs return positive guest errno values, unlike scePthread. */
 static int32_t posix_result(int32_t result) { return result ? (int32_t)((uint32_t)result & 0xffff) : 0; }
 static ABI int32_t posix_attr_init(GuestAttr **out) { return posix_result(attr_init(out)); }
 static ABI int32_t posix_attr_type(GuestAttr **attr,int type) { return posix_result(attr_type(attr,type)); }

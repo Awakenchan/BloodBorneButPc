@@ -1,4 +1,3 @@
-/* Independent backend smoke test: command submission and readback, no game graphics. */
 #include <vulkan/vulkan.h>
 #include <stdint.h>
 #include <stdio.h>

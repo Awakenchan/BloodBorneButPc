@@ -20,8 +20,8 @@ it. Now (`Rasterizer::DrawRecord`, `HandleIfReady`):
   depth. The frame draws these targets again from a clear, so the object is missing for the
   frames the compile takes (pop-in), nothing more. Everything else of the draw runs as before
   (targets, barriers, render pass, resources): only `vkCmdDraw` is not recorded. Never left
-  out: draws the game measures (occlusion queries: zero samples would hide their predicated
-  draws), indirect draws, compute dispatches, shadow maps, half-resolution effects,
+  out: draws the game measures (occlusion queries: a draw left out makes its query block read
+  plainly visible, so nothing would be culled), indirect draws, compute dispatches, shadow maps, half-resolution effects,
   post-processing and UI (what they draw may be kept over frames or read as a whole), and
   draws during a frame capture. A pipeline's draws are left out for at most
   `BB_SKIP_UNCOMPILED_MS` (1000) from its first left-out draw; then they wait for it. "A few

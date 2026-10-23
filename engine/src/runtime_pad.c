@@ -1,11 +1,3 @@
-/* libScePad on SDL3 gamepads and the keyboard. SDL events are pumped by the window thread
- * (gpu/shim/window.cpp); here state is only sampled.
- *
- * Keyboard layout (also with a gamepad connected: both drive the game):
- *   WASD left stick, arrow keys right stick, Space Cross, LShift Circle,
- *   E Square, Q Triangle, 1 L1, 3 R1, R L2, F R2, Z L3, C R3,
- *   Enter Options, Tab left touchpad, Backspace right touchpad,
- *   IJKL d-pad (I up, K down, J left, L right). */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
@@ -60,7 +52,7 @@ static int initialized, opened, sdl_ready;
 static SDL_Gamepad *gamepad;
 static size_t reads;
 static uint8_t connected_count;
-static int gamepad_type; /* runtime_pad_type: read without the lock */
+static int gamepad_type;
 
 static uint64_t now_us(void) { return host_monotonic_ns()/1000u; }
 static uint8_t axis(int16_t v) { int x=(v+32768)>>8; return (uint8_t)(x<0 ? 0 : x>255 ? 255 : x); }
@@ -74,8 +66,6 @@ static void touch_click(PadData *d, int right) {
     d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
 }
 
-/* BB_GAMEPAD (the launcher's controller choice): its SDL GUID, or part of its name. Issue #15:
- * wheels and other controllers connected for good came first. */
 static const char *preferred_gamepad(void) {
     static const char *want; static int read;
     if (!read) { want=getenv("BB_GAMEPAD"); if (want && !*want) want=NULL; read=1; }
@@ -87,8 +77,6 @@ static int is_preferred(SDL_JoystickID id, const char *want) {
     const char *name=SDL_GetGamepadNameForID(id);
     return !SDL_strcasecmp(guid,want) || (name && SDL_strcasestr(name,want));
 }
-/* bbport: several gamepads at once (also one pad behind a 2.4 GHz receiver that shows as two):
- * without a chosen one, the pad being used takes over, checked five times a second. */
 #define MAX_OTHER_PADS 4
 static SDL_Gamepad *other_pads[MAX_OTHER_PADS];
 static SDL_JoystickID other_pad_ids[MAX_OTHER_PADS];
@@ -107,9 +95,6 @@ static void follow_active_pad(void) {
     last=now;
     for (int s=0;s<MAX_OTHER_PADS;++s)
         if (other_pads[s] && !SDL_GamepadConnected(other_pads[s])) { SDL_CloseGamepad(other_pads[s]); other_pads[s]=NULL; }
-    /* bbport: the pad in use keeps the input while it is used too. A pad that shows as two (DS4Windows
-     * or Steam Input beside the DualSense) had both active together, and they swapped five times a
-     * second for hours ("gamepad in use" 25000 times in one log). */
     if (gamepad && pad_active(gamepad)) return;
     int count=0;
     SDL_JoystickID *ids=SDL_GetGamepads(&count);
@@ -137,8 +122,6 @@ static void follow_active_pad(void) {
     SDL_free(ids);
 }
 
-/* The chosen gamepad, else the first while it is not connected (checked again every second, it
- * is taken as soon as it connects); called under lock. */
 static SDL_Gamepad *current_gamepad(void) {
     static int on_preferred; static uint64_t last_scan;
     if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
@@ -178,9 +161,6 @@ static SDL_Gamepad *current_gamepad(void) {
     }
     return gamepad;
 }
-/* bbport (frame stats): the game's libc heap, read every 5 s from a game thread (it reads the pad)
- * with libc.prx's malloc_stats (export stub at libc.prx+0x1f8c0; malloc_stats_fast returns 1 in this libc, the module at image +0x56e0000):
- * in use now and at most, and what it took from the system. A heap that keeps growing is a leak. */
 typedef struct { uint16_t size, version; uint32_t reserved; uint64_t max_system, system, max_in_use, in_use; } MallocManagedSize;
 static void report_guest_heap(void) {
     static int enabled=-1; static uint64_t last;
@@ -189,7 +169,7 @@ static void report_guest_heap(void) {
     if (!enabled || now-last<5000000) return;
     last=now;
     const uint8_t *stub=(const uint8_t *)(0x800000000ull+0x56e0000+0x1f8c0);
-    if (stub[0]!=0xff || stub[1]!=0x25) return; /* another libc */
+    if (stub[0]!=0xff || stub[1]!=0x25) return;
     ABI int (*stats)(MallocManagedSize *)=(ABI int (*)(MallocManagedSize *))(uintptr_t)stub;
     MallocManagedSize m={.size=sizeof(m),.version=1};
     const int result=stats(&m);
@@ -199,14 +179,6 @@ static void report_guest_heap(void) {
                m.in_use/1048576.0,m.max_in_use/1048576.0,m.system/1048576.0,m.max_system/1048576.0);
     }
 }
-/* Controls: what each PS4 input is bound to. Defaults below; lantern.ini (BB_CONFIG) lines
- * key.<input>=<SDL key names> and pad.<input>=<SDL gamepad button names>, comma-separated,
- * replace an input's binding (empty: unbound). Inputs: the buttons (cross ... right, touchpad =
- * a left-side click, touchpad_right), and on the keyboard the sticks: move_* (left), look_*
- * (right). Gamepad names as SDL's: a b x y back start leftstick rightstick leftshoulder
- * rightshoulder dpup dpdown dpleft dpright touchpad misc1 paddle1-4, plus lefttrigger and
- * righttrigger. The keyboard works next to a gamepad (the Steam Deck always has one): its buttons
- * add to the gamepad's, a held move/look key moves the stick all the way. */
 enum {
     IN_CROSS, IN_CIRCLE, IN_SQUARE, IN_TRIANGLE, IN_L1, IN_R1, IN_L2, IN_R2, IN_L3, IN_R3,
     IN_OPTIONS, IN_TOUCHPAD, IN_TOUCHPAD_RIGHT, IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT,
@@ -223,13 +195,10 @@ static const uint32_t input_buttons[IN_COUNT]={
     BTN_OPTIONS,BTN_TOUCHPAD,0,BTN_UP,BTN_DOWN,BTN_LEFT,BTN_RIGHT,
 };
 #define MAX_BIND 4
-enum { PAD_LEFT_TRIGGER=SDL_GAMEPAD_BUTTON_COUNT, PAD_RIGHT_TRIGGER }; /* triggers as buttons */
+enum { PAD_LEFT_TRIGGER=SDL_GAMEPAD_BUTTON_COUNT, PAD_RIGHT_TRIGGER };
 typedef struct { int key_count, pad_count; SDL_Scancode keys[MAX_BIND]; int pad[MAX_BIND]; } Binding;
 static Binding bindings[IN_COUNT];
 static int bindings_ready;
-/* bbport: stick options (lantern.ini): pad_swap_sticks=1 moves with the right stick and looks with
- * the left; pad_invert_look_x / pad_invert_look_y=1 invert the camera stick; pad_deadzone=N
- * (percent, 0-50) ignores small stick movement (worn sticks that drift). */
 static int pad_swap_sticks, pad_invert_look_x, pad_invert_look_y, pad_deadzone;
 
 static void bind_defaults(void) {
@@ -269,7 +238,6 @@ static int pad_button_from_name(const char *name) {
     const SDL_GamepadButton b=SDL_GetGamepadButtonFromString(name);
     return b==SDL_GAMEPAD_BUTTON_INVALID ? -1 : (int)b;
 }
-/* key.<input>= / pad.<input>= lines of the settings file. */
 static void load_bindings(void) {
     bind_defaults();
     const char *path=getenv("BB_CONFIG");
@@ -291,8 +259,6 @@ static void load_bindings(void) {
         *eq=0;
         int input=-1;
         for (int i=0;i<IN_COUNT;++i) if (!strcmp(line+4,input_names[i])) input=i;
-        /* move_* and look_* are keyboard only, menu_confirm and menu_back gamepad only (the
-         * keyboard's are bind.confirm and bind.back, gpu/shim/input/bindings.cpp). */
         if (input<0 || (pad && input>=IN_MOVE_UP && input<IN_MENU_CONFIRM) || (keyboard && input>=IN_MENU_CONFIRM)) {
             printf("Runtime: controls: unknown input %s\n",line); continue;
         }
@@ -319,17 +285,11 @@ static int key_down(const bool *k, int input) {
     for (int i=0;i<bindings[input].key_count;++i) if (k[bindings[input].keys[i]]) return 1;
     return 0;
 }
-/* bbport (0.9.37 beta 6): pad.menu_confirm / pad.menu_back: gamepad buttons that confirm and go
- * back while a game menu has the screen, whatever they do in the world. A player who put Circle on
- * L2 to sprint while steering the camera went back with L2 in every menu. In a menu those buttons
- * give only that; unset (the default), menus get the buttons' world inputs as before. */
 static int menu_pad_button(int b) {
     for (int m=IN_MENU_CONFIRM;m<=IN_MENU_BACK;++m)
         for (int i=0;i<bindings[m].pad_count;++i) if (bindings[m].pad[i]==b) return 1;
     return 0;
 }
-/* The bound gamepad buttons' state; triggers as their analog value. in_menu: the menu buttons
- * (above) are left out. */
 static int pad_value(SDL_Gamepad *g, int input, int in_menu) {
     int value=0;
     for (int i=0;i<bindings[input].pad_count;++i) {
@@ -343,7 +303,6 @@ static int pad_value(SDL_Gamepad *g, int input, int in_menu) {
     return value;
 }
 
-/* key held for the negative / positive direction: the stick all the way, else the gamepad's. */
 static uint8_t key_axis(uint8_t value, int negative, int positive) {
     return negative || positive ? (uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0)) : value;
 }
@@ -369,14 +328,12 @@ static void sample_host(PadData *d) {
     d->timestamp=now_us();
     SDL_Gamepad *g=current_gamepad();
     if (!bindings_ready) { load_bindings(); bindings_ready=1; }
-    if (bbgpu_overlay_captures_input()) return; /* settings menu open: neutral input */
+    if (bbgpu_overlay_captures_input()) return;
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
     if (g) {
         int touch_right=0;
         uint32_t menu_confirm=0, menu_back=0;
         int in_menu=0, menu_down=0;
-        /* A menu button that closed its menu stays out of the world until it is let go of: Back
-         * held as the menu closed was a shot from the gun the button fires in the world. */
         static int menu_held;
         if (bindings[IN_MENU_CONFIRM].pad_count || bindings[IN_MENU_BACK].pad_count) {
             in_menu=bbgpu_menu_buttons(&menu_confirm,&menu_back);
@@ -418,7 +375,6 @@ static void sample_host(PadData *d) {
                 }
             }
         }
-        // Back/Select on pads without a touch surface is a left-side click.
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
         if (touch_right) touch_click(d,1);
     }
@@ -433,14 +389,9 @@ static void sample_host(PadData *d) {
     } else if (k) apply_keyboard(d,k);
 }
 
-/* BB_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated
- * tokens, re-read when it changes: button names (cross circle square triangle l1 r1 l2 r2 l3 r3
- * options touchpad touchpad_left touchpad_right up down left right) are held while listed;
- * touchpad defaults to a left-side click; lx= ly= rx= ry= (0..255) override
- * the sticks. An empty file releases everything. */
 static struct { uint32_t buttons; int stick[4]; int touch_side; } injected={0,{-1,-1,-1,-1},-1};
-static int replay_armed;      /* 1 while a BB_PAD_REPLAY recording plays, 2 once it ended */
-static uint64_t replay_start; /* 0: (re)start at the next sample */
+static int replay_armed;
+static uint64_t replay_start;
 static void read_inject(void) {
     static const char *path; static int checked; static uint64_t last_check; static struct timespec mtime;
     if (!checked) { path=getenv("BB_PAD_FILE"); checked=1; }
@@ -451,7 +402,6 @@ static void read_inject(void) {
     struct stat st;
     if (stat(path,&st)!=0) return;
 #ifdef _WIN32
-    /* Whole-second times: the size tells writes within the same second apart. */
     if (st.st_mtime==mtime.tv_sec && st.st_size==mtime.tv_nsec) return;
     mtime.tv_sec=st.st_mtime; mtime.tv_nsec=(long)st.st_size;
 #else
@@ -472,7 +422,7 @@ static void read_inject(void) {
     for (int i=0;i<4;++i) injected.stick[i]=-1;
     char token[64];
     while (fscanf(f,"%63s",token)==1) {
-        if (!strcmp(token,"replay") && replay_armed!=1) { replay_armed=1; replay_start=0; } /* BB_PAD_REPLAY */
+        if (!strcmp(token,"replay") && replay_armed!=1) { replay_armed=1; replay_start=0; }
         if (!strcmp(token,"touchpad_left") || !strcmp(token,"touchpad_right")) {
             injected.buttons|=BTN_TOUCHPAD;
             injected.touch_side=!strcmp(token,"touchpad_right");
@@ -484,10 +434,6 @@ static void read_inject(void) {
     printf("Runtime: pad file: buttons 0x%x sticks %d %d %d %d\n",injected.buttons,
            injected.stick[0],injected.stick[1],injected.stick[2],injected.stick[3]);
 }
-/* BB_PAD_RECORD=<file>: F9 starts and stops recording the pad state (gamepad or keyboard) with
- * the time since F9; BB_PAD_REPLAY=<file> plays such a recording back, started by the token
- * "replay" in BB_PAD_FILE (scripted tests repeat a route the player ran once). Lines: ms buttons
- * lx ly rx ry l2 r2, written when the state changes. */
 typedef struct { uint32_t ms, buttons; uint8_t axes[4], l2, r2; } PadSample;
 static FILE *record_file;
 static uint64_t record_start;
@@ -552,9 +498,6 @@ static void replay_sample(PadData *d) {
     d->left_x=s->axes[0]; d->left_y=s->axes[1]; d->right_x=s->axes[2]; d->right_y=s->axes[3];
     d->l2=s->l2; d->r2=s->r2;
 }
-/* Touches as the DualShock 4 reports them: every finger that goes down gets a new id (1..127, kept
- * while it stays down) and the time since the first one went down. With id 0 and no hold time
- * the game ignored touchpad presses: no gesture menu from the touchpad, Back or Tab. */
 static void touch_ids(PadData *d) {
     static uint8_t next_id=1, ids[2]; static int down[2]; static uint64_t since;
     for (int i=0;i<2;++i) {
@@ -567,9 +510,6 @@ static void touch_ids(PadData *d) {
     else if (!since) since=d->timestamp;
     d->touch_held_time=d->touch_count ? (uint32_t)(d->timestamp-since) : 0;
 }
-/* After the menu or the text dialog closes, buttons still held (the Cross that accepted a
- * name, the button that closed the menu) stay hidden until all are released: the game would
- * take them as a new press. From Supermedo/bloodborne_pc 1d34202 (hold_after_capture). */
 static int hold_after_capture;
 static void sample(PadData *d) {
     sample_host(d);
@@ -596,7 +536,7 @@ static ABI int32_t pad_open(int32_t user, int32_t type, int32_t index, const voi
     (void)param;
     if (!initialized) return ERR_NOT_INITIALIZED;
     if (user!=1) return ERR_INVALID_ARG;
-    if (type!=0 && type!=2) return ERR_INVALID_ARG; /* standard / special port */
+    if (type!=0 && type!=2) return ERR_INVALID_ARG;
     if (index) return ERR_INVALID_ARG;
     host_lock(&lock);
     int already=opened; opened=1;
@@ -617,7 +557,6 @@ static ABI int32_t pad_read_state(int32_t handle, PadData *data) {
     host_unlock(&lock);
     return 0;
 }
-/* Buffered read: the port samples once per call, so one entry is returned. */
 static ABI int32_t pad_read(int32_t handle, PadData *data, int32_t count) {
     if (handle!=PAD_HANDLE || !opened) return ERR_INVALID_HANDLE;
     if (!data || count<1 || count>64) return ERR_INVALID_ARG;
@@ -658,7 +597,6 @@ static const RuntimeExport exports[]={
     {"scePadSetMotionSensorState",pad_ok_handle_flag},
 };
 int runtime_pad_type(void) { return __atomic_load_n(&gamepad_type,__ATOMIC_RELAXED); }
-/* The first bound button the gamepad in use has (Touchpad: Back, then a DualShock's touchpad). */
 int runtime_pad_button(uint32_t ps_button, int right_side) {
     int input=-1, found=-1;
     if (ps_button==BTN_TOUCHPAD) input=right_side ? IN_TOUCHPAD_RIGHT : IN_TOUCHPAD;

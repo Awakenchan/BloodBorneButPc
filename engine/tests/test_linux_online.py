@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Exercise the Linux launch path with local preparation/probe stand-ins, without networking."""
 import json
 import os

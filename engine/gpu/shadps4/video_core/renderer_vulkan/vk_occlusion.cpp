@@ -1,16 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: real occlusion query results (vk_occlusion.h). Design after droogie/bbhost b68ed17.
-
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#include <deque>
+#include <mutex>
+#include <vector>
 
 #include "bbport_toggles.h"
 #include "core/memory.h"
-#include "video_core/renderer_vulkan/occlusion_model.h"
 #include "video_core/renderer_vulkan/scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_occlusion.h"
@@ -20,37 +20,56 @@
 extern "C" void runtime_memory_read_backing(uintptr_t address, void* data, uint64_t size);
 
 namespace Vulkan {
+namespace Model = OcclusionModel;
 
 namespace {
-using OcclusionModel::MaxPipes;
-using OcclusionModel::Share;
-using OcclusionModel::Unmeasured;
-using OcclusionModel::ValidBit;
-
-u64 EnvU64(const char* name, u64 fallback) {
-    const char* env = std::getenv(name);
-    return env && *env ? std::strtoull(env, nullptr, 10) : fallback;
+u64 EnvNumber(const char* name, u64 fallback) {
+    const char* value = std::getenv(name);
+    return value && *value ? std::strtoull(value, nullptr, 10) : fallback;
 }
 
-/// Reads guest memory through the runtime's backing view: no page protection (a read fault on
-/// this thread would wait for the GPU thread), zeroes where nothing is mapped.
-void ReadGuest(VAddr address, void* data, u64 size) {
-    runtime_memory_read_backing(address, data, size);
+u64 FramesSoFar() {
+    return BbStats::submit_done_calls.load(std::memory_order_relaxed);
 }
 
-/// A Gnm block as the game reads it now.
-OcclusionModel::Block ReadBlock(VAddr block, u32 pipes) {
-    std::array<u64, 2 * MaxPipes> words{};
-    ReadGuest(block, words.data(), 16ull * pipes);
-    return OcclusionModel::ReadBlock(words.data(), pipes);
-}
-} // namespace
+using BlockWords = std::array<u64, 2 * Model::MaxDbs>;
 
-struct Occlusion::Shared {
-    /// The resolver's state and the pool's life (the destructor takes it too).
-    std::mutex mutex;
-    /// Only the queue: the recording side never waits for a resolve in progress.
-    std::mutex queue_mutex;
+BlockWords ReadWords(VAddr block, u32 dbs) {
+    BlockWords words{};
+    runtime_memory_read_backing(block, words.data(), 16ull * dbs);
+    return words;
+}
+
+}
+
+struct Occlusion::Resolver {
+    enum class Kind : u8 {
+        Begin,
+        Closed,
+        Unpaired,
+    };
+    struct Record {
+        u64 tick;
+        u64 number;
+        VAddr block;
+        u64 frame;
+        u64 first_query;
+        u64 queries;
+        u64 needed_from;
+        u32 dbs;
+        Kind kind;
+        bool complete;
+    };
+    struct Answered {
+        u64 base;
+        u64 count;
+        u32 dbs;
+    };
+
+    std::mutex state_mutex;
+    std::mutex inbox_mutex;
+    std::deque<Record> inbox;
+
     bool alive = true;
     vk::Device device;
     vk::QueryPool pool;
@@ -58,61 +77,38 @@ struct Occlusion::Shared {
     bool precise = false;
     u64 max_lag = 6;
 
-    struct Pending {
-        u64 tick;   ///< the submission holding the dump (and every query before it)
-        VAddr va;
-        u64 frame;
-        u64 serial;
-        u64 first;  ///< the interval's first query, as a running count
-        u32 count;  ///< its queries
-        u32 pipes;
-        bool poison; ///< a draw in the interval got no query
-    };
-    std::deque<Pending> pending; ///< under queue_mutex
-    std::vector<Pending> ready;  ///< taken from it by the resolver
-    /// Per query: the sample scale of its draw (16.16; reduced scene targets), written by the
-    /// recording side before the dump is queued under the mutex.
-    std::array<u32, PoolSize> scale{};
-    std::atomic<u64> released{0};        ///< queries read and reset (reusable)
-    std::atomic<u64> resolved_serial{0}; ///< dumps processed, in order
+    std::array<u32, RingSize> scale{};
+    std::vector<u64> raw = std::vector<u64>(2ull * RingSize);
+    std::vector<Record> batch;
+    u64 reset_below = 0;
+    std::atomic<u64> released{0};
+    std::atomic<u64> answered_through{0};
 
-    u64 total = 0; ///< the DBs' running count
-    /// What we last wrote at each dump address: our own value may be overwritten (a block the
-    /// game reuses), anything else that is not zero is not ours to write over.
-    std::unordered_map<VAddr, u64> written;
-    /// Begin dumps (+0) written in this use of their block: the total they wrote, taken by the
-    /// block's end dump (+8) for the block's result.
-    std::unordered_map<VAddr, u64> begins;
-    /// Per block (its +0 address): the hysteresis of its results (OcclusionModel::BlockHistory).
-    std::unordered_map<VAddr, OcclusionModel::BlockHistory> histories;
-    std::vector<u64> results;
+    u64 counter = 0;
+    std::unordered_map<VAddr, Answered> answered;
+    std::unordered_map<VAddr, Model::SteadyCount> steady;
 
-    // Statistics (BB_FRAME_STATS), under the mutex except the recording side's atomics.
-    u64 dumps = 0, queries = 0, unavailable = 0, poisoned = 0, visible = 0, occluded = 0;
-    u64 late = 0, foreign = 0, unbacked = 0, written_dumps = 0;
-    u64 held_visible = 0; ///< blocks that measured nothing but read visible (hysteresis)
-    u64 late_written = 0; ///< late dumps of known blocks written all the same
-    std::atomic<u64> pool_full{0}, pred_sets{0}, pred_resolved{0}, pred_skipped{0},
-        pred_drawn{0};
-    std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
-    u64 window_frames = 0, window_draws = 0;
-    std::array<u64, 14> last{};
+    u64 dumps = 0, queries_read = 0, seen = 0, hidden = 0, plainly = 0, unavailable = 0;
+    u64 late = 0, foreign = 0, unmapped = 0, held = 0, late_written = 0, unpaired = 0;
+    std::atomic<u64> pool_full{0}, pred_sets{0}, pred_known{0}, pred_skipped{0}, pred_drawn{0};
+    std::chrono::steady_clock::time_point report_time = std::chrono::steady_clock::now();
+    u64 report_frames = 0, report_draws = 0;
+    std::array<u64, 15> reported{};
 
-    void Resolve(u64 tick);
-    void Process(const Pending& dump);
-    /// The end dump of `block` (its +0 address) is about to be written: hysteresis.
-    void HoldVisible(VAddr block);
-    /// False when it did not land (not a query block now, or unmapped).
-    bool WriteBlock(const Pending& dump);
+    void Run(u64 tick);
+    void Process(const Record& record);
+    u64 Sum(u64 first, u64 count, u64& missing);
+    void Release(u64 below);
+    bool Store(VAddr block, u32 dbs, u64 count);
     void Report();
 };
 
 bool Occlusion::Wanted() {
-    static const bool on = [] {
-        const char* env = std::getenv("BB_OCCLUSION");
-        return !(env && env[0] == '0');
+    static const bool wanted = [] {
+        const char* value = std::getenv("BB_OCCLUSION");
+        return !value || value[0] != '0';
     }();
-    return on;
+    return wanted;
 }
 
 Occlusion::Occlusion(const Instance& instance_, Scheduler& scheduler_, Rasterizer& rasterizer_)
@@ -132,350 +128,323 @@ std::unique_ptr<Occlusion> Occlusion::Create(const Instance& instance, Scheduler
 }
 
 bool Occlusion::Init() {
-    // Results are read and the queries reset on the CPU once the GPU is past them: no reset
-    // commands outside render passes, no waits.
     if (!instance.IsHostQueryResetSupported()) {
-        std::printf("Occlusion: off - the device has no host query reset; every query the game "
-                    "makes reads visible, as before\n");
+        std::printf("Occlusion: off - the device cannot reset queries from the host; every query "
+                    "the game makes reads visible\n");
         return false;
     }
     const vk::Device device = instance.GetDevice();
-    const vk::QueryPoolCreateInfo info = {
+    const vk::QueryPoolCreateInfo ring_info = {
         .queryType = vk::QueryType::eOcclusion,
-        .queryCount = PoolSize,
+        .queryCount = RingSize,
     };
-    const auto [result, pool] = device.createQueryPool(info);
+    const auto [result, pool] = device.createQueryPool(ring_info);
     if (result != vk::Result::eSuccess) {
         std::printf("Occlusion: off - no query pool (%s); every query the game makes reads "
-                    "visible, as before\n",
+                    "visible\n",
                     vk::to_string(result).c_str());
         return false;
     }
-    device.resetQueryPool(pool, 0, PoolSize);
-    precise = instance.IsOcclusionQueryPreciseSupported();
-    cap = static_cast<u32>(std::clamp<u64>(EnvU64("BB_OCCLUSION_CAP", 64), 1, 1024));
-    shared = std::make_shared<Shared>();
-    shared->device = device;
-    shared->pool = pool;
-    shared->rasterizer = &rasterizer;
-    shared->precise = precise;
-    shared->max_lag = EnvU64("BB_OCCLUSION_MAX_LAG", 6);
-    shared->results.resize(2ull * PoolSize);
-    std::printf("Occlusion: real sample counts (BB_OCCLUSION=0: the old always-visible fake) - a "
-                "query on each of the %u draws after a block's begin, results written when the "
-                "GPU has run them (at most %llu frames late), %s; SET_PREDICATION skips only on "
-                "known results\n",
-                cap, static_cast<unsigned long long>(shared->max_lag),
-                precise ? "precise" : "not precise (a nonzero count reads plainly visible)");
+    device.resetQueryPool(pool, 0, RingSize);
+    const bool precise = instance.IsOcclusionQueryPreciseSupported();
+    if (precise) {
+        query_flags = vk::QueryControlFlagBits::ePrecise;
+    }
+    draw_budget = std::clamp<u64>(EnvNumber("BB_OCCLUSION_CAP", 64), 1, 1024);
+    resolver = std::make_shared<Resolver>();
+    resolver->device = device;
+    resolver->pool = pool;
+    resolver->rasterizer = &rasterizer;
+    resolver->precise = precise;
+    resolver->max_lag = EnvNumber("BB_OCCLUSION_MAX_LAG", 6);
+    std::printf("Occlusion: real sample counts (BB_OCCLUSION=0: the always-visible stand-in) - "
+                "each query block the game opens is measured over up to %llu draws and answered "
+                "once the GPU has run them (at most %llu frames late), %s; SET_PREDICATION skips "
+                "only on known answers\n",
+                static_cast<unsigned long long>(draw_budget),
+                static_cast<unsigned long long>(resolver->max_lag),
+                precise ? "precise counts" : "not precise (any nonzero count reads plainly visible)");
     return true;
 }
 
 Occlusion::~Occlusion() {
-    if (!shared) {
+    if (!resolver) {
         return;
     }
-    // A resolve still queued on the scheduler's thread finds it gone and does nothing.
-    std::scoped_lock lk{shared->mutex};
-    shared->alive = false;
-    shared->device.destroyQueryPool(shared->pool);
-    shared->pool = nullptr;
+    std::scoped_lock lock{resolver->state_mutex};
+    resolver->alive = false;
+    resolver->device.destroyQueryPool(resolver->pool);
+    resolver->pool = nullptr;
 }
 
 Occlusion::DumpTask Occlusion::MakeDump(VAddr va, u32 num_pipes) const noexcept {
-    return {va, issued, BbStats::submit_done_calls.load(std::memory_order_relaxed),
-            std::clamp(num_pipes, 1u, MaxPipes), 0};
+    return {va, decoded_draws, FramesSoFar(), std::clamp(num_pipes, 1u, Model::MaxDbs), 0};
 }
 
 void Occlusion::Dump(const DumpTask& task) {
-    // Every draw stage A decoded since the last dump got a query, or the interval reads visible:
-    // a draw dropped before recording (pipeline still compiling, filtered, failed) must not
-    // count as occluded.
-    const bool poison =
-        !interval.open || task.issued - interval.issued_at != interval.queries;
-    const u64 tick = scheduler.CurrentTick();
-    const u64 serial = ++dump_serial;
-    if (block_serial.size() > 65536) {
-        block_serial.clear();
+    const VAddr block = task.va & ~VAddr{15};
+    open_blocks.Expire(task.frame, OpenFrames);
+
+    Resolver::Record record{};
+    record.tick = scheduler.CurrentTick();
+    record.number = ++dumps_recorded;
+    record.block = block;
+    record.frame = task.frame;
+    record.dbs = task.pipes;
+    if ((task.va & 8) == 0) {
+        record.kind = Resolver::Kind::Begin;
+        open_blocks.Begin(block, task.issued, next_query, task.frame);
+    } else if (const auto closed = open_blocks.End(block, task.issued, next_query)) {
+        record.kind = Resolver::Kind::Closed;
+        record.frame = closed->frame;
+        record.first_query = closed->first_query;
+        record.queries = closed->queries;
+        record.complete = closed->complete;
+    } else {
+        record.kind = Resolver::Kind::Unpaired;
     }
-    block_serial[task.va & ~15ull] = serial;
+    record.needed_from = open_blocks.FirstNeeded(next_query);
+
+    if (last_dump.size() > 65536) {
+        last_dump.clear();
+    }
+    last_dump[block] = {record.number, task.pipes};
     {
-        std::scoped_lock lk{shared->queue_mutex};
-        shared->pending.push_back({tick, task.va, task.frame, serial, interval.first,
-                                   interval.queries, task.pipes, poison});
+        std::scoped_lock lock{resolver->inbox_mutex};
+        resolver->inbox.push_back(record);
     }
-    if (tick != registered_tick) {
-        // One resolve per submission, on the scheduler's thread once the GPU has finished it.
-        registered_tick = tick;
+    if (record.tick != last_dump_tick) {
+        last_dump_tick = record.tick;
         scheduler.DeferPriorityOperation(
-            [shared = shared, tick] { shared->Resolve(tick); });
+            [resolver = resolver, tick = record.tick] { resolver->Run(tick); });
     }
-    // Gnm's begin dump (+0 of a 16-byte cell) measures the draws up to its end dump; after any
-    // other dump only the next draw is measured (droogie's caps), the rest read visible.
-    interval = {true, (task.va & 15) == 0 ? cap : 1u, 0, query_head, task.issued};
-    pipes = task.pipes;
 }
 
-Occlusion::DrawQuery Occlusion::AllocateQuery(u32 scene_size) noexcept {
-    if (query_head - shared->released.load(std::memory_order_acquire) >= PoolSize) {
-        shared->pool_full.fetch_add(1, std::memory_order_relaxed);
-        return {}; // unmeasured: reads visible
+Occlusion::DrawQuery Occlusion::TakeQuery(u32 scene_size) noexcept {
+    if (next_query - resolver->released.load(std::memory_order_acquire) >= RingSize) {
+        resolver->pool_full.fetch_add(1, std::memory_order_relaxed);
+        return {};
     }
-    const u32 index = static_cast<u32>(query_head % PoolSize);
-    // A pass into the reduced scene targets counts fewer samples than the PS4's 1920x1080; the
-    // count is scaled back so a threshold the game applies means the same.
+    const u32 slot = static_cast<u32>(next_query % RingSize);
     u32 scale = 1u << 16;
-    if (scene_size) {
+    if (scene_size != 0) {
         const auto size = SceneResolution::Unpack(scene_size);
-        scale = OcclusionModel::SampleScale(size.width, size.height);
+        scale = Model::ScaleToNative(size.width, size.height);
     }
-    shared->scale[index] = scale;
-    ++query_head;
-    ++interval.queries;
-    return {shared->pool, index,
-            precise ? vk::QueryControlFlags{vk::QueryControlFlagBits::ePrecise}
-                    : vk::QueryControlFlags{}};
+    resolver->scale[slot] = scale;
+    ++next_query;
+    return {resolver->pool, slot, query_flags};
 }
 
 void Occlusion::SetPredication(const PredicationTask& task) {
-    shared->pred_sets.fetch_add(1, std::memory_order_relaxed);
+    resolver->pred_sets.fetch_add(1, std::memory_order_relaxed);
     if (task.op == 0) {
-        pred_mode = PredMode::None;
-        pred_visible = pred_unknown = false;
+        predicate = Predicate::None;
+        chain_seen = chain_unknown = false;
         return;
     }
     if (task.op != 1) {
-        pred_mode = PredMode::Draw; // primitive-count predication (streamout): not emulated
+        predicate = Predicate::Draw;
         return;
     }
-    if (!(task.cont && pred_mode != PredMode::None)) {
-        pred_visible = pred_unknown = false;
+    if (!task.cont || predicate == Predicate::None) {
+        chain_seen = chain_unknown = false;
     }
-    // Known only when every dump into the block has been resolved: then the block holds this
-    // use's result (or is not ready). Results come a frame late, so mostly unknown: drawn.
-    const auto it = block_serial.find(task.block);
-    if (it != block_serial.end() &&
-        shared->resolved_serial.load(std::memory_order_acquire) >= it->second) {
-        const auto state = ReadBlock(task.block, pipes);
-        pred_unknown |= state == OcclusionModel::Block::NotReady;
-        pred_visible |= state == OcclusionModel::Block::Visible;
-        if (state != OcclusionModel::Block::NotReady) {
-            shared->pred_resolved.fetch_add(1, std::memory_order_relaxed);
+    bool known = false;
+    if (const auto it = last_dump.find(task.block); it != last_dump.end() &&
+        resolver->answered_through.load(std::memory_order_acquire) >= it->second.number) {
+        const BlockWords words = ReadWords(task.block, it->second.dbs);
+        const auto answer = Model::ReadAnswer(words.data(), it->second.dbs);
+        if (answer != Model::Answer::Pending) {
+            known = true;
+            chain_seen |= answer == Model::Answer::Seen;
+            resolver->pred_known.fetch_add(1, std::memory_order_relaxed);
         }
-    } else {
-        pred_unknown = true;
     }
-    // A wrong "occluded" makes geometry vanish: unknown draws.
-    const bool draw =
-        OcclusionModel::PredicatedDraws(pred_visible, pred_unknown, task.draw_if_visible != 0);
-    pred_mode = draw ? PredMode::Draw : PredMode::Skip;
+    chain_unknown |= !known;
+    predicate = Model::DrawPredicated(chain_seen, chain_unknown, task.draw_if_visible != 0)
+                    ? Predicate::Draw
+                    : Predicate::Skip;
 }
 
-bool Occlusion::SkipPredicated() noexcept {
-    if (pred_mode == PredMode::Skip) {
-        shared->pred_skipped.fetch_add(1, std::memory_order_relaxed);
-        return true;
-    }
-    shared->pred_drawn.fetch_add(1, std::memory_order_relaxed);
-    return false;
+bool Occlusion::SkipUnderPredicate() noexcept {
+    const bool skip = predicate == Predicate::Skip;
+    (skip ? resolver->pred_skipped : resolver->pred_drawn).fetch_add(1, std::memory_order_relaxed);
+    return skip;
 }
 
-void Occlusion::Shared::Resolve(u64 tick) {
-    std::scoped_lock lk{mutex};
+void Occlusion::Resolver::Run(u64 tick) {
+    std::scoped_lock lock{state_mutex};
     if (!alive) {
         return;
     }
-    ready.clear();
+    batch.clear();
     {
-        std::scoped_lock queue{queue_mutex};
-        while (!pending.empty() && pending.front().tick <= tick) {
-            ready.push_back(pending.front());
-            pending.pop_front();
+        std::scoped_lock inbox_lock{inbox_mutex};
+        while (!inbox.empty() && inbox.front().tick <= tick) {
+            batch.push_back(inbox.front());
+            inbox.pop_front();
         }
     }
-    for (const Pending& dump : ready) {
-        Process(dump);
+    for (const Record& record : batch) {
+        Process(record);
     }
     Report();
 }
 
-void Occlusion::Shared::Process(const Pending& dump) {
+void Occlusion::Resolver::Process(const Record& record) {
     ++dumps;
-    bool bad = dump.poison;
+    if (record.kind != Kind::Begin) {
+        u64 count = Model::PlainlyVisible;
+        if (record.kind == Kind::Unpaired) {
+            ++unpaired;
+        } else if (record.complete) {
+            u64 missing = 0;
+            count = Sum(record.first_query, record.queries, missing);
+            unavailable += missing;
+        }
+        if (count == Model::PlainlyVisible) {
+            ++plainly;
+        }
+        const u64 age = FramesSoFar() - record.frame;
+        const bool answered_before = answered.contains(record.block);
+        if (age > max_lag && (age > 2 * max_lag || !answered_before)) {
+            ++late;
+        } else {
+            late_written += age > max_lag ? 1 : 0;
+            if (steady.size() > 65536) {
+                steady.clear();
+            }
+            const u64 report = steady[record.block].Add(count);
+            held += count == 0 && report != 0 ? 1 : 0;
+            if (Store(record.block, record.dbs, report)) {
+                ++(report != 0 ? seen : hidden);
+            }
+        }
+    }
+    Release(record.needed_from);
+    answered_through.store(record.number, std::memory_order_release);
+}
+
+u64 Occlusion::Resolver::Sum(u64 first, u64 count, u64& missing) {
+    queries_read += count;
     u64 samples = 0;
-    if (dump.count) {
-        queries += dump.count;
-        // The ring may wrap inside the interval: at most two ranges.
-        const u32 first = static_cast<u32>(dump.first % PoolSize);
-        const u32 head_part = std::min<u32>(dump.count, PoolSize - first);
-        const std::array<std::pair<u32, u32>, 2> ranges{{{first, head_part},
-                                                         {0, dump.count - head_part}}};
-        for (const auto& [start, count] : ranges) {
-            if (!count) {
-                continue;
-            }
-            // Without waiting: the GPU has finished the submission. A query a driver did not
-            // resolve (AMD while the window is unfocused, KyoPS4x #220) reads visible.
-            const vk::Result result = device.getQueryPoolResults(
-                pool, start, count, 16ull * count, results.data(), 16,
-                vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability);
-            for (u32 i = 0; i < count; ++i) {
-                const bool failed = result != vk::Result::eSuccess &&
-                                    result != vk::Result::eNotReady;
-                const bool available = !failed && results[2 * i + 1] != 0;
-                unavailable += available ? 0 : 1;
-                // Imprecise results may be 0/1 (NVIDIA): one sample read as "nearly hidden" was
-                // the likeliest cause of KyoPS4x #219's black world.
-                samples += OcclusionModel::Samples(results[2 * i], available, precise,
-                                                   scale[start + i]);
-            }
-            device.resetQueryPool(pool, start, count);
+    while (count != 0) {
+        const u32 start = static_cast<u32>(first % RingSize);
+        const u32 run = static_cast<u32>(std::min<u64>(count, RingSize - start));
+        const vk::Result result = device.getQueryPoolResults(
+            pool, start, run, 16ull * run, raw.data(), 16,
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability);
+        const bool readable = result == vk::Result::eSuccess || result == vk::Result::eNotReady;
+        for (u32 i = 0; i < run; ++i) {
+            const bool available = readable && raw[2 * i + 1] != 0;
+            missing += available ? 0 : 1;
+            samples += Model::QueryCount(raw[2 * i], available, precise, scale[start + i]);
         }
-        released.fetch_add(dump.count, std::memory_order_release);
+        first += run;
+        count -= run;
     }
-    if (bad) {
-        ++poisoned;
-        samples += Unmeasured;
-    }
-    total += samples;
-    const u64 lag = BbStats::submit_done_calls.load(std::memory_order_relaxed) - dump.frame;
-    const bool is_begin = (dump.va & 15) == 0;
-    // A late dump is written into a block we wrote before (it then holds the game's zeroes or
-    // our last value, checked by WriteBlock) up to twice the lag: the block keeps its last
-    // result instead of reading not ready. Later, or into memory we never wrote, the game may
-    // have freed and reused it by now: left as it is (not ready).
-    if (lag > max_lag && (lag > 2 * max_lag || !written.contains(dump.va))) {
-        ++late;
-        if (is_begin) {
-            begins.erase(dump.va);
-        }
-    } else {
-        late_written += lag > max_lag ? 1 : 0;
-        if ((dump.va & 15) == 8) {
-            HoldVisible(dump.va - 8);
-        }
-        const bool landed = WriteBlock(dump);
-        if (is_begin) {
-            if (landed) {
-                if (begins.size() > 65536) {
-                    begins.clear();
-                }
-                begins[dump.va] = total;
-            } else {
-                begins.erase(dump.va);
-            }
-        }
-    }
-    resolved_serial.store(dump.serial, std::memory_order_release);
+    return samples;
 }
 
-void Occlusion::Shared::HoldVisible(VAddr block) {
-    // The block's result as the game reads it (end - begin): its begin dump must have landed
-    // in this use of the block, else the block reads not ready anyway.
-    const auto begin = begins.find(block);
-    if (begin == begins.end()) {
-        return;
+void Occlusion::Resolver::Release(u64 below) {
+    while (reset_below < below) {
+        const u32 start = static_cast<u32>(reset_below % RingSize);
+        const u32 run = static_cast<u32>(std::min<u64>(below - reset_below, RingSize - start));
+        device.resetQueryPool(pool, start, run);
+        reset_below += run;
     }
-    const u64 measured = total - begin->second;
-    begins.erase(begin);
-    if (histories.size() > 65536) {
-        histories.clear();
-    }
-    const u64 reported = histories[block].Report(measured);
-    if (reported > measured) {
-        // Added to the running total: every block keeps reading end - begin.
-        total += reported - measured;
-        held_visible += measured == 0 ? 1 : 0;
-    }
+    released.store(reset_below, std::memory_order_release);
 }
 
-bool Occlusion::Shared::WriteBlock(const Pending& dump) {
-    std::array<u64, 2 * MaxPipes> words{};
-    const u64 extent = 16ull * (dump.pipes - 1) + 8;
-    ReadGuest(dump.va, words.data(), extent);
-    const auto own = written.find(dump.va);
-    for (u32 k = 0; k < dump.pipes; ++k) {
-        const u64 word = words[2 * k];
-        const bool ours = own != written.end() &&
-                          word == (Share(own->second, dump.pipes, k) | ValidBit);
-        if (word != 0 && !ours) {
+bool Occlusion::Resolver::Store(VAddr block, u32 dbs, u64 count) {
+    const BlockWords now = ReadWords(block, dbs);
+    BlockWords ours{};
+    const auto previous = answered.find(block);
+    const bool have_ours = previous != answered.end() && previous->second.dbs == dbs;
+    if (have_ours) {
+        Model::FillBlock(ours.data(), dbs, previous->second.base, previous->second.count);
+    }
+    for (u32 i = 0; i < 2 * dbs; ++i) {
+        if (now[i] != 0 && !(have_ours && now[i] == ours[i])) {
             ++foreign;
-            return false; // neither the game's zeroes nor our last value: not a query block now
-        }
-    }
-    auto* memory = Core::Memory::Instance();
-    for (u32 k = 0; k < dump.pipes; ++k) {
-        const u64 value = Share(total, dump.pipes, k) | ValidBit;
-        auto* address = reinterpret_cast<u8*>(dump.va + 16ull * k);
-        // Through the backing view (no protection fault on this thread; fails rather than
-        // writing where nothing is mapped any more).
-        if (!memory->TryWriteBacking(address, &value, sizeof(value))) {
-            ++unbacked;
             return false;
         }
-        rasterizer->NoteLateCommandWrite(dump.va + 16ull * k, &value, sizeof(value));
     }
-    ++written_dumps;
-    if (written.size() > 262144) {
-        written.clear();
-    }
-    written[dump.va] = total;
-    // The end dump of a Gnm block (+8): how the pair reads, for the statistics.
-    if ((dump.va & 15) == 8) {
-        if (const auto begin = written.find(dump.va - 8); begin != written.end()) {
-            ++(total != begin->second ? visible : occluded);
+    BlockWords words{};
+    Model::FillBlock(words.data(), dbs, counter, count);
+    auto* memory = Core::Memory::Instance();
+    for (const u32 half : {0u, 1u}) {
+        for (u32 db = 0; db < dbs; ++db) {
+            const VAddr address = block + 16ull * db + 8ull * half;
+            const u64 value = words[2 * db + half];
+            if (!memory->TryWriteBacking(reinterpret_cast<u8*>(address), &value, sizeof(value))) {
+                ++unmapped;
+                answered.erase(block);
+                return false;
+            }
+            rasterizer->NoteLateCommandWrite(address, &value, sizeof(value));
         }
     }
+    if (answered.size() > 262144) {
+        answered.clear();
+    }
+    answered[block] = {counter, count, dbs};
+    counter += count;
     return true;
 }
 
-void Occlusion::Shared::Report() {
-    static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
-    if (!stats) {
+void Occlusion::Resolver::Report() {
+    static const bool wanted = std::getenv("BB_FRAME_STATS") != nullptr;
+    if (!wanted) {
         return;
     }
     const auto now = std::chrono::steady_clock::now();
-    const double seconds = std::chrono::duration<double>(now - window).count();
-    if (seconds < 5.0) {
+    if (now - report_time < std::chrono::seconds(5)) {
         return;
     }
-    window = now;
-    const u64 frames_now = BbStats::submit_done_calls.load(std::memory_order_relaxed);
+    report_time = now;
+    const u64 frames_now = FramesSoFar();
     const u64 draws_now = BbStats::draws.load(std::memory_order_relaxed);
-    const std::array<u64, 14> now_counts{
+    const std::array<u64, 15> totals{
         dumps,
-        queries,
-        visible,
-        occluded,
-        poisoned,
+        queries_read,
+        seen,
+        hidden,
+        plainly,
         unavailable,
-        late + foreign + unbacked,
+        late + foreign + unmapped,
         pool_full.load(std::memory_order_relaxed),
         pred_sets.load(std::memory_order_relaxed),
-        pred_resolved.load(std::memory_order_relaxed),
+        pred_known.load(std::memory_order_relaxed),
         pred_skipped.load(std::memory_order_relaxed),
         pred_drawn.load(std::memory_order_relaxed),
-        held_visible,
+        held,
         late_written,
+        unpaired,
     };
-    std::array<double, 14> d{};
-    const double frames = std::max<double>(1.0, double(frames_now - window_frames));
-    for (size_t i = 0; i < d.size(); ++i) {
-        d[i] = double(now_counts[i] - last[i]) / frames;
+    const double frames = std::max<double>(1.0, double(frames_now - report_frames));
+    std::array<double, 15> per_frame{};
+    for (size_t i = 0; i < totals.size(); ++i) {
+        per_frame[i] = double(totals[i] - reported[i]) / frames;
     }
-    const double pairs = d[2] + d[3];
+    const auto& f = per_frame;
+    const double answers = f[2] + f[3];
     std::printf("Occlusion per frame: %.1f dumps, %.1f queries, objects %.1f visible / %.1f "
-                "culled (%.0f%%), %.1f intervals read visible (%.1f queries unavailable), %.1f "
-                "dumps not written (totals: late %llu, reused memory %llu, unmapped %llu), pool "
-                "full %.1f; SET_PREDICATION %.1f (%.1f known), predicated draws %.1f skipped / "
-                "%.1f drawn; %.0f draws/frame; held visible %.1f, late written %.1f\n",
-                d[0], d[1], d[2], d[3], pairs > 0 ? 100.0 * d[3] / pairs : 0.0, d[4], d[5], d[6],
-                (unsigned long long)late, (unsigned long long)foreign,
-                (unsigned long long)unbacked, d[7], d[8], d[9], d[10], d[11],
-                double(draws_now - window_draws) / frames, d[12], d[13]);
+                "culled (%.0f%%), %.1f blocks read plainly visible (%.1f queries unavailable), "
+                "%.1f answers not written (totals: late %llu, reused memory %llu, unmapped %llu), "
+                "pool full %.1f; SET_PREDICATION %.1f (%.1f known), predicated draws %.1f skipped "
+                "/ %.1f drawn; %.0f draws/frame; held visible %.1f, late written %.1f, unpaired "
+                "ends %.1f\n",
+                f[0], f[1], f[2], f[3], answers > 0 ? 100.0 * f[3] / answers : 0.0, f[4], f[5],
+                f[6], static_cast<unsigned long long>(late),
+                static_cast<unsigned long long>(foreign),
+                static_cast<unsigned long long>(unmapped), f[7], f[8], f[9], f[10], f[11],
+                double(draws_now - report_draws) / frames, f[12], f[13], f[14]);
     std::fflush(stdout);
-    last = now_counts;
-    window_frames = frames_now;
-    window_draws = draws_now;
+    reported = totals;
+    report_frames = frames_now;
+    report_draws = draws_now;
 }
 
-} // namespace Vulkan
+}

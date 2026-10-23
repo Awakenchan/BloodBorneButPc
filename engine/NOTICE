@@ -1,0 +1,40 @@
+Lantern Engine
+Copyright (C) 2026 Awaken
+https://github.com/Awakenchan/LanternEngine
+
+Lantern Engine's own code is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version, with the additional terms
+below (GPL-3.0 section 7). It is distributed WITHOUT ANY WARRANTY; see licenses/GPL-3.0.txt.
+
+In the source (paths under engine/ unless named), Lantern Engine's own code is every file marked
+"SPDX-License-Identifier: GPL-3.0-or-later" that carries no other copyright notice and is not in
+gpu/bbnet/thd/, the launcher (launcher/ in the repository), and the built-in game patches
+(patches/Bloodborne.xml and the tools that build them). Parts by others
+keep their own licenses and notices: shadPS4, bbport, bloodborne_pc, bbhost (licenses/
+BBHOST-PORTS.md), shadNet (licenses/SHADNET-PORT.md), the third-party libraries, and the changes
+contributors sent in. The additional terms apply only to Lantern Engine's own code.
+
+Additional terms (GNU GPL version 3, section 7)
+
+1. Attribution (section 7(b)). If you convey Lantern Engine's own code, or a work based on it,
+   in source or object form, you must keep this NOTICE file and the attribution
+   "Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine)" intact, and show
+   that attribution:
+   a. in the source, in this NOTICE file or a copy of it;
+   b. in the Appropriate Legal Notices of the program, that is, in its about, credits or
+      settings screen where it has one; and
+   c. in the README, description or release notes that come with each copy you distribute.
+
+2. Modified versions (section 7(c)). If you convey a modified version, you must mark it as
+   changed from the original in reasonable ways, in its name or version and in the places
+   named in term 1, and you must not present it as the original or an official release of
+   Lantern Engine, or as your own original work.
+
+3. Names (section 7(e)). This license grants no rights to use the name "Lantern Engine", its
+   logos or icons for a modified version or another project, except to state truthfully that
+   the work is based on Lantern Engine as term 1 requires. Use the name otherwise only with
+   Awaken's written permission.
+
+You may not remove these additional terms from copies of Lantern Engine's own code. Nothing
+here restricts what the GPL allows for code that is not Lantern Engine's own.

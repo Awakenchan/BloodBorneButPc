@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Windows probe for the PC memory model (step 6 of the direct path): can the GPU use the game's
 // section-backed memory in place? Mirrors src/win32_memory.c: a pagefile section, views placed with
 // MapViewOfFile3 into VirtualAlloc2 placeholders, a second (alias) view of the same pages.

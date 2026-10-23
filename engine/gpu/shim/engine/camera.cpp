@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from bbhost engine/camera.cpp and params.cpp. Uses the real repository
-// instead of scanning all guest memory: one authoritative LockCamParam table.
 #include "camera.h"
 #include "widescreen.h"
 #include "bbport_platform.h"
@@ -14,124 +12,163 @@
 
 namespace BbEngine::Camera {
 namespace {
-std::uint64_t slide;
-bool active;
-bool controls; // the player's distance/height/FOV scales; off: Vert+ only (scales of 1)
-struct Row { std::uint64_t address; std::array<float,3> original, written; };
-std::uint64_t table;
-std::vector<Row> rows;
-std::array<float,4> last_scale{1,1,1,1};
-template<typename T> bool Read(std::uint64_t address, T* out) {
-    return address && BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(address), out, sizeof(T));
+constexpr std::size_t kRepositoryLoad = 0x143acf2;
+constexpr std::uint8_t kLeaR14[] = {0x4c, 0x8d, 0x35};
+constexpr std::size_t kSlotCount = 0x143ad35;
+constexpr std::uint8_t kSlotCountCode[] = {0x83, 0xb8, 0xb8, 0x09, 0x00, 0x00, 0x00};
+constexpr std::size_t kSlotFirst = 0x143ad42;
+constexpr std::uint8_t kSlotFirstCode[] = {0x48, 0x8b, 0x80, 0xc0, 0x09, 0x00, 0x00};
+constexpr std::size_t kCountAt = 0x9b8, kFirstAt = 0x9c0, kHolder = 0x70, kFile = 0x70;
+
+constexpr std::size_t kFovCap = 0x143af4e;
+constexpr std::uint8_t kCapped[] = {0x48, 0x0f, 0x46, 0xc6};
+constexpr std::uint8_t kUncapped[] = {0x48, 0x89, 0xf0, 0x90};
+
+constexpr char kType[] = "LOCK_CAM_PARAM_ST";
+constexpr std::size_t kFields[3] = {0x0, 0xc, 0x14};
+
+std::uint64_t g_repository = 0;
+bool g_active = false;
+bool g_controls = false;
+
+struct Row {
+    std::uint64_t at;
+    std::array<float, 3> source, written;
+};
+std::uint64_t g_file = 0;
+std::vector<Row> g_rows;
+std::array<float, 4> g_said{1, 1, 1, 1};
+unsigned g_ticks = 0;
+
+template <typename T> bool Peek(std::uint64_t at, T* out) {
+    return at && BbPlatform::ReadProcessMemory(reinterpret_cast<const void*>(at), out, sizeof(T));
 }
-std::uint64_t Pointer(std::uint64_t address) { std::uint64_t value=0; Read(address,&value); return value; }
-constexpr std::size_t fields[3] = {0x0,0xc,0x14}; // distance, height, vertical FOV
-std::uint64_t FindTable() {
-    const auto repository = Pointer(slide + 0x5540340); // BN 0x5940340 - preferred slide
-    if (!repository) return 0;
-    for (unsigned slot=0; slot<63; ++slot) {
-        std::int32_t count=0;
-        const auto entry=repository+0x70+slot*0x48;
-        if (!Read(entry,&count) || count<=0) continue;
-        for (unsigned k=0; k<static_cast<unsigned>(count) && k<8; ++k) {
-            const auto cap=Pointer(entry+8+8*k);
-            std::uint64_t capacity=0;
-            if (!cap || !Read(cap+0x30,&capacity)) continue;
-            const auto name=capacity<8 ? cap+0x18 : Pointer(cap+0x18);
-            constexpr char16_t wanted[]=u"LockCamParam";
-            char16_t found[sizeof wanted/sizeof(char16_t)]{};
-            if (!name || !BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(name),found,sizeof found) ||
-                std::memcmp(found,wanted,sizeof wanted)) continue;
-            const auto holder=Pointer(cap+0x70);
-            return holder ? Pointer(holder+0x70) : 0;
+std::uint64_t Follow(std::uint64_t at) {
+    std::uint64_t v = 0;
+    return Peek(at, &v) ? v : 0;
+}
+bool IsLockCam(std::uint64_t file) {
+    char type[sizeof kType]{};
+    return file && BbPlatform::ReadProcessMemory(reinterpret_cast<const void*>(file + 0xc), type, sizeof type) &&
+           std::memcmp(type, kType, sizeof kType) == 0;
+}
+
+std::uint64_t FindFile() {
+    const std::uint64_t repository = Follow(g_repository);
+    std::int32_t count = 0;
+    if (!repository || !Peek(repository + kCountAt, &count) || count <= 0) return 0;
+    const std::uint64_t file = Follow(Follow(Follow(repository + kFirstAt) + kHolder) + kFile);
+    return IsLockCam(file) ? file : 0;
+}
+
+bool ReadRows(std::uint64_t file) {
+    std::uint16_t count = 0;
+    std::uint8_t format = 0, flags = 0;
+    if (!Peek(file + 0xa, &count) || !count || count > 4096 || !Peek(file + 0x2d, &format) || !Peek(file + 0x2e, &flags))
+        return false;
+    const bool wide = format > 3 && (flags & 2);
+    const std::size_t stride = wide ? 0x18 : 12;
+    std::vector<Row> rows;
+    rows.reserve(count);
+    for (unsigned i = 0; i < count; ++i) {
+        std::uint64_t offset = 0;
+        if (wide) {
+            if (!Peek(file + 0x40 + stride * i + 8, &offset)) return false;
+        } else {
+            std::uint32_t o = 0;
+            if (!Peek(file + 0x40 + stride * i + 4, &o)) return false;
+            offset = o;
         }
+        if (offset < 0x40 + stride * count || offset > 32u << 20) return false;
+        Row row{file + offset, {}, {}};
+        for (unsigned f = 0; f < 3; ++f)
+            if (!Peek(row.at + kFields[f], &row.source[f]) || !std::isfinite(row.source[f])) return false;
+        if (!(row.source[2] > 1 && row.source[2] < 179)) return false;
+        row.written = row.source;
+        rows.push_back(row);
     }
-    return 0;
-}
-bool LoadRows(std::uint64_t file) {
-    char type[18]{};
-    std::uint16_t count=0;
-    if (!file || !Read(file+0xa,&count) || !count || count>4096 ||
-        !BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(file+0xc),type,sizeof type) ||
-        std::strcmp(type,"LOCK_CAM_PARAM_ST")) return false;
-    std::vector<Row> next;
-    for (unsigned i=0;i<count;++i) {
-        std::uint64_t offset=0;
-        if (!Read(file+0x40+0x18*i+8,&offset) || offset<0x40+count*0x18u || offset>32*1024*1024) return false;
-        Row row{}; row.address=file+offset;
-        for (unsigned f=0;f<3;++f)
-            if (!Read(row.address+fields[f],&row.original[f]) || !std::isfinite(row.original[f])) return false;
-        if (!(row.original[2]>1 && row.original[2]<179)) return false;
-        row.written=row.original;
-        next.push_back(row);
-    }
-    rows=std::move(next); table=file;
-    std::printf("Engine: camera LockCamParam found in the engine repository (%u rows)\n",count);
+    g_rows = std::move(rows);
+    g_file = file;
+    std::printf("Engine: camera: LockCamParam, %u rows\n", unsigned(count));
     return true;
+}
+
+float Value(float source, unsigned field, const std::array<float, 4>& scale) {
+    float v = source * scale[field];
+    if (field == 2 && scale[3] > 1.0f) {
+        constexpr float kRad = 3.14159265f / 180.0f;
+        v = std::min(170.0f, 2.0f * std::atan(std::tan(v * kRad * 0.5f) * scale[3]) / kRad);
+    }
+    return v;
 }
 }
 
 bool Install(std::uint8_t* image, std::size_t size) {
-    // Widescreen on a screen narrower than 16:9 (16:10, 4:3, 5:4): the vertical FOV is widened so
-    // the 16:9 horizontal view stays (Vert+, Widescreen::NarrowFovFactor), camera controls or not.
-    const auto& settings = BbSettings::Get();
-    const int w = BbSettings::OutputWidth(settings.startup_output_res);
-    const int h = BbSettings::OutputHeight(settings.startup_output_res);
-    const bool narrow = settings.widescreen && w > 0 && h > 0 && std::int64_t(w) * 9 < std::int64_t(h) * 16;
-    controls = settings.camera_controls;
-    if (!controls && !narrow) return false;
-    constexpr std::size_t clamp=0x143af4e;
-    constexpr std::uint8_t original[]={0x48,0x0f,0x46,0xc6}, lifted[]={0x48,0x89,0xf0,0x90};
-    if (clamp>size || sizeof original>size-clamp ||
-        (std::memcmp(image+clamp,original,sizeof original) && std::memcmp(image+clamp,lifted,sizeof lifted))) {
-        std::puts("Engine: camera adjustments disabled: FOV clamp differs from 1.09"); return false;
+    const auto& s = BbSettings::Get();
+    const int w = BbSettings::OutputWidth(s.startup_output_res), h = BbSettings::OutputHeight(s.startup_output_res);
+    const bool narrow = s.widescreen && w > 0 && h > 0 && std::int64_t(w) * 9 < std::int64_t(h) * 16;
+    g_controls = s.camera_controls;
+    if (!g_controls && !narrow) return false;
+    auto matches = [&](std::size_t at, const std::uint8_t* b, std::size_t n) {
+        return at <= size && n <= size - at && std::memcmp(image + at, b, n) == 0;
+    };
+    if (!matches(kRepositoryLoad, kLeaR14, sizeof kLeaR14) || !matches(kSlotCount, kSlotCountCode, sizeof kSlotCountCode) ||
+        !matches(kSlotFirst, kSlotFirstCode, sizeof kSlotFirstCode) ||
+        (!matches(kFovCap, kCapped, sizeof kCapped) && !matches(kFovCap, kUncapped, sizeof kUncapped))) {
+        std::printf("Engine: camera off: the follow camera's code is not 1.09's\n");
+        return false;
     }
-    std::memcpy(image+clamp,lifted,sizeof lifted);
-    slide=reinterpret_cast<std::uint64_t>(image);
-    active=true;
-    std::puts(controls ? "Engine: camera adjustments enabled (distance, height and FOV)"
-                       : "Engine: camera FOV hook for a screen narrower than 16:9 (Vert+)");
+    std::int32_t d = 0;
+    std::memcpy(&d, image + kRepositoryLoad + sizeof kLeaR14, 4);
+    const std::size_t repository = std::size_t(std::int64_t(kRepositoryLoad + sizeof kLeaR14 + 4) + d);
+    if (repository > size - 8) return false;
+    std::memcpy(image + kFovCap, kUncapped, sizeof kUncapped);
+    g_repository = reinterpret_cast<std::uint64_t>(image + repository);
+    g_active = true;
+    std::printf(g_controls ? "Engine: camera adjustments enabled (distance, height and FOV)\n"
+                           : "Engine: camera FOV for a screen narrower than 16:9 (Vert+)\n");
     return true;
 }
 
-bool Active() { return active; }
+bool Active() { return g_active; }
 
 void Tick() {
-    if (!active) return;
-    const auto& settings=BbSettings::Get();
-    const float narrow=Widescreen::NarrowFovFactor();
-    const std::array<float,4> scale={controls?settings.camera_distance_scale.load():1.0f,
-                                     controls?settings.camera_height_scale.load():1.0f,
-                                     controls?settings.camera_fov_scale.load():1.0f,narrow};
-    if (scale==std::array<float,4>{1,1,1,1} && last_scale==scale) return;
-    static unsigned ticks;
-    if (!table || ticks++%150==0) {
-        const auto found=FindTable();
-        if (!found) return;
-        if (found!=table && !LoadRows(found)) return;
+    if (!g_active) return;
+    const auto& s = BbSettings::Get();
+    const std::array<float, 4> scale = {g_controls ? s.camera_distance_scale.load() : 1.0f,
+                                        g_controls ? s.camera_height_scale.load() : 1.0f,
+                                        g_controls ? s.camera_fov_scale.load() : 1.0f, Widescreen::NarrowFovFactor()};
+    for (const float f : scale) if (!std::isfinite(f)) return;
+    const bool neutral = scale == std::array<float, 4>{1, 1, 1, 1};
+    if (neutral && g_said == scale) return;
+    if (!g_file || g_ticks++ % 150 == 0) {
+        const std::uint64_t file = FindFile();
+        if (!file) return;
+        if (file != g_file && !ReadRows(file)) return;
     }
-    char type[18]{};
-    if (!BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(table+0xc),type,sizeof type) ||
-        std::strcmp(type,"LOCK_CAM_PARAM_ST")) { table=0; rows.clear(); return; }
-    for (Row& row:rows) {
-        for (unsigned f=0;f<3;++f) {
-            float current=0;
-            if (!Read(row.address+fields[f],&current) || !std::isfinite(current)) { table=0;rows.clear();return; }
-            // Preserve bbhost's reload/external edit semantics; never multiply our own output.
-            if (current!=row.written[f]) row.original[f]=current;
-            float wanted=row.original[f]*scale[f];
-            if (f==2 && scale[3]>1.0f) {
-                // Vert+: tan(vertical FOV / 2) grows with 16:9 / aspect (degrees in the table).
-                constexpr float rad=3.14159265f/180.0f;
-                wanted=std::min(170.0f,2.0f*std::atan(std::tan(wanted*rad*0.5f)*scale[3])/rad);
+    if (!IsLockCam(g_file)) {
+        g_file = 0;
+        g_rows.clear();
+        return;
+    }
+    for (Row& row : g_rows) {
+        for (unsigned f = 0; f < 3; ++f) {
+            float now = 0;
+            if (!Peek(row.at + kFields[f], &now) || !std::isfinite(now)) {
+                g_file = 0;
+                g_rows.clear();
+                return;
             }
-            if (current!=wanted) std::memcpy(reinterpret_cast<void*>(row.address+fields[f]),&wanted,sizeof wanted);
-            row.written[f]=wanted;
+            if (now != row.written[f]) row.source[f] = now;
+            const float want = Value(row.source[f], f, scale);
+            if (now != want) std::memcpy(reinterpret_cast<void*>(row.at + kFields[f]), &want, sizeof want);
+            row.written[f] = want;
         }
     }
-    if (scale!=last_scale) {
-        std::printf("Engine: camera distance x%.2f, height x%.2f, FOV x%.2f, Vert+ x%.4f\n",scale[0],scale[1],scale[2],scale[3]);
-        last_scale=scale;
+    if (scale != g_said) {
+        std::printf("Engine: camera distance x%.2f, height x%.2f, FOV x%.2f, Vert+ x%.4f\n", scale[0], scale[1],
+                    scale[2], scale[3]);
+        g_said = scale;
     }
 }
-} // namespace BbEngine::Camera
+}

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "common.h"
 
 #include <windows.h>
@@ -91,7 +91,7 @@ Bytes Hash(LPCWSTR id, const void* data, std::size_t size) {
     BCryptCloseAlgorithmProvider(algorithm, 0);
     return digest;
 }
-} // namespace
+}
 
 std::string Sha256Hex(const void* data, std::size_t size) {
     const Bytes digest = Hash(BCRYPT_SHA256_ALGORITHM, data, size);
@@ -163,19 +163,13 @@ std::map<std::uint64_t, PoolAnswer>& PoolAnswers() {
     static std::map<std::uint64_t, PoolAnswer> answers;
     return answers;
 }
-} // namespace
+}
 
 unsigned long PoolRefused(std::uint64_t mib) {
     auto& answers = PoolAnswers();
     if (const auto it = answers.find(mib); it != answers.end()) return it->second.error;
-    // As the engine makes it (runtime_memory.c pool, win32_memory.c win_mem_section): one committed
-    // section of direct memory and the 1 GiB flexible span after it. A section that was made is kept
-    // (inheritable) and handed to bb-probe (PoolHandOff): Windows charges its commit once, here, so the
-    // game cannot be refused it later (GitHub #66, #68: a probe released at once passed, and the
-    // engine's own section failed with error 1450 a few seconds after).
     const std::uint64_t size = (mib + 1024) << 20;
     SECURITY_ATTRIBUTES inherit{sizeof inherit, nullptr, TRUE};
-    // BB_POOL_LAZY=1 (win32_memory.c): a reserved section, committed as the game maps it.
     const bool lazy = Env("BB_POOL_LAZY", "") == "1";
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, &inherit,
                                         PAGE_EXECUTE_READWRITE | (lazy ? SEC_RESERVE : SEC_COMMIT),
@@ -232,7 +226,7 @@ std::optional<std::string> Setting(const std::map<std::string, std::string>& set
 
 namespace {
 HANDLE g_log = nullptr;
-} // namespace
+}
 
 void Log(const char* format, ...) {
     char stack[2048];
@@ -351,4 +345,4 @@ std::string ToHex(const std::uint8_t* data, std::size_t size) {
     return out;
 }
 
-} // namespace start
+}

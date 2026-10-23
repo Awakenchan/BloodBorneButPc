@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Standalone CPU regression checks: no game, Vulkan device or window required.
 #include <array>
 #include <cassert>
 #include <cstdio>
@@ -29,19 +28,17 @@ int main() {
     const auto duplicate = history.Prepare(draw);
     assert(first.store && !first.load && first.first_vertex == 100);
     assert(first.first_instance == 100 && first.instances == 2);
-    assert(duplicate.store == first.store + 16); // shared geometry, different draw
-    assert(history.Used() == 32); // firstInstance must NOT multiply the allocation
+    assert(duplicate.store == first.store + 16);
+    assert(history.Used() == 32);
     assert(!history.Prepare(draw).store && history.stats.exhausted == 1);
     history.NextFrame();
     const auto next = history.Prepare(draw);
     assert(next.load == first.store && next.store != first.store);
     assert(history.Prepare(draw).load == duplicate.store);
-    history.NextFrame(); // a missing frame invalidates the match
+    history.NextFrame();
     history.NextFrame();
     assert(!history.Prepare(draw).load);
 
-    // A changed index buffer may reference formerly unused holes inside the same min/max.
-    // Do not accept that history merely because its addresses/counts stayed the same.
     history.NextFrame();
     auto changed = draw;
     changed.topology++;
@@ -68,45 +65,41 @@ int main() {
     draw.vertices.count = 2;
     assert(!overflow.Prepare(draw).store && overflow.stats.invalid == 2);
 
-    // Small skeletons: history only while the bone palette changes (weapon spinning).
     History gated(1024);
     const History::GateKey weapon{.shader = 7, .index_count = 3, .instances = 1};
     const auto frame = [&](uint64_t palette) {
         gated.NextFrame();
         return gated.Moving(weapon, palette);
     };
-    assert(!gated.Moving(weapon, 1) && gated.stats.still == 1); // first sight
-    assert(!frame(1));                    // same bones: camera motion
-    assert(frame(2) && frame(3));         // spinning
-    assert(!frame(3));                    // stopped
+    assert(!gated.Moving(weapon, 1) && gated.stats.still == 1);
+    assert(!frame(1));
+    assert(frame(2) && frame(3));
+    assert(!frame(3));
     gated.NextFrame();
     gated.NextFrame();
-    assert(!gated.Moving(weapon, 4));     // after a skipped frame: no comparison
-    assert(!gated.Moving(weapon, 5));     // second occurrence of the same draw
+    assert(!gated.Moving(weapon, 4));
+    assert(!gated.Moving(weapon, 5));
 
-    // Held (BB_OBJECT_MOTION_HOLD): bones that move on some frames only (a weapon on the back)
-    // keep storing in between, so the next change finds last frame's positions.
     History held(1024);
     held.SetHold(2);
     const auto step = [&](uint64_t palette) {
         held.NextFrame();
         return held.Moving(weapon, palette);
     };
-    assert(!held.Moving(weapon, 1));      // first sight
-    assert(step(2));                      // changed
-    assert(step(2) && held.stats.held == 1); // unchanged, held: stores for the next change
-    assert(step(3));                      // changed again: the held frame stored
-    assert(step(3) && step(3));           // two held frames after the last change
-    assert(!step(3) && held.stats.held == 3); // stopped
+    assert(!held.Moving(weapon, 1));
+    assert(step(2));
+    assert(step(2) && held.stats.held == 1);
+    assert(step(3));
+    assert(step(3) && step(3));
+    assert(!step(3) && held.stats.held == 3);
     held.NextFrame();
     held.NextFrame();
-    assert(!held.Moving(weapon, 4));      // a skipped frame drops the hold with the comparison
+    assert(!held.Moving(weapon, 4));
     assert(ClassifyBuffer(864) == BufferRole::Other && ClassifyBuffer(416) == BufferRole::Other);
     assert(ClassifyBuffer(96) == BufferRole::SmallSkeleton &&
            ClassifyBuffer(384) == BufferRole::SmallSkeleton);
     assert(ClassifyBuffer(656) == BufferRole::Skeleton && ClassifyBuffer(64) == BufferRole::Other);
 
-    // Index ranges: reused between full scans, rescanned every Revalidate frames, trimmed.
     IndexRangeCache ranges;
     uint32_t scans = 0;
     const IndexRangeCache::Key mesh{.address = 0x1000, .count = 3, .index_size = 2};

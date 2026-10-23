@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "bbport_usage.h"
 
 #include <algorithm>
@@ -29,7 +29,6 @@ std::uint64_t Ticks(const FILETIME& t) {
     return (std::uint64_t(t.dwHighDateTime) << 32) | t.dwLowDateTime;
 }
 
-/// The whole PC's CPU use since the last call (GetSystemTimes: kernel time includes idle).
 float CpuPercent() {
     static std::uint64_t last_idle = 0, last_total = 0;
     FILETIME idle, kernel, user;
@@ -47,13 +46,8 @@ float CpuPercent() {
     return std::clamp(100.0f * float(dt - std::min(di, dt)) / float(dt), 0.0f, 100.0f);
 }
 
-/// The GPU's 3D engine use: the sum of "GPU Engine(*engtype_3D)\Utilization Percentage" over
-/// every process, as Task Manager's GPU column adds them. pdh.dll is loaded at run time (no link
-/// dependency); without it, or without GPU counters (older drivers), -1.
 class GpuCounter {
 public:
-    /// Task Manager's CPU figure ("Processor Information(_Total)\% Processor Utility", which also
-    /// counts the clock speed), read by the last Percent(); -1 without it.
     float cpu = -1.0f;
 
     float Percent() {
@@ -72,7 +66,7 @@ public:
         DWORD bytes = 0, count = 0;
         PDH_STATUS status = array(counter, PDH_FMT_DOUBLE, &bytes, &count, nullptr);
         if (status != PDH_MORE_DATA || bytes == 0) {
-            return -1.0f; // the first collection has no rate yet
+            return -1.0f;
         }
         buffer.resize(bytes);
         auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
@@ -116,12 +110,11 @@ private:
         if (add(q, L"\\GPU Engine(*engtype_3D)\\Utilization Percentage", 0, &counter) != ERROR_SUCCESS) {
             return false;
         }
-        // Optional: without it the CPU figure comes from GetSystemTimes.
         if (add(q, L"\\Processor Information(_Total)\\% Processor Utility", 0, &cpu_counter) != ERROR_SUCCESS) {
             cpu_counter = nullptr;
         }
         query = q;
-        collect(query); // the first sample: rates start with the next one
+        collect(query);
         return true;
     }
 
@@ -134,8 +127,6 @@ private:
     std::vector<unsigned char> buffer;
 };
 
-/// BB_THREAD_CPU=1: every 5 s, the game's busiest threads by CPU time (a core is 100%), in the log
-/// - to see which waits spin. Started with the program; nothing without the variable.
 void ThreadReportLoop() {
     using Describe = HRESULT(WINAPI*)(HANDLE, PWSTR*);
     const auto describe = reinterpret_cast<Describe>(
@@ -145,7 +136,7 @@ void ThreadReportLoop() {
     for (;;) {
         Sleep(5000);
         const auto now = std::chrono::steady_clock::now();
-        const double wall = std::chrono::duration<double>(now - previous).count() * 1e7; // 100 ns
+        const double wall = std::chrono::duration<double>(now - previous).count() * 1e7;
         previous = now;
         HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
         if (snapshot == INVALID_HANDLE_VALUE) continue;
@@ -200,7 +191,7 @@ const bool thread_report = [] {
     return true;
 }();
 
-} // namespace
+}
 
 Sample Get(bool cpu, bool gpu) {
     static Sample last;
@@ -211,9 +202,6 @@ Sample Get(bool cpu, bool gpu) {
         return last;
     }
     next = now + std::chrono::milliseconds(500);
-    // The CPU figure is the share of time the processors were busy (GetSystemTimes), as Task
-    // Manager shows it now. "% Processor Utility" also scales by the clock against the base
-    // clock: a boosting CPU read 100% at 70% busy. BB_CPU_UTILITY=1: that counter instead.
     static const bool utility = [] {
         const char* env = std::getenv("BB_CPU_UTILITY");
         return env && env[0] == '1';
@@ -234,4 +222,4 @@ Sample Get(bool, bool) {
 }
 #endif
 
-} // namespace BbUsage
+}

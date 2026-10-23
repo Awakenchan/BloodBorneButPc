@@ -1,23 +1,11 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# bbport: the manifest for bb-shader-gpu-stats (tests/shader_gpu_stats.cpp). For each SPIR-V module
-# the shader lab wrote (bb-shader-lab --bench <cache> 1 report.csv --spv-dir DIR): its descriptor
-# bindings, vertex inputs and color outputs (spirv-cross --reflect), and for a vertex or fragment
-# shader a partner stage (glslangValidator) that writes every input the fragment shader reads or
-# reads every output of the vertex shader, so the driver keeps them all.
-#
-#   python tests/shader_gpu_stats.py <spv dir> <work dir>       -> <work dir>/manifest.txt
-#   bb-shader-gpu-stats <work dir>/manifest.txt report.csv
-#   python tests/shader_gpu_stats.py --compare before.csv after.csv
-#       per stage: the driver's binary size and registers of the module's own stage, summed, and
-#       the modules whose binary changed most
-# Tessellation and geometry stages are left out (a handful of modules).
+# SPDX-License-Identifier: GPL-3.0-or-later
 import json
 import os
 import subprocess
 import sys
 
-FLOAT4, SINT4, UINT4 = 109, 108, 107  # VK_FORMAT_R32G32B32A32_{SFLOAT,SINT,UINT}
-FORMATS = {  # base type -> formats by component count (1..4)
+FLOAT4, SINT4, UINT4 = 109, 108, 107
+FORMATS = {
     "f": [100, 103, 106, 109],
     "i": [99, 102, 105, 108],
     "u": [98, 101, 104, 107],

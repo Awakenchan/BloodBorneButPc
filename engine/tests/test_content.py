@@ -37,8 +37,6 @@ class ContentTests(unittest.TestCase):
         self.assertIn('needs --content-profile',r.stderr)
 
     def test_dumped_addons_are_reported_installed(self):
-        # The Old Hunters on base-game dumps: add-on folders in BB_DLC_DIR and <user>/addcont/<title id>,
-        # each label once (from param.sfo's CONTENT_ID, else the folder's name); a game is not one.
         def sfo(entries):
             keys=data=index=b''
             for k,v in entries:

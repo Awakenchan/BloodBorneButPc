@@ -88,9 +88,8 @@ class ModTests(unittest.TestCase):
         second = mods.build_overlay(self.game, out, [('A', a)])
         self.assertFalse(first.exists())
         self.assertEqual([p.name for p in out.iterdir()], [second.name])
-        mods.build_overlay(self.game, out, [])  # mods switched off sweeps too
+        mods.build_overlay(self.game, out, [])
         self.assertEqual(list(out.iterdir()), [])
-        # Only links went: the game and the mod keep their files.
         self.assertEqual((self.assets / 'a.dcx').read_bytes(), b'original')
         self.assertEqual((a / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
 
@@ -156,7 +155,7 @@ class ModTests(unittest.TestCase):
             folder.mkdir(parents=True)
             (folder / 'a.dcx').write_bytes(name.encode())
         (self.moddir / 'Archive/readme.txt').write_text('notes')
-        (self.moddir / 'Us/screenshots').mkdir()  # beside the serial folder: not one wrapper
+        (self.moddir / 'Us/screenshots').mkdir()
         (self.moddir / 'Junk/stuff').mkdir(parents=True)
         self.assertEqual(mods.discover(self.moddir), ['Archive', 'Bare', 'Nested', 'Title', 'Us'])
         for name in layouts:

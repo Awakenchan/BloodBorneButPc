@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "xml.h"
 
 #include <expat.h>
@@ -46,7 +46,7 @@ void XMLCALL OnText(void* data, const XML_Char* text, int length) {
     auto* b = static_cast<Builder*>(data);
     if (!b->stack.empty()) b->stack.back()->text.append(text, std::size_t(length));
 }
-} // namespace
+}
 
 std::unique_ptr<XmlElement> ParseXml(const fs::path& path) {
     const Bytes data = ReadFile(path);
@@ -66,4 +66,4 @@ std::unique_ptr<XmlElement> ParseXml(const fs::path& path) {
     return std::move(builder.root);
 }
 
-} // namespace start
+}

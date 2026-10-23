@@ -1,4 +1,3 @@
-/* Explicit guest timeval layout; host pointers never escape this boundary. */
 #define _DEFAULT_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -19,7 +18,6 @@ static ABI int guest_gettimeofday(GuestTimeval *value,GuestTimezone *zone) {
     struct timeval t;
     struct timezone z;
     if (gettimeofday(&t,&z)) {
-        /* Guest errno/TLS failure path is not implemented yet. */
         perror("STOP: host gettimeofday failed"); exit(21);
     }
     if (value) { value->seconds=t.tv_sec; value->microseconds=t.tv_usec; }

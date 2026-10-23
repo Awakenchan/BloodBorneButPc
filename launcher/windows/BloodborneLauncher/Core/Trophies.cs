@@ -19,7 +19,7 @@ namespace BloodborneLauncher.Core
     /// <summary>
     /// Bloodborne's 40 trophies (the PS4 ids of CUSA03173) and the unlocks the game made.
     ///
-    /// A runtime with trophy support (github.com/pyL1nx/bloodborne_pc) handles
+    /// A runtime with trophy support handles
     /// sceNpTrophyUnlockTrophy by appending "id unix-time" to &lt;saves&gt;\trophies.log and printing
     /// "Runtime: trophy &lt;id&gt; unlocked". The tracker reads both (the output line also from
     /// last_run.log, for games started without the launcher) and records what it finds in the same

@@ -1,10 +1,3 @@
-/* Guest threads on host threads. Each guest thread owns a FreeBSD-style TCB
- * (variant II: static TLS below the TCB). The loader rewrites the eboot's
- * `mov rax, fs:[0]` into `mov rax, gs:[0]`, so GS base = guest TCB while glibc
- * keeps FS. On Windows GS is the TEB: the loader points the instruction at a TEB
- * TLS slot that holds the guest TCB instead.
- * Priorities/affinity are recorded, not enforced by a PS4 scheduler; only the audio range of
- * priorities raises the host thread's priority (apply_priority). */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -15,7 +8,6 @@
 #include <unistd.h>
 #ifdef _WIN32
 #include <malloc.h>
-/* pthread_exit unwinds guest frames that have no unwind data: see RUNTIME_RECOVER_SET. */
 #define EXIT_SET(buf) RUNTIME_RECOVER_SET(buf)
 #define EXIT_JUMP(buf) RUNTIME_RECOVER_JUMP(buf)
 #else
@@ -40,7 +32,6 @@ typedef struct ThreadAttr {
     struct ThreadAttr *next;
 } ThreadAttr;
 typedef struct GuestThread {
-    /* Guest-visible TCB is allocated separately; this is the ScePthread handle. */
     uint64_t *tcb;
     unsigned char *tls_block;
     HostThread host;
@@ -65,7 +56,6 @@ static _Thread_local int32_t guest_errno;
 static const unsigned char *tls_template;
 static uint64_t tls_filesz, tls_memsz, tls_align=16;
 static size_t created, joined_count, exited;
-/* bbport: list entries walked by find_thread (the 60 s "Load:" line). */
 static uint64_t thread_lookups, thread_lookup_steps;
 
 void runtime_set_main_tls(const void *data,uint64_t filesz,uint64_t memsz,uint64_t align) {
@@ -79,13 +69,6 @@ static void set_gs(void *base) {
     if (syscall(SYS_arch_prctl,ARCH_SET_GS,(unsigned long)base)) { perror("STOP: arch_prctl(ARCH_SET_GS)"); exit(21); }
 #endif
 }
-/* Thread records and TLS blocks live in low memory, below 1 TiB like the stacks (64-byte
- * aligned pieces of 64 KiB chunks; never freed, as before). A record's address is the guest's
- * thread handle (scePthreadSelf, pthread_self), and the game packs it into 40 bits: its own
- * locks keep the owner in the low 40 bits of a word and compare that with the full handle, as
- * PS4 handles fit. A host heap pointer above 1 TiB (the heap grows there after a while) made the
- * owner never recognise itself: it slept on its own lock's semaphore, and main and the loader
- * threads with it (area loads freezing, more often the longer a session ran). */
 static HostMutex low_lock=HOST_MUTEX_INIT;
 static void *low_alloc(size_t size) {
     static unsigned char *chunk;
@@ -111,7 +94,6 @@ static void *low_alloc(size_t size) {
     if (p) memset(p,0,size);
     return p;
 }
-/* Build TCB/static TLS for the calling host thread and point GS at it. */
 static void attach(GuestThread *t) {
     uint64_t offset=tls_offset();
     size_t total=offset+256;
@@ -121,9 +103,9 @@ static void attach(GuestThread *t) {
     if (tls_filesz) memcpy(block,tls_template,tls_filesz);
     uint64_t *tcb=(uint64_t *)(block+offset);
     static uint64_t dtv[3];
-    tcb[0]=(uint64_t)(uintptr_t)tcb;         /* tcb_self */
-    tcb[1]=(uint64_t)(uintptr_t)dtv;         /* tcb_dtv (static module only) */
-    tcb[2]=(uint64_t)(uintptr_t)t;           /* tcb_thread */
+    tcb[0]=(uint64_t)(uintptr_t)tcb;
+    tcb[1]=(uint64_t)(uintptr_t)dtv;
+    tcb[2]=(uint64_t)(uintptr_t)t;
     t->tls_block=block; t->tcb=tcb;
     set_gs(tcb);
     current=t;
@@ -137,8 +119,6 @@ static GuestThread *new_thread(void) {
 static void publish(GuestThread *t) {
     host_lock(&lock); t->next=threads; threads=t; host_unlock(&lock);
 }
-/* Host threads that call into guest code without being created by the guest
- * (the main thread, test threads) get a record on first use. */
 GuestThread *runtime_thread_current(void) {
     if (current) return current;
     GuestThread *t=new_thread();
@@ -151,8 +131,6 @@ GuestThread *runtime_thread_current(void) {
     attach(t); publish(t);
     return t;
 }
-/* Host threads that call guest code (HLE decoders invoking guest callbacks) need
- * a TCB/TLS like guest threads; the record lives until process exit. */
 void runtime_thread_attach_host(const char *name) {
     GuestThread *t=runtime_thread_current();
     snprintf(t->name,sizeof(t->name),"%s",name ? name : "host");
@@ -161,14 +139,8 @@ void runtime_thread_attach_main(void) {
     GuestThread *t=runtime_thread_current();
     snprintf(t->name,sizeof(t->name),"main");
 }
-/* No record is created here: the fault handler asks (probe.c). */
 int runtime_thread_has_record(void) { return current!=NULL; }
-/* bbport: the game's resource loader threads (Core.Res.FileLoader, CacheableFileLoader,
- * TaskManager, PostProcessor_N): their file reads are the streaming the player sees. */
 int runtime_thread_is_loader(void) { return current && !strncmp(current->name,"Core.Res.",9); }
-/* bbport: records are never removed (a dozen threads come with every area load), so a found
- * thread moves to the front: the threads the game asks about (priorities, affinity) are not
- * behind every finished one. BB_THREAD_FRONT=0: the list keeps its order, as before. */
 static GuestThread *find_thread(void *handle) {
     static int front=-1;
     if (front<0) { const char *e=getenv("BB_THREAD_FRONT"); front=!(e && e[0]=='0'); }
@@ -283,7 +255,6 @@ static ABI int32_t attr_set_guard(ThreadAttr **slot,uint64_t size) {
     a->guard=size; return 0;
 }
 
-/* Linux thread names hold 15 characters; longer ones would be rejected. */
 static void set_host_name(const char *name) {
     char host[16]={0};
     memcpy(host,name,strnlen(name,sizeof(host)-1));
@@ -293,11 +264,6 @@ static void set_host_name(const char *name) {
     pthread_setname_np(pthread_self(),host);
 #endif
 }
-/* bbport: PS4 priorities run from 256 (highest) to 767. Bloodborne starts FMOD's output, mixer,
- * stream and file threads at 256-265 and every other thread at 700. At the host priority of the
- * ~60 game threads (and below the render threads with BB_GPU_THREAD_PRIORITY), a busy CPU ran
- * FMOD's mixer late: late and stuttering sound on CPUs with slower cores. That range runs above
- * them; it is mostly asleep. BB_AUDIO_THREAD_PRIORITY=0: all at normal priority, as before. */
 #define HIGH_PRIO_LAST 300
 static void apply_priority(int prio) {
     static int enabled=-1;
@@ -330,16 +296,12 @@ static int32_t create(GuestThread **out,ThreadAttr **attr_slot,GuestEntry entry,
     uint64_t stack=t->attr.stack<MIN_STACK ? MIN_STACK : t->attr.stack;
     size_t stack_bytes=(size_t)stack+STACK_MARGIN;
     publish(t);
-    /* Publish the handle before the thread can run and inspect itself. */
     *out=t;
 #ifdef _WIN32
-    /* The stack is committed at creation (guest code does not probe guard pages), and the
-     * loader's bottom-up layout keeps it below 1 TiB as on PS4. */
     int e=host_thread_start(&t->host,stack_bytes,host_start,t);
 #else
     pthread_attr_t host;
     pthread_attr_init(&host);
-    /* Stacks below 1 TiB as on PS4; guest code may pack stack addresses. */
     void *stack_memory=runtime_low_map(stack_bytes,PROT_READ|PROT_WRITE);
     if (stack_memory) pthread_attr_setstack(&host,stack_memory,stack_bytes);
     else pthread_attr_setstacksize(&host,stack_bytes);
@@ -377,7 +339,6 @@ static ABI __attribute__((noreturn)) void thread_exit(void *value) {
     GuestThread *t=runtime_thread_current();
     if (t->host_owned) { fputs("STOP: pthread_exit on host-owned/main thread\n",stderr); exit(21); }
     t->result=value;
-    /* No host unwinder: guest frames have no registered FDEs. */
     EXIT_JUMP(t->exit_jump);
 }
 static ABI int32_t thread_yield(void) { host_yield(); return 0; }
@@ -388,7 +349,6 @@ static ABI int32_t thread_get_prio(GuestThread *t,int *prio) {
 }
 static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
     if (!find_thread(t)) return ERR(3);
-    /* Only the calling thread's own host priority can change here (others' handles may be gone). */
     if (t==current && (prio<=HIGH_PRIO_LAST)!=(t->attr.prio<=HIGH_PRIO_LAST)) apply_priority(prio);
     t->attr.prio=prio; return 0;
 }
@@ -410,7 +370,6 @@ static ABI int32_t thread_rename(GuestThread *t,const char *name) {
 }
 static ABI int32_t thread_equal(GuestThread *a,GuestThread *b) { return a==b; }
 
-/* POSIX (libScePosix) variants return positive errno values. */
 static int32_t posix(int32_t r) { return r ? (int32_t)((uint32_t)r&0xffff) : 0; }
 static ABI int32_t posix_attr_init(ThreadAttr **a) { return posix(attr_init(a)); }
 static ABI int32_t posix_attr_destroy(ThreadAttr **a) { return posix(attr_destroy(a)); }
@@ -421,7 +380,6 @@ static ABI int32_t posix_create(GuestThread **t,ThreadAttr **a,GuestEntry e,void
 static ABI int32_t posix_create_name(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg,const char *name) { return posix(create(t,a,e,arg,name)); }
 static ABI int32_t posix_join(GuestThread *t,void **r) { return posix(thread_join(t,r)); }
 
-/* Online libraries invoke game callbacks on threads with the runtime's guest TLS. */
 int32_t runtime_thread_spawn(void **out,void *(ABI *entry)(void *),void *argument,uint64_t stack,const char *name) {
     ThreadAttr *attr=NULL;
     int32_t result=attr_init(&attr);
@@ -433,7 +391,6 @@ int32_t runtime_thread_spawn(void **out,void *(ABI *entry)(void *),void *argumen
 int32_t runtime_thread_join_spawned(void *thread,void **result) {
     return posix(thread_join(thread,result));
 }
-/* pthread_exit for host code on a guest thread (the network library's sceNet threads). */
 __attribute__((noreturn)) void runtime_thread_exit(void *value) { thread_exit(value); }
 
 uintptr_t runtime_thread_resolve(const char *name) {
@@ -462,7 +419,6 @@ uintptr_t runtime_thread_resolve(const char *name) {
         if (!strcmp(name,table[i].nid)) return (uintptr_t)table[i].fn;
     return 0;
 }
-/* bbport: guest threads created and finished so far, and lookups and the entries they walked. */
 void runtime_thread_census(uint64_t *made, uint64_t *finished, uint64_t *found, uint64_t *steps) {
     host_lock(&lock);
     *made=created; *finished=exited; *found=thread_lookups; *steps=thread_lookup_steps;

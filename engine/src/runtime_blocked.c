@@ -1,7 +1,3 @@
-/* What each blocked guest thread waits for (a mutex and its owner, a semaphore and its count, a
- * condition variable), for the freeze report (gpu/shim/bbport_freeze.cpp): a game that stops
- * with every thread waiting is named by the log alone. A slot is held only while its thread
- * blocks, so threads that come and go (a dozen at every area load) never use the table up. */
 #include "runtime.h"
 #include <stdio.h>
 #ifdef _WIN32

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // bbport: HDR output. The game's SDR picture (letterboxed into a swapchain-sized sRGB-encoded
 // image) and the settings menu's layer (premultiplied alpha, sRGB encoded) become the HDR
 // swapchain's signal: HDR10 (BT.2020 primaries, PQ) or scRGB (linear BT.709, 1.0 = 80 nits).

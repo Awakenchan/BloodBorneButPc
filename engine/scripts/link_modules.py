@@ -21,11 +21,11 @@ from prepare import parse_self, span, unpack
 from link_libc import encode_id
 
 DEFAULT_MODULES = ('libc.prx', 'libSceFios2.prx')
-FS_LOAD = bytes.fromhex('64488b042500000000')  # mov rax, fs:[0]
+FS_LOAD = bytes.fromhex('64488b042500000000')
 RED_ZONE_SITES = Path(__file__).resolve().parent.parent / 'patches' / 'redzone.json'
 RED_ZONE_FUNCTIONS = Path(__file__).resolve().parent.parent / 'patches' / 'redzone_functions.json'
-LEA_DOWN = bytes.fromhex('488d642480')        # lea rsp, [rsp-0x80]
-LEA_UP = bytes.fromhex('488da42480000000')    # lea rsp, [rsp+0x80]
+LEA_DOWN = bytes.fromhex('488d642480')
+LEA_UP = bytes.fromhex('488da42480000000')
 
 
 def module(path):
@@ -59,7 +59,7 @@ def module(path):
     def identity(name):
         parts = name.split('#')
         if len(parts) != 3:
-            return None  # plain names such as module_start are not linkable
+            return None
         n, lib, mod = parts
         return (n, libraries[lib], modules[mod])
     symbols = []
@@ -150,8 +150,8 @@ def rewrite_red_zone_functions(image, functions, base, skip=()):
             continue
         here = base + len(code)
         body = bytearray()
-        at = {}      # old offset in the function -> offset in body
-        jumps = []   # (position of the rel32 in body, old target offset)
+        at = {}
+        jumps = []
         pos = 0
         for item in f['insns']:
             n, kind = item[0], item[1] if len(item) > 1 else 0
@@ -159,7 +159,7 @@ def rewrite_red_zone_functions(image, functions, base, skip=()):
             at[pos] = len(body)
             if kind == 0:
                 body += insn
-            elif kind == 1:  # [rsp+d] -> [rsp+d+0x80]
+            elif kind == 1:
                 modrm, disp, width = item[2], item[3], item[4]
                 old = 0 if width == 0 else struct.unpack_from('<b' if width == 1 else '<i', insn, disp)[0]
                 new = old + 0x80
@@ -167,23 +167,23 @@ def rewrite_red_zone_functions(image, functions, base, skip=()):
                     insn[disp] = new & 0xff
                 elif width == 4:
                     struct.pack_into('<i', insn, disp, new)
-                else:  # mod 00/01 -> 10: disp32 in place of the disp8 (or after the SIB)
+                else:
                     insn[modrm] = (insn[modrm] & 0x3f) | 0x80
                     insn[disp:disp + width] = struct.pack('<i', new)
                 body += insn
-            elif kind == 2:  # rip-relative: same target from the copy
+            elif kind == 2:
                 disp = item[2]
                 target = start + pos + n + struct.unpack_from('<i', insn, disp)[0]
                 struct.pack_into('<i', insn, disp, target - (here + len(body) + n))
                 body += insn
-            elif kind == 3:  # jump inside the function, as rel32
+            elif kind == 3:
                 cc, target = item[2], item[3]
                 body += b'\xe9' if cc == 16 else bytes((0x0f, 0x80 + cc))
                 jumps.append((len(body), target))
                 body += bytes(4)
-            elif kind == 4:  # prologue sub rsp, then the frame 0x80 lower
+            elif kind == 4:
                 body += insn + LEA_DOWN
-            elif kind == 5:  # epilogue: back up, then add rsp
+            elif kind == 5:
                 body += LEA_UP + insn
             else:
                 raise ValueError(f'unknown recipe kind {kind}')
@@ -224,8 +224,6 @@ def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
         key = symbol['identity']
         if key not in identities:
             n, lib, mod = key
-            # Main-program spelling when the identity matches (existing host
-            # tables use it); otherwise NID#library for new libraries.
             name = (f'{n}#{main_libraries[lib]}#{main_modules[mod]}'
                     if lib in main_libraries and mod in main_modules else f'{n}#{lib[0]}')
             identities[key] = len(names)
@@ -280,7 +278,7 @@ def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
                     else:
                         relocs.append((target, 0, base + symbol['value'] + addend, 0))
                 elif not symbol['identity'] and symbol['binding'] == 2:
-                    struct.pack_into('<Q', image, target, 0)  # weak undefined (module_start/stop)
+                    struct.pack_into('<Q', image, target, 0)
                 else:
                     rk = 2 if symbol['type'] == 1 else 1
                     if (rk == 1 and addend) or not 0 <= addend < 4096:

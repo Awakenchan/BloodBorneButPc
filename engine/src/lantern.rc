@@ -1,0 +1,22 @@
+// The engine's executables (bb-probe, bb-start) as Windows shows them: firewall prompts, Task
+// Manager, file properties. The lantern is the launcher's icon.
+1 ICON "lantern.ico"
+
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "Lantern Engine"
+      VALUE "ProductName", "Lantern Engine"
+      VALUE "CompanyName", "Lantern Engine"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

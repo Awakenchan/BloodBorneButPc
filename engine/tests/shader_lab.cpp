@@ -1,34 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: the shader lab. Compiles shader captures (BB_SHADER_CAPTURE=1, shader_recompiler/native/
-// capture.h) offline, without the game or a GPU, and reports what each compile holds that is not
-// native GPU code yet: goto variables left by the structurizer, EXEC read or written as data,
-// ballots and lane operations, and bit casts. Later, the native compiler next to the current one.
-//
-//   bb-shader-lab <capture folder> [report.csv] [--native] [--spv-dir DIR]
-//                                                 every capture, each in a child process
-//   bb-shader-lab --one <file.bbs> [--native] [--spv-dir DIR]
-//                                                 one capture, a CSV line on stdout
-//   bb-shader-lab --export-catalog <cache folder> <catalog folder>
-//                                                 a cache as a shader catalog: specializations,
-//                                                 pipeline keys and draw states, without code
-//   bb-shader-lab --seed-cache <catalog folder> <cache folder> <game folder> <eboot.elf>
-//                                                 a catalog into a player's cache, the shader code
-//                                                 from their own game files, then recompiled
-//   bb-shader-lab --recompile-cache <cache folder>
-//                                                 the cache recompiled with this compiler from
-//                                                 its shader states (bb-start, after an update)
-//   bb-shader-lab --walk-null <file.bbs>
-//                                                 the capture's resource table walker run with
-//                                                 null table pointers, then with tables of zeros:
-//                                                 zeros out and no fault (a fault ends the process)
-//   bb-shader-lab --census <capture folder> [report.csv]
-//   bb-shader-lab --tables <capture folder> [report.csv]
-//                                                 the native compiler's checks (see RunNative)
-//   bb-shader-lab --bench <cache folder> [rounds] [report.csv] [--spv-dir DIR]
-//                                                 the cache's states compiled in one process: time
-//                                                 per phase, IR and SPIR-V size (see Bench)
-// --native: the native compiler's options on (Profile::uniform_constant_buffers, dword layout).
-// --spv-dir: each compile's SPIR-V written there (<capture>.spv) for spirv-val.
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -77,8 +47,6 @@
 namespace fs = std::filesystem;
 using namespace Shader;
 
-// The pipeline serialization the cache recompile uses links in more of the GPU library than the
-// shared test stubs (tests/test_gpu_runtime_stubs.cpp) cover; the lab never reaches these.
 extern "C" {
 void runtime_blocked_report(void) {}
 [[noreturn]] void runtime_thread_exit(void*) { std::abort(); }
@@ -164,7 +132,6 @@ Census Count(const IR::Program& program) {
     return c;
 }
 
-/// Where a version 5 state's copy shader trailer starts (the size when it has none).
 template <class Bytes>
 size_t CopyTrailerAt(const Bytes& b) {
     if (b.size() < 8) return b.size();
@@ -175,7 +142,6 @@ size_t CopyTrailerAt(const Bytes& b) {
     return b.size() - 8 - size_t(count) * 4;
 }
 
-/// Dwords below 2^44 (a V#'s address range), reused by the next capture: the heap is above it.
 u32* LowWords(size_t count) {
     static u32* block = nullptr;
     static size_t capacity = 0;
@@ -193,15 +159,12 @@ u32* LowWords(size_t count) {
     return block;
 }
 
-/// A capture file read back for a compile: its buffers stay here, the user data's fetch shader and
-/// V# table pointers aimed at them, and Info::lab_flat at the captured flattened user data.
 struct LoadedCapture {
     Native::CaptureHeader header{};
-    // RuntimeInfo has no default constructor (its unions): the captured bytes are the object.
     alignas(RuntimeInfo) unsigned char runtime_storage[sizeof(RuntimeInfo)]{};
     std::array<u32, ShaderParams::NumShaderUserData> user_data{};
     std::vector<u32> code, fetch, flat, copy;
-    u32* tess = nullptr; ///< in low memory: a V#'s address has 44 bits
+    u32* tess = nullptr;
     std::map<u32, std::vector<u32>> tables;
 
     RuntimeInfo& Runtime() {
@@ -211,7 +174,6 @@ struct LoadedCapture {
         return ShaderParams{.user_data = user_data, .code = code, .hash = header.hash};
     }
 
-    /// Null on success, else why the file is unusable.
     const char* Load(const fs::path& file) {
         const auto bytes = ReadAll(file);
         auto& h = header;
@@ -236,8 +198,6 @@ struct LoadedCapture {
         std::vector<u32> ud(h.user_data_count);
         code.resize(h.code_dwords);
         fetch.resize(h.fetch_dwords);
-        // The flattened user data the resource table walker read in the game: the compile reads
-        // sharps from it, and the walker would read the game's memory, which is not here.
         flat.resize(h.flat_dwords);
         if (!take(runtime_storage, sizeof(RuntimeInfo)) || !take(ud.data(), ud.size() * 4) ||
             !take(code.data(), code.size() * 4) || !take(fetch.data(), fetch.size() * 4) ||
@@ -245,8 +205,6 @@ struct LoadedCapture {
             return "capture cut short";
         }
         std::memcpy(user_data.data(), ud.data(), std::min(ud.size(), user_data.size()) * 4);
-        // The vertex attributes' V#s, read through table pointers in the user data: each table
-        // is rebuilt here with the captured V#s at their offsets, and its pointer aimed at it.
         u32 sharp_count = 0;
         if (h.version >= 3 && !take(&sharp_count, 4)) {
             return "capture cut short";
@@ -262,13 +220,11 @@ struct LoadedCapture {
             }
             std::memcpy(&table[sharp.dword_offset], sharp.words, sizeof(sharp.words));
         }
-        // Version 4: the tessellation constants, their V#'s address aimed at the copy here.
         Native::CaptureTess tess_info{};
         if (h.version >= 4) {
             if (!take(&tess_info, sizeof(tess_info))) {
                 return "capture cut short";
             }
-            // bbport: a state without tessellation constants (size 0) needs no low memory.
             tess = tess_info.size ? LowWords((tess_info.size + 3) / 4) : nullptr;
             if (tess_info.size && !tess) {
                 return "no low memory for the tessellation constants";
@@ -305,11 +261,9 @@ struct LoadedCapture {
             }
         }
         if (!fetch.empty() && h.fetch_sgpr + 1 < user_data.size()) {
-            // The fetch shader is read through its address in the user data: aim it at the copy.
             const u32* address = fetch.data();
             std::memcpy(&user_data[h.fetch_sgpr], &address, sizeof(address));
         }
-        // Version 5: a geometry shader's copy shader, at the end of the file.
         if (const auto at = CopyTrailerAt(bytes); at != bytes.size()) {
             u32 count = 0;
             std::memcpy(&count, bytes.data() + bytes.size() - 8, 4);
@@ -328,10 +282,6 @@ struct LoadedCapture {
     }
 };
 
-/// --walk-null: the walker of one capture, with every table pointer in the user data null, then
-/// aimed at a block of zeros (so the tables below are null). Both must fill the flattened values
-/// with zeros without a fault: the PS4's GPU reads zeros at a null address, and a fault here was a
-/// Windows exception per read in the game.
 int WalkNull(const fs::path& file) {
     const auto profile_bytes = ReadAll(file.parent_path() / "profile.bin");
     Profile profile{};
@@ -364,14 +314,12 @@ int WalkNull(const fs::path& file) {
         }
         return true;
     };
-    // Null tables.
     std::fill(flat.begin(), flat.end(), 0xCDCDCDCDu);
     walker(user_data.data(), flat.data());
     if (!zeros()) {
         std::printf("%s: FAIL null tables: not all zeros\n", file.filename().string().c_str());
         return 1;
     }
-    // Tables of zeros: every pointer pair in the user data aimed at 1 MiB of zeros.
     static std::vector<u32> block(1u << 18);
     const u64 address = reinterpret_cast<u64>(block.data());
     for (u32 i = 0; i + 1 < user_data.size(); i += 2) {
@@ -389,8 +337,6 @@ int WalkNull(const fs::path& file) {
     return 0;
 }
 
-/// BB_LAB_PROFILE="field=0,field=1": profile switches changed for an experiment (--bench, --one
-/// and the folder run). False when a field is unknown.
 bool ApplyLabProfile(Profile& profile) {
     const char* set = std::getenv("BB_LAB_PROFILE");
     if (!set) {
@@ -426,8 +372,6 @@ bool ApplyLabProfile(Profile& profile) {
 const char* kHeader = "file,stage,hash,gcn_dwords,status,ir_insts,spirv_words,goto_vars,exec_reads,"
                       "exec_writes,ballots,lane_ops,bitcasts,discards,ifs,loops,breaks";
 
-/// One capture: compile it with the current recompiler, print a CSV line. Assertions end the
-/// process (the parent reports it).
 int RunOne(const fs::path& file, const fs::path& profile_file) {
     const auto profile_bytes = ReadAll(profile_file);
     Profile profile{};
@@ -435,11 +379,9 @@ int RunOne(const fs::path& file, const fs::path& profile_file) {
         std::printf("%s,,,,no profile.bin\n", file.filename().string().c_str());
         return 2;
     }
-    // A profile captured by an engine with fewer fields: the rest stay off.
     std::memcpy(&profile, profile_bytes.data() + 4,
                 std::min<size_t>(profile_bytes.size() - 4, sizeof(Profile)));
     profile.uniform_constant_buffers = g_native;
-    // bbport: the engine's default native layout (dwords, offsets in the push data).
     profile.uniform_dword_layout = g_native;
     profile.uniform_exact_base = false;
     if (!ApplyLabProfile(profile)) {
@@ -469,7 +411,6 @@ int RunOne(const fs::path& file, const fs::path& profile_file) {
                 file.filename().string().c_str(), h.hw_stage, (unsigned long long)h.hash,
                 code.size(), c.insts, spv.size(), c.goto_vars, c.exec_reads, c.exec_writes,
                 c.ballots, c.lane_ops, c.bitcasts, c.discards, c.ifs, c.loops, c.breaks);
-    // Every IR operation of the final program, for the run's histogram (ops.csv).
     std::map<std::string, u32> ops;
     for (const IR::Block* block : program.blocks) {
         for (const IR::Inst& inst : block->Instructions()) {
@@ -485,7 +426,6 @@ int RunOne(const fs::path& file, const fs::path& profile_file) {
 }
 
 #ifndef _WIN32
-/// `text` as one word for /bin/sh.
 std::string ShellQuote(const std::string& text) {
     std::string quoted = "'";
     for (const char c : text) {
@@ -494,8 +434,6 @@ std::string ShellQuote(const std::string& text) {
     return quoted + "'";
 }
 
-/// Runs this program with `args` (already quoted for /bin/sh) and returns its whole stdout and
-/// exit code (-1: it did not exit by itself, e.g. the compiler crashed it).
 std::string RunSelf(const fs::path& self, const std::string& args, int& exit_code) {
     std::string out;
     exit_code = -1;
@@ -513,7 +451,6 @@ std::string RunSelf(const fs::path& self, const std::string& args, int& exit_cod
 #endif
 
 #ifdef _WIN32
-/// Runs this program with `args` and returns its whole stdout and exit code.
 std::string RunSelf(const fs::path& self, const std::wstring& args, DWORD& exit_code) {
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
     HANDLE read = nullptr, write = nullptr;
@@ -549,7 +486,6 @@ std::string RunSelf(const fs::path& self, const std::wstring& args, DWORD& exit_
     return out;
 }
 
-/// Runs `--one file` in a child process and returns its stdout (empty when it crashed).
 std::string RunChild(const fs::path& self, const fs::path& file, DWORD& exit_code, std::string& ops) {
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
     HANDLE read = nullptr, write = nullptr;
@@ -588,7 +524,6 @@ std::string RunChild(const fs::path& self, const fs::path& file, DWORD& exit_cod
         CloseHandle(write);
     }
     CloseHandle(read);
-    // Only the CSV line: the recompiler's own log lines go to stdout too.
     std::string csv;
     size_t at = 0;
     while (at < out.size()) {
@@ -625,7 +560,7 @@ int RunAll(const fs::path& self, const fs::path& dir, const fs::path& report) {
     Census total;
     u32 with_goto = 0, with_exec = 0, with_ballot = 0, with_lane = 0;
     std::map<u32, u32> stages;
-    std::map<std::string, std::map<u32, u64>> histogram; ///< IR operation -> hardware stage -> count
+    std::map<std::string, std::map<u32, u64>> histogram;
     for (size_t i = 0; i < files.size(); ++i) {
 #ifdef _WIN32
         DWORD code = 0;
@@ -642,7 +577,6 @@ int RunAll(const fs::path& self, const fs::path& dir, const fs::path& report) {
         }
         csv << row << '\n';
         ++ok;
-        // stage, hash, dwords, status, insts, spirv, goto, exec_r, exec_w, ballots, lane, bitcasts
         u32 v[17] = {};
         unsigned long long hash = 0;
         char status[16] = {};
@@ -680,7 +614,6 @@ int RunAll(const fs::path& self, const fs::path& dir, const fs::path& report) {
         }
     }
     {
-        // ops.csv beside the report: every IR operation, by hardware stage.
         std::ofstream out(fs::path(report).replace_filename(report.stem().string() + "-ops.csv"));
         out << "op,total,fragment,vertex,compute,other\n";
         for (const auto& [name, per_stage] : histogram) {
@@ -714,17 +647,8 @@ int RunAll(const fs::path& self, const fs::path& dir, const fs::path& report) {
     return 0;
 }
 
-// --- The cache recompile (bb-start runs it when the shader compiler changed) ---------------------
-// The cache folder holds per permutation "<pgm>_<perm>.spv" (SPIR-V), "<perm_hash>.meta" (its
-// specialization and Info) and, since 0.9.34, "<pgm>_<perm>.bbs" (its compile inputs, the shader
-// state). Each permutation with a state is compiled again; it is kept when this compiler's
-// specialization equals the stored one (the pipeline keys name permutations by it), and left out
-// otherwise. The pipeline keys stay: the engine's warm-up builds every pipeline whose shaders are
-// there before the game starts, instead of each one compiling in play.
-
 std::vector<std::string> SpvNames(const fs::path& dir);
 
-/// The permutations to compile: those listed in `only` (one name a line) when given, else all.
 std::vector<std::string> BatchNames(const fs::path& dir, const fs::path& only) {
     if (only.empty()) {
         return SpvNames(dir);
@@ -740,7 +664,6 @@ std::vector<std::string> BatchNames(const fs::path& dir, const fs::path& only) {
 }
 
 std::vector<std::string> SpvNames(const fs::path& dir) {
-    // The permutations with SPIR-V, and those with only a state (seeded from a catalog).
     std::set<std::string> names;
     std::error_code error;
     for (const auto& entry : fs::directory_iterator(dir, error)) {
@@ -773,9 +696,6 @@ fs::path MetaPath(const fs::path& dir, u64 pgm, size_t perm) {
     return dir / name;
 }
 
-/// The permutations (HashCombine(pgm, perm), 0 for none) a pipeline key's stages name: the
-/// record's version and kind, then the key, whose first field is the stage hashes (one for
-/// compute).
 std::vector<u64> KeyStageHashes(const std::vector<char>& key) {
     u32 version = 0, is_compute = 0;
     if (key.size() < 8) return {};
@@ -788,10 +708,6 @@ std::vector<u64> KeyStageHashes(const std::vector<char>& key) {
     return hashes;
 }
 
-/// bbport (docs/pipeline_compiles.md): pipeline keys whose stages lost their specialization (left
-/// out by a recompile, or by an earlier engine) are removed. They could not be built at the start
-/// anyway, and a later permutation of the same program takes the free number again: the key would
-/// then join that permutation to the old one's vertex inputs.
 u32 RemoveOrphanKeys(const fs::path& dir) {
     u32 removed = 0;
     std::error_code error;
@@ -814,19 +730,15 @@ u32 RemoveOrphanKeys(const fs::path& dir) {
 void Leave(const fs::path& dir, const std::string& name, u64 pgm, size_t perm) {
     std::error_code error;
     fs::remove(dir / (name + ".spv"), error);
-    // Its state too: the permutation compiles again in play and keeps a fresh one.
     fs::remove(dir / (name + Native::StateExtension), error);
     fs::remove(MetaPath(dir, pgm, perm), error);
 }
 
-/// Child: the permutations from `start` on, one line each ("@OK i", "@OUT i why"), then "@END".
-/// It only reports what to leave out: the parent removes those files once every batch is done, so
-/// each batch lists the same names in the same order.
 int RecompileBatch(const fs::path& dir, size_t start, const fs::path& only) {
     const auto profile_bytes = ReadAll(dir / "profile.bin");
     Profile profile{};
     if (profile_bytes.size() != sizeof(Profile)) {
-        std::printf("\n@PROFILE\n"); // a profile of another engine: the cache is started again
+        std::printf("\n@PROFILE\n");
         return 3;
     }
     std::memcpy(&profile, profile_bytes.data(), sizeof(Profile));
@@ -859,17 +771,13 @@ int RecompileBatch(const fs::path& dir, size_t start, const fs::path& only) {
             out("no state");
             continue;
         }
-        // Which permutation is being compiled, should the compiler end the process here.
         std::printf("\n@AT %zu %u %u\n", i, cap.header.hw_stage, cap.header.sw_stage);
         std::fflush(stdout);
-        // A catalog's state has no fetch shader code (the game generates it at run time): its
-        // layout comes from the specialization instead.
         Gcn::fetch_override = cap.fetch.empty() && cap.header.fetch_sgpr != ~0u && old_spec.fetch_shader_data
                                   ? &*old_spec.fetch_shader_data
                                   : nullptr;
         ShaderParams params = cap.Params();
         Info info(HwStage(cap.header.hw_stage), SwStage(cap.header.sw_stage), params);
-        // The RuntimeInfo before the compile, as the engine's CompileModule has it.
         RuntimeInfo runtime_info = cap.Runtime();
         const auto program = TranslateProgram(cap.code, pools, info, runtime_info, profile);
         Backend::Bindings bindings = old_spec.start;
@@ -877,7 +785,6 @@ int RecompileBatch(const fs::path& dir, size_t start, const fs::path& only) {
         const StageSpecialization new_spec(info, runtime_info, profile, old_spec.start);
         old_spec.info = &info;
         if (!(new_spec == old_spec)) {
-            // What differs, for the report (BB_LAB_VERBOSE=1 lists them).
             std::string why = "specialization changed:";
             if (!(new_spec.runtime_info == old_spec.runtime_info)) why += " runtime";
             if (new_spec.vs_attribs != old_spec.vs_attribs) why += " vs_attribs";
@@ -904,19 +811,8 @@ int RecompileBatch(const fs::path& dir, size_t start, const fs::path& only) {
     return 0;
 }
 
-// --- Keys of a stage compiled beside another fragment shader (bb-shader-lab --fix-keys <cache>) --
-// bbport (docs/pipeline_compiles.md, 0.9.37 beta 9): engines up to 0.9.37 beta 6 reused a module
-// compiled after one fragment shader beside another, whose bindings end elsewhere. The warm-up leaves
-// such keys out (LoadGraphicsPipeline: each stage's bindings start where the stages before it end),
-// so the pipeline compiled in play on every PC a catalog with them seeded (150 of the catalog's
-// 1085 keys). Here each such stage is compiled again from its state with the start the key's
-// earlier stages leave, or a permutation of its program that has that start is used, and the key
-// names it: the warm-up then builds it. A child process (RecompileCache): a stage the compiler
-// refuses ends only this.
-
 std::set<size_t> UsedPerms(const fs::path& cache, u64 pgm);
 
-/// One permutation's record (its .meta), as the warm-up reads it.
 struct StageRecord {
     u64 pgm = 0;
     size_t perm = 0;
@@ -934,7 +830,7 @@ int FixKeys(const fs::path& dir) {
     }
     std::memcpy(&profile, profile_bytes.data(), sizeof(Profile));
     std::error_code error;
-    std::map<u64, std::unique_ptr<StageRecord>> records; // by permutation hash; null: unreadable
+    std::map<u64, std::unique_ptr<StageRecord>> records;
     const auto record = [&](u64 hash) -> StageRecord* {
         auto& slot = records[hash];
         if (slot) return slot.get();
@@ -955,9 +851,7 @@ int FixKeys(const fs::path& dir) {
         slot = std::move(r);
         return slot.get();
     };
-    // `from` with its bindings starting at `start`: a permutation of its program that has that
-    // specialization, else one compiled now from `from`'s state. 0 when neither is possible.
-    std::map<std::tuple<u64, size_t, u32, u32>, u64> made; // (pgm, perm, unified, buffer) -> hash
+    std::map<std::tuple<u64, size_t, u32, u32>, u64> made;
     Pools pools;
     u32 compiled = 0;
     const auto with_start = [&](StageRecord& from, Backend::Bindings start) -> u64 {
@@ -967,8 +861,6 @@ int FixKeys(const fs::path& dir) {
         StageSpecialization wanted = from.spec;
         wanted.start = start;
         const auto used = UsedPerms(dir, from.pgm);
-        // The start compared as the warm-up does: the specialization's own comparison leaves it out
-        // for a stage without guest resources.
         for (const size_t perm : used) {
             StageRecord* other = record(HashCombine(from.pgm, u64(perm)));
             if (other && other->pgm == from.pgm && other->spec == wanted &&
@@ -991,7 +883,7 @@ int FixKeys(const fs::path& dir) {
         Backend::Bindings bindings = start;
         const auto spv = Backend::SPIRV::EmitSPIRV(profile, runtime_info, program, bindings);
         StageSpecialization spec(info, runtime_info, profile, start);
-        if (!(spec == wanted)) return made[made_key] = 0; // the state compiles otherwise now
+        if (!(spec == wanted)) return made[made_key] = 0;
         size_t perm = used.empty() ? 0 : *used.rbegin() + 1;
         if (perm >= 4096) return made[made_key] = 0;
         const u64 hash = HashCombine(from.pgm, u64(perm));
@@ -1053,11 +945,6 @@ int FixKeys(const fs::path& dir) {
             ++failed;
             continue;
         }
-        // The key again with the new stages, under the name the engine gives it (g_ and its hash);
-        // the pipeline's state after the key stays as it was. The file of that name is written over:
-        // the engine's own save of the same pipeline is the same key, and a seeded key keeps its
-        // catalog name while its stages are renumbered (SeedCache), so that name may hold a key
-        // with old stages.
         Serialization::Archive ar{std::vector<u8>(bytes.begin() + 8, bytes.end())};
         Vulkan::GraphicsPipelineKey key;
         if (!key.Deserialize(ar)) {
@@ -1068,7 +955,7 @@ int FixKeys(const fs::path& dir) {
         Serialization::Archive check;
         key.Serialize(check);
         if (check.TakeOff().size() + rest.size() + 8 != bytes.size()) {
-            ++failed; // the key does not read back as it was written: left as it is
+            ++failed;
             continue;
         }
         for (size_t stage = 0; stage < hashes.size() && stage < key.stage_hashes.size(); ++stage) {
@@ -1095,15 +982,13 @@ int FixKeys(const fs::path& dir) {
     return 0;
 }
 
-/// Parent: batches in child processes; a permutation that crashes the compiler is left out and
-/// the next batch starts after it.
 int RecompileCache(const fs::path& self, const fs::path& dir, const fs::path& only = {}) {
     const auto names = BatchNames(dir, only);
     size_t next = 0, kept = 0, left = 0, crashed = 0;
     std::vector<size_t> leave;
     const char* verbose_env = std::getenv("BB_LAB_VERBOSE");
     const bool verbose = verbose_env && verbose_env[0] == '1';
-    std::map<std::string, u32> reasons; // why permutations were left out, for BB_LAB_VERBOSE=1
+    std::map<std::string, u32> reasons;
     while (next < names.size()) {
 #ifdef _WIN32
         DWORD code = 0;
@@ -1152,7 +1037,6 @@ int RecompileCache(const fs::path& self, const fs::path& dir, const fs::path& on
         if (ended) {
             break;
         }
-        // The child stopped at the permutation after its last line: that one is left out.
         const size_t failed = last < 0 ? next : size_t(last) + 1;
         if (failed >= names.size()) {
             break;
@@ -1175,7 +1059,6 @@ int RecompileCache(const fs::path& self, const fs::path& dir, const fs::path& on
             std::printf("  %u: %s\n", n, why.c_str());
         }
     }
-    // Keys of a stage compiled beside another fragment shader, made buildable (FixKeys), in a child.
     unsigned fixed = 0, fix_compiled = 0, fix_failed = 0;
     {
 #ifdef _WIN32
@@ -1198,13 +1081,6 @@ int RecompileCache(const fs::path& self, const fs::path& dir, const fs::path& on
     return 0;
 }
 
-// --- What the engine's warm-up would build (bb-shader-lab --check-cache <cache folder>) ----------
-// The records of each pipeline key read as PipelineCache::WarmUp reads them, in its order, without
-// a GPU: the reason each key would be left out is counted, so a cache from a player's PC shows why
-// its pipelines compiled in play instead of at the start.
-
-// The descriptors a SPIR-V module declares in set 0: binding -> kind ('U' uniform buffer, 'S'
-// storage buffer, 'I' sampled image, 'W' storage image, 'P' sampler), arrays by their element.
 std::map<u32, char> SpirvBindings(const std::vector<char>& bytes) {
     std::map<u32, char> out;
     if (bytes.size() < 20 || bytes.size() % 4) return out;
@@ -1216,14 +1092,14 @@ std::map<u32, char> SpirvBindings(const std::vector<char>& bytes) {
         const u32 count = w[at] >> 16, op = w[at] & 0xffff;
         if (!count || at + count > w.size()) break;
         const u32* a = &w[at + 1];
-        if (op == 71 && count >= 4 && a[1] == 33) binding[a[0]] = a[2];       // OpDecorate Binding
-        else if (op == 71 && count >= 4 && a[1] == 34) set[a[0]] = a[2];      // DescriptorSet
-        else if (op == 59 && count >= 4) var_type[a[1]] = a[0];               // OpVariable
-        else if (op == 32 && count >= 4) { ptr_class[a[0]] = a[1]; ptr_type[a[0]] = a[2]; } // OpTypePointer
-        else if (op == 25 && count >= 9) type_kind[a[0]] = a[6] == 2 ? 'W' : 'I'; // OpTypeImage Sampled
-        else if (op == 26 && count >= 2) type_kind[a[0]] = 'P';                // OpTypeSampler
-        else if (op == 27 && count >= 3) type_kind[a[0]] = 'I';                // OpTypeSampledImage
-        else if ((op == 28 || op == 29) && count >= 3) elem[a[0]] = a[1];      // arrays
+        if (op == 71 && count >= 4 && a[1] == 33) binding[a[0]] = a[2];
+        else if (op == 71 && count >= 4 && a[1] == 34) set[a[0]] = a[2];
+        else if (op == 59 && count >= 4) var_type[a[1]] = a[0];
+        else if (op == 32 && count >= 4) { ptr_class[a[0]] = a[1]; ptr_type[a[0]] = a[2]; }
+        else if (op == 25 && count >= 9) type_kind[a[0]] = a[6] == 2 ? 'W' : 'I';
+        else if (op == 26 && count >= 2) type_kind[a[0]] = 'P';
+        else if (op == 27 && count >= 3) type_kind[a[0]] = 'I';
+        else if ((op == 28 || op == 29) && count >= 3) elem[a[0]] = a[1];
         at += count;
     }
     for (const auto& [var, b] : binding) {
@@ -1234,16 +1110,14 @@ std::map<u32, char> SpirvBindings(const std::vector<char>& bytes) {
         u32 pointee = ptr_type[vt->second];
         while (elem.count(pointee)) pointee = elem[pointee];
         char kind = '?';
-        if (cls == 2) kind = 'U';            // Uniform
-        else if (cls == 12) kind = 'S';      // StorageBuffer
-        else if (cls == 0 && type_kind.count(pointee)) kind = type_kind[pointee]; // UniformConstant
+        if (cls == 2) kind = 'U';
+        else if (cls == 12) kind = 'S';
+        else if (cls == 0 && type_kind.count(pointee)) kind = type_kind[pointee];
         out[b] = kind;
     }
     return out;
 }
 
-// The pipeline layout the engine builds from these stage infos (GraphicsPipeline::
-// BuildDescSetLayout): binding -> (kind, stage).
 std::map<u32, std::pair<char, u32>> LayoutBindings(const std::array<const Info*, 5>& stages) {
     std::map<u32, std::pair<char, u32>> out;
     u32 binding = 0;
@@ -1261,7 +1135,6 @@ std::map<u32, std::pair<char, u32>> LayoutBindings(const std::array<const Info*,
     return out;
 }
 
-// What a stage's module uses that the layout lacks, or has as another kind or for another stage.
 u32 LayoutMismatches(const std::map<u32, char>& used, const std::map<u32, std::pair<char, u32>>& layout,
                      u32 stage, std::string* first) {
     u32 bad = 0;
@@ -1288,13 +1161,10 @@ int CheckCache(const fs::path& dir) {
         if (entry.path().extension() == ".key") keys.push_back(entry.path());
     }
     std::sort(keys.begin(), keys.end());
-    // What the warm-up's program cache holds: per program, its loaded permutations' specializations.
     std::map<u64, std::unique_ptr<Info>> infos;
     std::map<std::pair<u64, size_t>, StageSpecialization> loaded;
     std::map<std::string, u32> reasons;
     u32 good = 0;
-    // Layout check: each pipeline's layout as the warm-up builds it (the program's first loaded
-    // Info for every permutation) and with each permutation's own Info, against its SPIR-V.
     std::map<std::pair<u64, size_t>, std::unique_ptr<Info>> own_infos;
     u32 warmup_bad = 0, own_bad = 0, checked = 0;
     std::map<std::string, u32> warmup_examples;
@@ -1309,7 +1179,7 @@ int CheckCache(const fs::path& dir) {
             std::memcpy(&version, key.data(), 4);
             std::memcpy(&is_compute, key.data() + 4, 4);
         }
-        if (!(version == 5 || version == 6) || is_compute > 1) { // PipelineKeyVersion 6, legacy 5
+        if (!(version == 5 || version == 6) || is_compute > 1) {
             ++reasons["key version " + std::to_string(version)];
             continue;
         }
@@ -1333,7 +1203,6 @@ int CheckCache(const fs::path& dir) {
             size_t perm = 0;
             try {
                 if (!Vulkan::LoadShaderMeta(ar, *info, fetch, spec, perm, hash)) {
-                    // Which of LoadShaderMeta's checks: read again step by step.
                     Serialization::Archive again{std::vector<u8>(meta.begin(), meta.end())};
                     Serialization::Reader reader{again};
                     u32 meta_version = 0, binary_version = 0;
@@ -1346,9 +1215,9 @@ int CheckCache(const fs::path& dir) {
                     Info info2;
                     StageSpecialization spec2{};
                     spec2.info = &info2;
-                    if (meta_version != 8) { // ShaderMetaVersion
+                    if (meta_version != 8) {
                         why = "shader record version " + std::to_string(meta_version);
-                    } else if (binary_version != 7 && // ShaderBinaryVersion, MotionShaderBinaryVersion
+                    } else if (binary_version != 7 &&
                                binary_version != 8) {
                         why = "shader binary version " + std::to_string(binary_version);
                     } else if (!spec2.Deserialize(again)) {
@@ -1391,8 +1260,6 @@ int CheckCache(const fs::path& dir) {
                 auto& own = own_infos[at];
                 if (!own) own = std::make_unique<Info>(*info);
                 own_stages[stage] = own.get();
-                // As the warm-up checks (LoadGraphicsPipeline): the stage's bindings start where
-                // the stages before it end, and none is bound per mip level.
                 bool mips = false;
                 for (const auto& image : info->images)
                     mips |= image.mip_fallback_mode == MipStorageFallbackMode::DynamicIndex;
@@ -1448,7 +1315,6 @@ int CheckCache(const fs::path& dir) {
                 if (w) {
                     ++warmup_bad;
                     if (warmup_examples.size() < 6) ++warmup_examples[path.filename().string() + ": " + first];
-                    // BB_LAB_VERBOSE=1: the layout and what each stage's module uses.
                     if (const char* v = std::getenv("BB_LAB_VERBOSE"); v && v[0] == '1' && warmup_bad <= 4) {
                         std::string text = path.filename().string() + "\n    layout:";
                         for (const auto& [b, ks] : warmup_layout)
@@ -1475,8 +1341,6 @@ int CheckCache(const fs::path& dir) {
     for (const auto& [why, n] : reasons) {
         std::printf("  %u: %s\n", n, why.c_str());
     }
-    // A pipeline whose layout lacks what its SPIR-V uses is invalid Vulkan: NVIDIA's driver builds
-    // it, AMD's ends the process (0.9.37 beta 6), and its draws read the wrong descriptors.
     std::printf("Layout check: %u of %u graphics pipelines have a layout that does not match their "
                 "shaders as the warm-up builds them; %u with each permutation's own shader info\n",
                 warmup_bad, checked, own_bad);
@@ -1485,13 +1349,6 @@ int CheckCache(const fs::path& dir) {
     }
     return warmup_bad ? 4 : 0;
 }
-
-// --- The compiler's speed and output (docs/native_shader_compiler.md, "Compile speed") -----------
-//   bb-shader-lab --bench <cache folder> [rounds] [report.csv] [--spv-dir DIR]
-// Every shader state of a cache compiled in this process `rounds` times (3 by default) with the
-// cache's profile, as the engine's CompileModule does: each shader's fastest round per phase
-// (CompileStats), its IR and SPIR-V size and a hash of its SPIR-V, so a compiler change shows its
-// time and which modules it changed. Nothing in the cache is written.
 
 int Bench(const fs::path& dir, int rounds, const fs::path& report) {
     const auto profile_bytes = ReadAll(dir / "profile.bin");
@@ -1538,12 +1395,10 @@ int Bench(const fs::path& dir, int rounds, const fs::path& report) {
         e->cap = {};
         entries.push_back(std::move(e));
     }
-    // Phase times are booked by the compiler itself; its 5 s report line stays off.
     CompileStats::last_report_ns = 1ll << 62;
     Pools pools;
     for (int round = 0; round < rounds; ++round) {
         for (auto& e : entries) {
-            // Loaded again for each compile: a capture's tables sit at fixed low addresses.
             auto& cap = e->cap;
             cap = {};
             cap.Load(dir / (e->name + Native::StateExtension));
@@ -1575,7 +1430,7 @@ int Bench(const fs::path& dir, int rounds, const fs::path& report) {
                     e->ir_insts += block->Instructions().size();
                 }
                 e->spv_words = spv.size();
-                e->spv_hash = 0xcbf29ce484222325ull; // FNV-1a over the words
+                e->spv_hash = 0xcbf29ce484222325ull;
                 for (const u32 w : spv) {
                     e->spv_hash = (e->spv_hash ^ w) * 0x100000001b3ull;
                 }
@@ -1634,12 +1489,6 @@ int Bench(const fs::path& dir, int rounds, const fs::path& report) {
     return 0;
 }
 
-// --- The shader catalog ----------------------------------------------------------------------------
-// A cache folder without anything taken from the game: each permutation's specialization (.meta),
-// the pipeline keys (.key) and the draw states (.bbs) with no shader or fetch shader code. A
-// player's PC puts the code back from its own game files (the shader bundles in
-// dvdroot_ps4/shader and the executable), by the hash in each program's OrbShdr footer.
-
 std::vector<u8> ReadBytes(const fs::path& path) {
     const auto v = ReadAll(path);
     return {v.begin(), v.end()};
@@ -1649,7 +1498,6 @@ bool WriteBytes(const fs::path& path, const std::vector<u8>& bytes) {
     return WriteAtomically(path, bytes.data(), bytes.size());
 }
 
-/// The layout offsets of a state file's parts (header, RuntimeInfo, user data, code, fetch, rest).
 struct StateLayout {
     Native::CaptureHeader header{};
     size_t code_at = 0, fetch_at = 0, rest_at = 0;
@@ -1668,7 +1516,7 @@ int ExportCatalog(const fs::path& cache, const fs::path& out) {
     std::error_code error;
     fs::create_directories(out, error);
     u32 states = 0, metas = 0, keys = 0, dead_keys = 0;
-    std::string listed; // files.txt: the files of this catalog, one a line
+    std::string listed;
     const auto has_meta = [&](u64 hash) {
         char name[40];
         std::snprintf(name, sizeof(name), "0x%016llx.meta", (unsigned long long)hash);
@@ -1677,7 +1525,6 @@ int ExportCatalog(const fs::path& cache, const fs::path& out) {
     for (const auto& entry : fs::directory_iterator(cache, error)) {
         const auto& path = entry.path();
         const auto ext = path.extension();
-        // Only keys a player's start can build: every stage's specialization is in the catalog.
         if (ext == ".key") {
             const auto hashes = KeyStageHashes(ReadAll(path));
             if (hashes.empty() || std::ranges::any_of(hashes, [&](u64 h) { return h && !has_meta(h); })) {
@@ -1685,7 +1532,6 @@ int ExportCatalog(const fs::path& cache, const fs::path& out) {
                 continue;
             }
         }
-        // A state without its specialization is never seeded.
         if (ext == Native::StateExtension) {
             unsigned long long pgm = 0;
             size_t perm = 0;
@@ -1702,7 +1548,6 @@ int ExportCatalog(const fs::path& cache, const fs::path& out) {
             auto bytes = ReadBytes(path);
             StateLayout layout;
             if (!layout.Parse(bytes)) continue;
-            // Without the code and the fetch shader's code: what is left is the draw's state.
             std::vector<u8> stripped(bytes.begin(), bytes.begin() + layout.code_at);
             stripped.insert(stripped.end(), bytes.begin() + layout.rest_at, bytes.begin() + CopyTrailerAt(bytes));
             auto header = layout.header;
@@ -1715,9 +1560,6 @@ int ExportCatalog(const fs::path& cache, const fs::path& out) {
             }
         }
     }
-    // bbport: the GPU vendor the catalog was made on, from the driver cache beside the folder
-    // (pipeline_cache_blob.h: "BPBC", version, vendor, device): bb-start puts the catalog's profile
-    // into a first start's empty cache only on a PC with a GPU of that vendor.
     auto driver_cache = cache;
     driver_cache += ".vkcache";
     if (const auto blob = ReadBytes(driver_cache); blob.size() >= 16 && std::memcmp(blob.data(), "BPBC", 4) == 0) {
@@ -1728,8 +1570,6 @@ int ExportCatalog(const fs::path& cache, const fs::path& out) {
         const int size = std::snprintf(text, sizeof(text), "vendor %04X device %04X\n", vendor, device);
         WriteAtomically(out / "gpu.txt", text, size_t(size));
     }
-    // bbport: an update copies a package over the old one, so an older catalog's files can stay
-    // beside this one's: --seed-cache reads only the files listed here.
     WriteAtomically(out / "files.txt", listed.data(), listed.size());
     std::printf("Shader catalog: %u states, %u specializations, %u pipeline keys in %s (%u keys without "
                 "their shaders left out)\n",
@@ -1737,13 +1577,9 @@ int ExportCatalog(const fs::path& cache, const fs::path& out) {
     return 0;
 }
 
-/// Every Gnm program in the game's files by its hash: the shader bundles and the executable.
 struct CodeIndex {
     std::vector<std::vector<u8>> blobs;
-    std::map<u64, std::pair<size_t, size_t>> programs; ///< hash -> blob, byte offset of the code
-    /// bbport: geometry shaders' copy shaders (BinaryInfo::type 6) by hash: a geometry shader
-    /// (type 5) and its copy shader carry the same hash, and the first one found was taken for
-    /// both (a geometry shader seeded with its copy shader's code crashed the compiler).
+    std::map<u64, std::pair<size_t, size_t>> programs;
     std::map<u64, std::pair<size_t, size_t>> copies;
 
     static std::vector<u8> Undcx(std::vector<u8>&& data) {
@@ -1771,8 +1607,6 @@ struct CodeIndex {
             if (at + 28 > blob.size()) break;
             u64 hash;
             std::memcpy(&hash, blob.data() + at + 16, 8);
-            // The program starts with s_mov_b32 vcc_hi, #imm whose immediate puts the footer at
-            // code + (imm + 1) * 8 bytes (AmdGpu::SearchBinaryInfo).
             for (size_t p = at & ~size_t(3); p >= 8 && at - p < 0x40000; p -= 4) {
                 u32 token, imm;
                 std::memcpy(&token, blob.data() + p, 4);
@@ -1788,7 +1622,6 @@ struct CodeIndex {
         blobs.push_back(std::move(blob));
     }
 
-    /// The program's code as the engine reads it (BinaryInfo::length bytes from its start).
     std::vector<u32> Code(u64 hash, bool copy_shader = false) const {
         auto it = programs.find(hash);
         if (copy_shader) {
@@ -1810,7 +1643,6 @@ struct CodeIndex {
     }
 };
 
-/// The permutation numbers the cache uses for a program.
 std::set<size_t> UsedPerms(const fs::path& cache, u64 pgm) {
     std::set<size_t> used;
     char prefix[32];
@@ -1826,13 +1658,6 @@ std::set<size_t> UsedPerms(const fs::path& cache, u64 pgm) {
 int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cache, const fs::path& game,
               const fs::path& eboot) {
     std::error_code error;
-    // Only into a cache made on a GPU with the catalog's profile: another profile gives other
-    // specializations, and the engine would start a cache of another profile again anyway.
-    // bbport: only the GPU's part of the profile, the fields before the engine's own compile
-    // switches (uniform buffers on, their layout...). Those switches grew the profile in 0.9.34
-    // beta 9.9 and every catalog shipped since was refused on every PC (docs/pipeline_compiles.md).
-    // A catalog permutation compiled with other switches is kept only if this compiler, with this
-    // cache's switches, specializes it the same (RecompileBatch); the others are left out.
     const auto catalog_profile = ReadBytes(catalog / "profile.bin");
     const auto cache_profile = ReadBytes(cache / "profile.bin");
     static constexpr size_t GpuBytes = offsetof(Profile, uniform_constant_buffers);
@@ -1840,12 +1665,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
         std::printf("Shader catalog: made on another kind of GPU than this one; not used\n");
         return 5;
     }
-    // bbport (0.9.37 beta 6): another GPU of the catalog's vendor (an RTX 3080's profile differs
-    // from the RTX 5060 the catalog was made on by one extension) gets it too: every permutation is
-    // compiled with this cache's profile and kept only if its specialization comes out the same,
-    // as for other compile switches. The vendors come from the catalog's gpu.txt and the driver
-    // cache beside this cache (its first start writes it); pipeline state of another vendor (formats
-    // its driver lacks) is not risked.
     if (std::memcmp(catalog_profile.data(), cache_profile.data(), GpuBytes) != 0) {
         unsigned catalog_vendor = 0;
         if (const auto text = ReadBytes(catalog / "gpu.txt"); !text.empty()) {
@@ -1865,8 +1684,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
                     catalog_vendor);
     }
     const bool other_switches = catalog_profile != cache_profile;
-    // The catalog's own files (files.txt, since 0.9.37 beta 3): an older catalog's left beside
-    // them by an update are not read.
     std::set<std::string> own;
     if (std::ifstream list{catalog / "files.txt"}) {
         for (std::string line; std::getline(list, line);) {
@@ -1880,7 +1697,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
         if (entry.path().extension() == ".dcx") index.Add(CodeIndex::Undcx(ReadBytes(entry.path())));
     }
     index.Add(ReadBytes(eboot));
-    // Catalog permutation -> the number it gets here (a program's own permutations keep theirs).
     std::map<u64, u64> renamed_hashes;
     std::vector<std::string> added_names;
     u32 added = 0, missing = 0, present = 0, renumbered = 0, unreadable = 0;
@@ -1897,30 +1713,23 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
             ++unreadable;
             continue;
         }
-        // bbport: a version 7 record (before 0.9.34 beta 9.9) differs from version 8 only by
-        // HwFragmentRuntimeInfo::depth_first, then padding, which the state's RuntimeInfo carries
-        // alike: the recompile compares the two as they are.
         if (u32 version; std::memcpy(&version, meta.data(), 4), version == 7) {
             version = 8;
             std::memcpy(meta.data(), &version, 4);
         }
         const auto code = index.Code(pgm);
         if (code.empty()) {
-            ++missing; // not in this game's files (another edition)
+            ++missing;
             continue;
         }
-        // A permutation this cache has already (same program, same specialization) is not added
-        // again; a clash of numbers must not mix two specializations: the catalog's gets a free
-        // number and its keys follow.
         const auto used = UsedPerms(cache, pgm);
         StageSpecialization catalog_spec;
         size_t catalog_perm = 0;
-        // A record of another engine (its specialization written otherwise): re-export the catalog.
         if (!Vulkan::ReadShaderMetaSpec(std::vector<u8>(meta), catalog_spec, catalog_perm)) {
             ++unreadable;
             continue;
         }
-        const Info valid_marker{}; // StageSpecialization::Valid() only asks for an Info
+        const Info valid_marker{};
         catalog_spec.info = &valid_marker;
         bool have = false;
         for (const size_t mine : used) {
@@ -1931,7 +1740,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
                 spec.info = &valid_marker;
                 if (spec == catalog_spec) {
                     have = true;
-                    // The catalog's keys name it by the catalog's number: they follow this one.
                     renamed_hashes[HashCombine(u64(pgm), u64(perm))] = HashCombine(u64(pgm), u64(mine));
                     break;
                 }
@@ -1951,7 +1759,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
         const u64 old_hash = HashCombine(u64(pgm), u64(perm));
         const u64 new_hash = HashCombine(u64(pgm), u64(target));
         renamed_hashes[old_hash] = new_hash;
-        // The state with the code from this PC's game files.
         auto header = layout.header;
         header.code_dwords = u32(code.size());
         std::vector<u8> full(bytes.begin(), bytes.begin() + layout.code_at);
@@ -1959,7 +1766,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
                     reinterpret_cast<const u8*>(code.data() + code.size()));
         full.insert(full.end(), bytes.begin() + layout.code_at, bytes.end());
         std::memcpy(full.data(), &header, sizeof(header));
-        // A geometry shader's copy shader, by the hash in its RuntimeInfo, from the game's files.
         if (HwStage(header.hw_stage) == HwStage::Geometry && CopyTrailerAt(bytes) == bytes.size()) {
             alignas(RuntimeInfo) unsigned char runtime_storage[sizeof(RuntimeInfo)];
             std::memcpy(runtime_storage, bytes.data() + sizeof(header), sizeof(RuntimeInfo));
@@ -1976,8 +1782,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
         }
         char target_name[48];
         std::snprintf(target_name, sizeof(target_name), "0x%016llx_%zu", pgm, target);
-        // The meta's permutation fields (hash at 8, number at 16) for the new number; the
-        // recompile writes the rest of it again.
         std::memcpy(meta.data() + 8, &new_hash, 8);
         const u64 target64 = target;
         std::memcpy(meta.data() + 16, &target64, 8);
@@ -1987,7 +1791,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
             added_names.push_back(target_name);
         }
     }
-    // The pipeline keys, with the stage hashes of renumbered permutations replaced.
     u32 keys = 0;
     for (const auto& entry : fs::directory_iterator(catalog, error)) {
         if (entry.path().extension() != ".key" || !in_catalog(entry.path()) ||
@@ -2022,14 +1825,6 @@ int SeedCache(const fs::path& self, const fs::path& catalog, const fs::path& cac
     return code;
 }
 
-// --- The native compiler's checks (docs/native_shader_compiler.md) -------------------------------
-//   bb-shader-lab --census <capture folder> [report.csv]
-//       what the game's shaders use: GCN opcodes, control flow shape, resources, resource tables
-//   bb-shader-lab --tables <capture folder> [report.csv]
-//       each capture's resource table walker against its table plan (native/table_plan.h): over
-//       null tables, synthetic tables (two seeds) and the captured tables rebuilt from the plan
-
-/// The capture folder's profile, with the --native options as RunOne sets them.
 Profile CaptureProfile(const fs::path& file) {
     const auto bytes = ReadAll(file.parent_path() / "profile.bin");
     Profile profile{};
@@ -2042,8 +1837,6 @@ Profile CaptureProfile(const fs::path& file) {
     return profile;
 }
 
-/// Immediate dominators (Cooper, Harvey, Kennedy) of the nodes reached from `entry` through
-/// `out`; -1 for the others.
 std::vector<int> Dominators(u32 count, u32 entry, const std::vector<std::vector<u32>>& out,
                             const std::vector<std::vector<u32>>& in) {
     std::vector<u32> post;
@@ -2101,9 +1894,6 @@ std::vector<int> Dominators(u32 count, u32 entry, const std::vector<std::vector<
     return idom;
 }
 
-/// The control flow shape of a shader's GCN blocks: what a structurizer has to rebuild. A shader
-/// is structured (no goto variables needed) when its graph is reducible, each loop leaves to one
-/// place, and each two-way branch opens a region nothing enters from the side.
 struct FlowShape {
     u32 blocks = 0, branches = 0, exec_branches = 0, exits = 0, loops = 0, irreducible = 0,
         multi_exit_loops = 0, side_entries = 0, max_loop_depth = 0;
@@ -2124,7 +1914,6 @@ FlowShape AnalyzeFlow(std::span<const Gcn::GcnInst> insts) {
     if (n == 0) {
         return shape;
     }
-    // Node n: one exit after every s_endpgm, for the post-dominators.
     std::vector<std::vector<u32>> succ(n + 1), pred(n + 1);
     const auto link = [&](u32 a, u32 b) {
         succ[a].push_back(b);
@@ -2156,12 +1945,10 @@ FlowShape AnalyzeFlow(std::span<const Gcn::GcnInst> insts) {
         }
         return false;
     };
-    // Retreating edges (to a block still on the depth-first path): loops when the target
-    // dominates the source, else an irreducible graph.
     std::set<std::pair<u32, u32>> back;
     std::map<u32, std::vector<u32>> latches;
     {
-        std::vector<u8> state(n + 1); // 0 new, 1 on the path, 2 done
+        std::vector<u8> state(n + 1);
         std::vector<std::pair<u32, size_t>> stack{{0, 0}};
         state[0] = 1;
         while (!stack.empty()) {
@@ -2185,7 +1972,6 @@ FlowShape AnalyzeFlow(std::span<const Gcn::GcnInst> insts) {
             }
         }
     }
-    // Natural loops: each header's body, and where it leaves to.
     std::vector<std::vector<bool>> bodies;
     for (const auto& [header, from] : latches) {
         std::vector<bool> body(n + 1);
@@ -2209,7 +1995,7 @@ FlowShape AnalyzeFlow(std::span<const Gcn::GcnInst> insts) {
         shape.multi_exit_loops += exits.size() > 1;
         bodies.push_back(std::move(body));
     }
-    std::vector<int> innermost(n + 1, -1); // the smallest loop body holding each block
+    std::vector<int> innermost(n + 1, -1);
     std::vector<u32> loop_depth(n + 1, 0);
     for (size_t l = 0; l < bodies.size(); ++l) {
         const auto size = std::count(bodies[l].begin(), bodies[l].end(), true);
@@ -2222,7 +2008,6 @@ FlowShape AnalyzeFlow(std::span<const Gcn::GcnInst> insts) {
             }
         }
     }
-    // Post-dominators on the reversed graph, from the exit.
     const auto ipdom = Dominators(n + 1, n, pred, succ);
     for (u32 b = 0; b < n; ++b) {
         if (succ[b].size() != 2 || back.contains({b, succ[b][0]}) || back.contains({b, succ[b][1]})) {
@@ -2256,7 +2041,6 @@ FlowShape AnalyzeFlow(std::span<const Gcn::GcnInst> insts) {
     return shape;
 }
 
-/// --ir: one capture's final IR, block by block (what the native passes match on).
 int DumpIr(const fs::path& file) {
     Profile profile = CaptureProfile(file);
     LoadedCapture cap;
@@ -2275,20 +2059,9 @@ int DumpIr(const fs::path& file) {
 }
 
 
-// --- The composite's tone curve (docs/hdr-scene-path.md, steps 1-2) ------------------------------
-//   bb-shader-lab --curves <capture folder> [report.csv]
-//       per capture: the tone curve channels found (native/tone_curve.h), whether they are a
-//       composite, and that the extension changes the SPIR-V of the composites only
-//   bb-shader-lab --ramp-modules <file.bbs> <out folder>
-//       the composite compiled as the game's and with the extension, each with a ramp of scene
-//       values (exp2 over the frame's width) into the curve and the curve's three channels out
-//       (tests/test_tone_curve.cpp runs them on the GPU)
-
-/// The scene ramp of --ramp-modules: x = 2^(RampLow + RampStops * (frag_x / RampWidth)).
 constexpr float RampLow = -10.0f, RampStops = 24.0f;
 constexpr u32 RampWidth = 4096;
 
-/// One capture compiled, with the extension or without; `ramp`: the test rewrite above.
 std::vector<u32> CompileComposite(const fs::path& file, bool extend, bool ramp,
                                   std::vector<Native::ToneCurveMatch>& matches, std::string& note) {
     Profile profile = CaptureProfile(file);
@@ -2333,7 +2106,6 @@ std::vector<u32> CompileComposite(const fs::path& file, bool extend, bool ramp,
                 outputs.push_back(m.result);
             }
         }
-        // The scene value of every channel: the ramp.
         for (const auto& m : matches) {
             IR::IREmitter ir{block, IR::Block::InstructionList::s_iterator_to(*m.scene)};
             const IR::F32 x = ir.GetAttribute(IR::Attribute::FragCoord, 0);
@@ -2343,7 +2115,6 @@ std::vector<u32> CompileComposite(const fs::path& file, bool extend, bool ramp,
             m.scene->SetArg(m.scene->Arg(0).IsImmediate() ? 1 : 0, scene);
         }
         info.loads.Set(IR::Attribute::FragCoord, 0);
-        // The curve's channels out, alpha 1.
         for (IR::Inst& inst : block.Instructions()) {
             if (inst.GetOpcode() != IR::Opcode::SetAttribute ||
                 inst.Arg(0).Attribute() != IR::Attribute::RenderTarget0) {
@@ -2358,7 +2129,6 @@ std::vector<u32> CompileComposite(const fs::path& file, bool extend, bool ramp,
     return Backend::SPIRV::EmitSPIRV(profile, cap.Runtime(), program, bindings);
 }
 
-/// --curves-one: "CURVES|channels=N;composite=0|1;family=..;words=a/b;changed=0|1".
 int CurvesOne(const fs::path& file) {
     std::vector<Native::ToneCurveMatch> matches, unused;
     std::string note;
@@ -2369,8 +2139,6 @@ int CurvesOne(const fs::path& file) {
     }
     const auto extended = CompileComposite(file, true, false, unused, note);
     const bool composite = Native::IsComposite(matches);
-    // A shader that differs without being a composite: compiled again without the extension, to
-    // tell the inherited compiler's run-to-run differences apart.
     bool varies = false;
     if (!composite && game != extended) {
         varies = CompileComposite(file, false, false, unused, note) != game ||
@@ -2388,8 +2156,6 @@ int CurvesOne(const fs::path& file) {
     return 0;
 }
 
-/// --ramp-modules: game.spv, hdr.spv and ramp.txt (family, constant words, the ramp, the constant
-/// buffer's descriptor type) in `out`.
 int RampModules(const fs::path& file, const fs::path& out) {
     std::vector<Native::ToneCurveMatch> matches, unused;
     std::string note;
@@ -2415,7 +2181,6 @@ int RampModules(const fs::path& file, const fs::path& out) {
     return 0;
 }
 
-/// --census-one: one capture's census, "CENSUS|key=value;..." and "GCN|opcode=count;...".
 int CensusOne(const fs::path& file) {
     Profile profile = CaptureProfile(file);
     LoadedCapture cap;
@@ -2444,8 +2209,6 @@ int CensusOne(const fs::path& file) {
         }
         written += buffer.is_written;
     }
-    // LDS: the shader's own DS reads and writes (ds_swizzle is a lane operation, ds_append and
-    // ds_consume are GDS counters).
     u32 lds = 0;
     for (const auto& inst : program.ins_list) {
         const auto name = magic_enum::enum_name(inst.opcode);
@@ -2494,7 +2257,6 @@ int CensusOne(const fs::path& file) {
 }
 
 #ifdef _WIN32
-/// Whether [at, at + bytes) is committed, readable memory of this process.
 bool Readable(u64 at, u64 bytes) {
     const u64 end = at + bytes;
     if (end < at) {
@@ -2513,8 +2275,6 @@ bool Readable(u64 at, u64 bytes) {
     return true;
 }
 
-/// The walker's faults handled as in the game (the read gives 0), through the handlers the
-/// recompiler registers.
 LONG CALLBACK WalkerFault(EXCEPTION_POINTERS* ep) {
     if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
         Core::Signals::Instance()->DispatchAccessViolation(
@@ -2524,8 +2284,6 @@ LONG CALLBACK WalkerFault(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-/// --tables-one: one capture's walker against its plan. "TABLES|result;..." with result pass,
-/// fail, "no tables" or "no plan".
 int TablesOne(const fs::path& file) {
     Profile profile = CaptureProfile(file);
     LoadedCapture cap;
@@ -2556,7 +2314,6 @@ int TablesOne(const fs::path& file) {
     }
     Shader::RegisterSrtFaultHandler();
     AddVectoredExceptionHandler(1, WalkerFault);
-    // The plan as the pipeline cache stores it, read back: the runs below use the copy.
     {
         Serialization::Archive out;
         plan.Serialize(out);
@@ -2577,9 +2334,7 @@ int TablesOne(const fs::path& file) {
 
     std::string failures;
     u32 checks = 0, walker_faults = 0, refused = 0, unmapped_faults = 0, unmapped_refused = 0;
-    u32 replayed = 0; ///< captured nonzero dwords the walker read again
-    // Both from the same user data; the comparison skips `skip` (dwords whose value the replay
-    // replaced) when comparing with `expected`.
+    u32 replayed = 0;
     const auto compare = [&](const char* what, const std::array<u32, NUM_USER_DATA_REGS>& user_data,
                              const std::vector<u32>* expected, const std::vector<bool>* skip) {
         std::vector<u32> by_walker(size, 0xCDCDCDCDu), by_plan(size, 0xCDCDCDCDu);
@@ -2620,11 +2375,8 @@ int TablesOne(const fs::path& file) {
         }
     };
 
-    // 1. Null tables: every user data dword zero.
     compare("null", {}, nullptr, nullptr);
 
-    // 2. Synthetic tables: a 64 MiB region below 4 GiB, every dword the address of one of its
-    // 1024 64 KiB slots, so every pointer the walker reads (its low 48 bits) is in the region.
     static u32* region = nullptr;
     constexpr size_t RegionBytes = (64u << 20) + (1u << 20);
     for (uintptr_t at = 0x20000000; !region && at < 0xF0000000; at += 0x10000000) {
@@ -2651,9 +2403,6 @@ int TablesOne(const fs::path& file) {
         compare(seed == 1 ? "synthetic 1" : "synthetic 2", user_data, nullptr, nullptr);
     }
 
-    // 3. Unmapped tables: every user data pointer aimed at reserved memory that is not committed
-    // (above the null range): the walker faults on each read and its handler gives 0, the plan
-    // refuses the reads. Both must give zeros: the case that skipped Ebrietas' draws.
     static void* unmapped = VirtualAlloc(nullptr, 1u << 20, MEM_RESERVE, PAGE_NOACCESS);
     if (unmapped) {
         const u64 address = reinterpret_cast<u64>(unmapped);
@@ -2668,9 +2417,6 @@ int TablesOne(const fs::path& file) {
         unmapped_refused = refused - refused_before;
     }
 
-    // 4. The captured tables: rebuilt from the plan and the flattened values the walker read in the
-    // game, the walker must read them again. Pointers to tables below are replaced by the copies'
-    // addresses (those dwords are not compared); a pointer the game had null stays null.
     if (cap.flat.size() == size) {
         const std::vector<u32>& flat = cap.flat;
         std::vector<bool> is_table(size), skip(size), nonzero_below(size);
@@ -2684,9 +2430,8 @@ int TablesOne(const fs::path& file) {
                 nonzero_below[parent] = true;
             }
         }
-        // Offsets from the captured values (the plan's expressions read the flattened values).
         std::vector<u32> offsets(plan.entries.size());
-        std::map<u16, u32> extent; // table -> dwords
+        std::map<u16, u32> extent;
         bool too_large = false;
         for (u32 i = 0; i < plan.entries.size(); ++i) {
             const auto& entry = plan.entries[i];
@@ -2711,14 +2456,13 @@ int TablesOne(const fs::path& file) {
             std::array<u32, NUM_USER_DATA_REGS> user_data = cap.user_data;
             const auto pointer_to = [&](u16 table) -> u64 {
                 if (!nonzero_below[table]) {
-                    return 0; // null in the game (or all zeros below): stays null
+                    return 0;
                 }
                 return reinterpret_cast<u64>(tables.at(table).data());
             };
             std::map<std::pair<u16, u32>, u32> placed;
             std::set<std::pair<u16, u32>> pointer_slots;
             bool conflict = false;
-            // Pointers first: a value read at a pointer's high dword may come before it.
             for (u32 i = 0; i < plan.entries.size(); ++i) {
                 const u32 d = Native::TablePlan::FirstFlat + i;
                 const auto& entry = plan.entries[i];
@@ -2741,7 +2485,7 @@ int TablesOne(const fs::path& file) {
                     continue;
                 }
                 if (pointer_slots.contains({entry.parent, offset})) {
-                    skip[d] = true; // a table pointer's high dword, replaced
+                    skip[d] = true;
                     continue;
                 }
                 const auto [it, added] = placed.try_emplace({entry.parent, offset}, flat[d]);
@@ -2763,8 +2507,6 @@ int TablesOne(const fs::path& file) {
             compare("captured", user_data, &flat, &skip);
         }
     }
-    // The comparison must catch a wrong plan: one static offset moved by a dword, over the
-    // synthetic tables of seed 2 (still in the region).
     const char* mutant = "none";
     for (size_t i = plan.entries.size(); i-- > 0;) {
         if (plan.entries[i].expr_len != 0) {
@@ -2795,7 +2537,6 @@ int TablesOne(const fs::path& file) {
     return 0;
 }
 
-/// --census / --tables: every capture of `dir` in a child process, the lines aggregated.
 int RunNative(const fs::path& self, const fs::path& dir, const fs::path& report, bool tables) {
     std::vector<fs::path> files;
     for (const auto& entry : fs::directory_iterator(dir)) {
@@ -2805,8 +2546,8 @@ int RunNative(const fs::path& self, const fs::path& dir, const fs::path& report,
     }
     std::sort(files.begin(), files.end());
     std::ofstream csv(report);
-    std::map<std::string, std::pair<u64, u32>> totals; ///< key -> sum, captures with it nonzero
-    std::map<std::string, std::pair<u64, u32>> gcn;    ///< opcode -> count, captures using it
+    std::map<std::string, std::pair<u64, u32>> totals;
+    std::map<std::string, std::pair<u64, u32>> gcn;
     std::map<std::string, u32> results, plan_errors;
     std::map<std::string, u64> counters;
     std::vector<std::string> keys;
@@ -2838,7 +2579,6 @@ int RunNative(const fs::path& self, const fs::path& dir, const fs::path& report,
             }
             csv << name << ',' << result << '\n';
             ++results[result.substr(0, result.find(';'))];
-            // The pass line's counters, summed over the captures.
             for (const char* key : {"walker_faults=", "plan_refused=", "unmapped_faults=",
                                     "unmapped_refused=", "replayed="}) {
                 if (const size_t at = result.find(key); at != std::string::npos) {
@@ -2918,8 +2658,6 @@ int RunNative(const fs::path& self, const fs::path& dir, const fs::path& report,
     std::printf("Per shader: %s\n", report.string().c_str());
     return 0;
 }
-/// --curves: every capture's CurvesOne in a child process. The composites are listed; any other
-/// shader the extension changed, or with curve channels that are not a composite, is a failure.
 int RunCurves(const fs::path& self, const fs::path& dir, const fs::path& report) {
     std::vector<fs::path> files;
     for (const auto& entry : fs::directory_iterator(dir)) {
@@ -2976,10 +2714,9 @@ int RunCurves(const fs::path& self, const fs::path& dir, const fs::path& report)
 }
 #endif
 
-} // namespace
+}
 
 int main(int argc, char** argv) {
-    // Options anywhere after the positional arguments.
     std::vector<char*> args;
     for (int i = 0; i < argc; ++i) {
         if (std::strcmp(argv[i], "--native") == 0) {
@@ -2998,8 +2735,6 @@ int main(int argc, char** argv) {
                       std::strcmp(argv[1], "--walk-null") == 0 || std::strcmp(argv[1], "--census-one") == 0 ||
                       std::strcmp(argv[1], "--tables-one") == 0 ||
                       std::strcmp(argv[1], "--curves-one") == 0 || std::strcmp(argv[1], "--fix-keys") == 0)) {
-        // A child the compiler ends (an assertion's breakpoint, a fault) is gone at once: Windows'
-        // error reporting took seconds for each, over a minute for a cache with 17 of them.
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
         SetUnhandledExceptionFilter([](EXCEPTION_POINTERS*) -> LONG {
             std::fflush(stdout);
@@ -3030,7 +2765,6 @@ int main(int argc, char** argv) {
         return RecompileBatch(argv[2], std::strtoull(argv[3], nullptr, 10), argc >= 5 ? fs::path(argv[4]) : fs::path{});
     }
     if (argc >= 3 && std::strcmp(argv[1], "--bench") == 0) {
-        // The compiler books its phase times only then.
 #ifdef _WIN32
         _putenv("BB_FRAME_STATS=1");
 #else

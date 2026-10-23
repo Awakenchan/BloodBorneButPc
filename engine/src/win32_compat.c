@@ -1,4 +1,3 @@
-/* Windows implementations of the POSIX pieces declared in win32_compat.h. */
 #ifdef _WIN32
 #define _CRT_RAND_S
 #define WIN32_LEAN_AND_MEAN
@@ -18,7 +17,6 @@
 #include "win32_compat.h"
 
 int runtime_win_mkdir(const char *path, int mode) { (void)mode; return _mkdir(path); }
-/* POSIX rename replaces an existing target; MoveFileEx does so only when asked. */
 int runtime_win_rename(const char *from, const char *to) {
     if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) return 0;
     DWORD e = GetLastError();
@@ -27,7 +25,6 @@ int runtime_win_rename(const char *from, const char *to) {
           : e == ERROR_DIR_NOT_EMPTY ? ENOTEMPTY : EIO;
     return -1;
 }
-/* Positional I/O keeps the descriptor's file position, as pread/pwrite do. */
 static int64_t positional(int fd, void *buffer, size_t size, int64_t offset, int write) {
     HANDLE h = (HANDLE)_get_osfhandle(fd);
     if (h == INVALID_HANDLE_VALUE) { errno = EBADF; return -1; }
@@ -62,7 +59,6 @@ int64_t runtime_win_pread(int fd, void *buffer, size_t size, int64_t offset) {
 int64_t runtime_win_pwrite(int fd, const void *buffer, size_t size, int64_t offset) {
     return positional(fd, (void *)buffer, size, offset, 1);
 }
-/* Depth-first removal of a directory tree (nftw FTW_DEPTH|FTW_PHYS on Linux). */
 int runtime_win_remove_tree(const char *path) {
     struct _stat64 s;
     if (_stat64(path, &s)) return -1;
@@ -112,8 +108,6 @@ static BOOL CALLBACK allocate_slot(PINIT_ONCE once, PVOID parameter, PVOID *cont
     tls_slot = TlsAlloc();
     return TRUE;
 }
-/* Slots below 64 are TEB.TlsSlots (gs:[0x1480 + slot*8]), later ones TEB.TlsExpansionSlots
- * (gs:[0x1780] points to them); probe.c rewrites the guest's reads for either. */
 uint32_t runtime_win_tls_slot(void) {
     InitOnceExecuteOnce(&tls_once, allocate_slot, NULL, NULL);
     if (tls_slot == TLS_OUT_OF_INDEXES) {

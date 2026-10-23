@@ -1,4 +1,3 @@
-/* Narrow, explicit PS4 libc contracts. No automatic success stubs. */
 #define _CRT_RAND_S
 #include "runtime.h"
 #include "gpu/bbgpu.h"
@@ -18,15 +17,12 @@ static uint64_t capabilities;
 static _Atomic size_t guards_acquired, guards_released;
 static uint64_t stack_canary;
 static _Atomic size_t memory_calls;
-/* Dynamic TLS of linked modules: module IDs 2..7 (1 is the eboot's static TLS). */
 #define TLS_MODULES 8
 static struct { const void *data; uint64_t filesz, memsz; } tls_modules[TLS_MODULES];
 static _Thread_local unsigned char *tls_blocks[TLS_MODULES];
 static void *process_param;
 void runtime_set_procparam(void *param) {
     process_param=param;
-    /* bbport: the game's libc heap settings (SceProcParam +0x30: SceLibcParam; its +0x10.. pointers to
-     * the heap size, delayed and extended allocation flags, initial size). */
     const uint64_t *p=(const uint64_t *)param;
     if (!p || p[0]<0x38 || !p[6]) return;
     const uint64_t *libc=(const uint64_t *)p[6];
@@ -99,7 +95,6 @@ void runtime_report(void) {
     printf("Runtime: memory operations=%zu\n", (size_t)memory_calls);
 }
 static ABI void init_env(void) {
-    /* prepare.py verified the supplied libc export consists of exactly C3. */
     ++calls_init;
     puts("Runtime: _init_env returned (verified libc implementation: RET)");
 }
@@ -127,8 +122,6 @@ static ABI int guest_cxa_atexit(void (ABI *callback)(void *), void *argument, vo
     return register_handler((ExitHandler){.callback.with_arg=callback, .argument=argument, .dso=dso, .with_arg=1});
 }
 void runtime_finalize(void *dso) {
-    /* Mark before invoking: repeated or recursive finalization cannot run twice.
-       Restart at the end to include handlers registered by a destructor. */
     for (;;) {
         host_lock(&handler_lock);
         size_t i = handler_count;
@@ -145,8 +138,6 @@ static _Atomic uint32_t next_guard_owner=1;
 static _Thread_local uint32_t guard_owner;
 static ABI int guard_acquire(uint64_t *guard) {
     _Atomic uint64_t *state = (_Atomic uint64_t *)guard;
-    /* Dump libc uses the low byte for completion and the dword at +4 as lock.
-       The lock word holds a per-thread owner tag so recursion is detectable. */
     if (!guard_owner) guard_owner = atomic_fetch_add(&next_guard_owner, 1);
     for (;;) {
         uint64_t expected = 0;
@@ -158,7 +149,7 @@ static ABI int guard_acquire(uint64_t *guard) {
             fputs("STOP: recursive/concurrent static initialization is not supported yet\n", stderr);
             exit(21);
         }
-        host_yield(); /* another thread is running the initializer */
+        host_yield();
     }
     atomic_fetch_add(&guards_acquired, 1);
     return 1;
@@ -199,17 +190,15 @@ static ABI __attribute__((noreturn)) void guest_libc_exit(int status) {
 uintptr_t runtime_resolve(const char *name, int is_data) {
     if (!(capabilities & 1)) return 0;
     if (is_data) {
-        static int32_t need_libc_internal = 1; /* SDK marker variable referenced by Fios2 */
+        static int32_t need_libc_internal = 1;
         if (!strcmp(name, "f7uOxY9mM1U#p#J")) return (uintptr_t)&stack_canary;
         if (!strcmp(name, "ZT4ODD2Ts9o#libSceLibcInternal")) return (uintptr_t)&need_libc_internal;
         return 0;
     }
-    /* Exact scoped imports for CUSA03173; the suffix identifies library/module. */
     if (!strcmp(name, "bzQExy189ZI#q#q")) return (uintptr_t)init_env;
     if (!strcmp(name, "8G2LB+A3rzg#q#q")) return (uintptr_t)guest_atexit;
     if (!strcmp(name, "tsvEmnenz48#q#q")) return (uintptr_t)guest_cxa_atexit;
     if (!strcmp(name, "uMei1W9uyNo#q#q")) return (uintptr_t)guest_libc_exit;
-    /* Not imported by the current eboot, exposed for ABI tests/future use. */
     if (!strcmp(name, "H2e8t5ScQGc#q#q")) return (uintptr_t)guest_finalize;
     if (!strcmp(name, "3GPpjQdAMTw#q#q")) return (uintptr_t)guard_acquire;
     if (!strcmp(name, "9rAeANT2tyE#q#q")) return (uintptr_t)guard_release;
@@ -258,14 +247,11 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
 static const struct { const char *nid, *symbol; } import_names[]={
 #include "import_names.inc"
 };
-/* Symbol name for a scoped NID, or NULL when this eboot/libc never imports it. */
 const char *runtime_symbol(const char *nid) {
     for (size_t i=0;i<sizeof(import_names)/sizeof(*import_names);++i)
         if (!strcmp(nid,import_names[i].nid)) return import_names[i].symbol;
     return NULL;
 }
-/* Same symbol name means same contract whether imported from libkernel or
- * libScePosix, so newer modules resolve by name through runtime_symbol. */
 uintptr_t runtime_lookup(const RuntimeExport *table,size_t count,const char *nid) {
     const char *symbol=runtime_symbol(nid);
     if (!symbol) return 0;

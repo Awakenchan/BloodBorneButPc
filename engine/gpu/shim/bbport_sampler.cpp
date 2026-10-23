@@ -1,13 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: BB_SAMPLE_THREADS=<names> - where those threads run, for loading-time work (Windows; the
-// Linux runtime has BB_SAMPLE_THREAD in runtime_kernel.c). Names are comma-separated prefixes of
-// thread descriptions (guest threads carry theirs; "main" is the loader thread the game's main loop
-// runs on), and "load" is main, GXRenderThread, the game's Core.Res.* file loaders and the engine's
-// GPU command and draw recording threads.
-// About every 2 ms each is suspended, its instruction pointer read and resumed; samples in host
-// code are kept with the first return address into the game on the stack. Every 5 s, per thread:
-// the share in game code, in each host module (waiting shows as ntdll/KernelBase), and the
-// hottest sites.
+// SPDX-License-Identifier: GPL-3.0-or-later
 #include "bbport_sampler.h"
 
 #ifdef _WIN32
@@ -32,8 +23,6 @@ namespace BbSampler {
 namespace {
 constexpr unsigned long long kGuestLo = 0x800000000ull, kGuestHi = 0x810000000ull;
 
-/// A sample: the instruction (guest offset when in game code) and, in host code, the first guest
-/// return address on the stack (offset; 0 when none).
 using Site = std::pair<unsigned long long, unsigned long long>;
 
 struct Target {
@@ -73,7 +62,6 @@ std::string Describe(HANDLE thread) {
 
 constexpr DWORD kAccess = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION;
 
-// The process's threads whose description starts with one of `wanted`.
 void Refresh(const std::vector<std::string>& wanted, std::map<DWORD, Target>& targets) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return;
@@ -95,7 +83,7 @@ void Refresh(const std::vector<std::string>& wanted, std::map<DWORD, Target>& ta
         if (!want) CloseHandle(thread);
     }
     CloseHandle(snapshot);
-    for (auto it = targets.begin(); it != targets.end();) { // threads that ended
+    for (auto it = targets.begin(); it != targets.end();) {
         if (std::find(seen.begin(), seen.end(), it->first) == seen.end()) {
             CloseHandle(it->second.handle);
             it = targets.erase(it);
@@ -105,9 +93,6 @@ void Refresh(const std::vector<std::string>& wanted, std::map<DWORD, Target>& ta
     }
 }
 
-/// bbport: the engine's own code range: a sample in a system DLL (a wait, a protection change)
-/// on an engine thread is kept with the first return address into it, the engine function that
-/// called the system (marked with kHostCaller).
 constexpr unsigned long long kHostCaller = 1ull << 63;
 std::pair<unsigned long long, unsigned long long> EngineCode() {
     static const auto range = [] {
@@ -128,7 +113,6 @@ bool Sample(Target& t, Site* site) {
     if (GetThreadContext(t.handle, &context)) {
         rip = context.Rip;
         if (rip < kGuestLo || rip >= kGuestHi) {
-            // Read while the thread is suspended: its stack can't change under us.
             unsigned long long stack[192] = {};
             if (BbPlatform::ReadProcessMemory(reinterpret_cast<const void*>(context.Rsp), stack, sizeof(stack))) {
                 for (const auto value : stack) {
@@ -169,8 +153,6 @@ std::string Module(unsigned long long address, bool with_offset) {
 }
 
 void Report(std::map<DWORD, Target>& targets) {
-    // BB_SAMPLE_TOP=N: the N hottest sites instead of 8 (a flat profile, e.g. the draw recording
-    // thread, symbolized afterwards from the executable's debug info).
     static const size_t top = [] {
         const char* env = std::getenv("BB_SAMPLE_TOP");
         return env ? std::max<size_t>(1, std::strtoull(env, nullptr, 10)) : size_t{8};
@@ -194,7 +176,7 @@ void Report(std::map<DWORD, Target>& targets) {
         for (size_t i = 0; i < hot.size() && i < top; ++i) {
             const auto& [site, count] = hot[i];
             const double share = 100.0 * count / t.samples;
-            const int digits = top > 8 ? 2 : 0; // long lists are mostly well under 1%
+            const int digits = top > 8 ? 2 : 0;
             if (site.second == ~0ull)
                 std::printf(" +%#llx %.*f%%", site.first, digits, share);
             else if (site.second & kHostCaller)
@@ -213,7 +195,6 @@ void Report(std::map<DWORD, Target>& targets) {
 
 void Run(std::vector<std::string> wanted) {
     std::map<DWORD, Target> targets;
-    // A high-resolution timer: ~2 ms waits without changing the system timer resolution.
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     auto last_refresh = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     auto last_report = std::chrono::steady_clock::now();
@@ -237,14 +218,14 @@ void Run(std::vector<std::string> wanted) {
         }
         if (timer) {
             LARGE_INTEGER due;
-            due.QuadPart = -20000; // 2 ms, relative, in 100 ns units
+            due.QuadPart = -20000;
             if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) WaitForSingleObject(timer, INFINITE);
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     }
 }
-} // namespace
+}
 
 void Start() {
     static bool started = false;
@@ -254,9 +235,9 @@ void Start() {
     started = true;
     std::thread(Run, std::move(wanted)).detach();
 }
-} // namespace BbSampler
+}
 #else
 namespace BbSampler {
 void Start() {}
-} // namespace BbSampler
+}
 #endif

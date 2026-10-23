@@ -24,7 +24,6 @@ struct Entry {
 constexpr std::size_t Size = 1 << 20;
 std::array<Entry, Size> ring;
 std::atomic<std::uint64_t> head{0};
-// Writes that contained the suspicious qword (see Note), with the exact address.
 std::array<Entry, 256> hits;
 std::atomic<std::uint64_t> hits_head{0};
 constexpr std::uint64_t Pattern = 0x0000005300000000ull;
@@ -32,7 +31,7 @@ constexpr std::uint64_t Pattern = 0x0000005300000000ull;
 void Push(std::array<Entry, Size>& r, std::atomic<std::uint64_t>& h, const Entry& e) {
     r[h.fetch_add(1, std::memory_order_relaxed) % r.size()] = e;
 }
-} // namespace
+}
 
 void Record(std::uint64_t address, const void* data, std::uint64_t size, Source source);
 
@@ -65,8 +64,6 @@ void Record(std::uint64_t address, const void* data, std::uint64_t size, Source 
     Entry e{address, size, 0, __rdtsc(), source, tid};
     std::memcpy(&e.first, data, size < 8 ? size : 8);
     Push(ring, head, e);
-    // Only small writes are scanned: scanning downloads of megabytes delays them enough to hide
-    // the race this log is for.
     if (size > 64) {
         return;
     }
@@ -105,9 +102,8 @@ void DumpRange(std::uint64_t address, std::uint64_t size) {
     std::fprintf(stderr, "Write log: %d of %llu logged writes in %#llx +%llu\n", shown,
                  (unsigned long long)n, (unsigned long long)address, (unsigned long long)size);
 }
-} // namespace BbWriteLog
+}
 
-// Linux: a ucontext_t from the SIGSEGV handler; Windows: the vectored handler's EXCEPTION_POINTERS.
 extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     using namespace BbWriteLog;
 #ifdef _WIN32
@@ -143,7 +139,6 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     for (std::uint64_t i = nh > hits.size() ? nh - hits.size() : 0; i < nh; ++i) {
         print(hits[i % hits.size()], "pattern");
     }
-    // The block the guest read (rax) and all logged writes into it or its neighbours.
     const std::uint64_t block = regs[0];
     for (std::uint64_t at = block - 0x30; at < block + 0x60; at += 8) {
         std::uint64_t value = 0;
@@ -170,7 +165,6 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
             }
         }
     }
-    // Writes that cover the chunk header the guest read (rax..rax+0x40) or the registers.
     const std::uint64_t n = head.load();
     int shown = 0;
     for (std::uint64_t i = n; i-- > (n > Size ? n - Size : 0) && shown < 64;) {
