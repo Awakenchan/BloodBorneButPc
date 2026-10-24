@@ -53,6 +53,18 @@ if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1
 # BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default next to this directory.
 game=${BB_GAME_DIR:-../CUSA03173}
 if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
+# Configure the selected online backend on Linux, as run_windows.py does on Windows.
+# The launcher already supplies the signed-in account in the environment. Capture changes
+# privately: credentials must never be printed into the game log or evaluated as shell code.
+online_env=$("$PYTHON" scripts/online_env.py --config "$BB_CONFIG" --data "$data")
+while IFS= read -r line; do
+    case $line in
+        env:*) export "${line#env:}" ;;
+        unset:*) unset "${line#unset:}" ;;
+        log:*) printf '%s\n' "${line#log:}" ;;
+    esac
+done <<< "$online_env"
+unset online_env line
 original_game=$game
 game=$("$PYTHON" scripts/mods.py "$game" --out "$out" \
     --mods-dir "${BB_MODS_DIR:-$data/mods}" --config "${BB_MODS_CONFIG:-$data/mods.json}" \
